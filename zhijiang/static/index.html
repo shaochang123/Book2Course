@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="智讲 Agent：将拥有使用权的文本型 PDF 转为可溯源的中文教学视频。">
+  <title>智讲 Agent · 从 PDF 到一节课</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>[hidden]{display:none!important}</style>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="智讲 Agent 首页"><span class="brand-icon">讲</span><span>智讲 <strong>Agent</strong></span></a>
+      <div class="header-right"><span class="local-pill"><span class="pulse"></span>本地运行 · 首版演示</span><span class="header-tag">Book2Course</span></div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <span class="eyebrow">从知识材料，到可学习的讲解</span>
+          <h1 id="hero-title">让一份 PDF，<br><em>讲成一节课。</em></h1>
+          <p>上传有使用权的文本型教材或讲义，生成课程结构、逐段讲稿、原文页码与可播放的中文教学视频。</p>
+          <div class="hero-points"><span>01 · 内容溯源</span><span>02 · 分镜表达</span><span>03 · 视频合成</span></div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="visual-corner"></div>
+          <div class="visual-doc"><span class="mini-label">SOURCE / PDF</span><div class="doc-line long"></div><div class="doc-line"></div><div class="doc-line short"></div><div class="doc-line"></div><div class="doc-line long"></div><span class="doc-footer">第 01 页 · 原文证据</span></div>
+          <div class="visual-arrow">→</div>
+          <div class="visual-video"><span class="mini-label">LESSON / MP4</span><div class="play-ring">▶</div><div class="video-strip"><span></span><span></span><span></span></div><span class="video-footer">概念 · 公式 · 流程</span></div>
+        </div>
+      </section>
+
+      <section class="workspace" aria-labelledby="workspace-title">
+        <div class="section-heading"><div><span class="eyebrow">CREATE A LESSON</span><h2 id="workspace-title">开始生成</h2></div><span class="section-note">一份资料 · 一节约 2–4 分钟的课</span></div>
+        <div class="workspace-grid">
+          <form id="upload-form" class="control-panel">
+            <label class="field-title" for="pdf-file"><span class="step-number">01</span>选择学习资料</label>
+            <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="选择 PDF 文件">
+              <div class="upload-icon">↥</div>
+              <strong id="file-label">拖放 PDF 到这里，或点击选择</strong>
+              <small id="pdf-limits">仅支持可提取文字的 PDF；不支持扫描件 OCR</small>
+              <input id="pdf-file" name="file" type="file" accept=".pdf,application/pdf" required>
+            </div>
+
+            <fieldset class="choice-group"><legend class="field-title"><span class="step-number">02</span>选择生成方式</legend>
+              <label class="choice-card"><input type="radio" name="mode" value="demo" checked><span><strong>确定性演示模式</strong><small>无需密钥 · 使用规则生成，绝不标称 AI 内容</small></span><span class="choice-mark"></span></label>
+              <label class="choice-card" id="ai-choice"><input type="radio" name="mode" value="ai"><span><strong>真实 AI 模式</strong><small id="ai-ready-label">等待读取模型配置…</small></span><span class="choice-mark"></span></label>
+            </fieldset>
+
+            <fieldset class="choice-group"><legend class="field-title"><span class="step-number">03</span>选择讲解声音</legend>
+              <label class="choice-card compact"><input type="radio" name="voice_mode" value="system" checked><span><strong>Windows 中文系统语音</strong><small>离线可用；不属于 AI 配音</small></span><span class="choice-mark"></span></label>
+              <label class="choice-card compact" id="tts-choice"><input type="radio" name="voice_mode" value="ai"><span><strong>在线 AI 配音</strong><small id="tts-ready-label">等待读取语音配置…</small></span><span class="choice-mark"></span></label>
+            </fieldset>
+
+            <div class="consents">
+              <label><input id="rights-confirmed" type="checkbox" required><span>我确认拥有此资料的使用权，或资料采用开放许可。</span></label>
+              <label id="remote-consent-row" hidden><input id="remote-consent" type="checkbox"><span>我同意把提取的文本或讲稿发送至所配置的外部模型/语音服务。</span></label>
+            </div>
+            <button id="submit-button" class="primary-button" type="submit">生成一节课 <span aria-hidden="true">↗</span></button>
+            <p class="privacy-note">资料和产物默认存储在本机；如选外部服务，须额外同意发送。自动引用核验不保证知识正确性，请在正式使用前人工复核。</p>
+          </form>
+
+          <aside class="process-panel" aria-label="生成流程">
+            <div class="process-header"><span class="eyebrow">AGENT WORKFLOW</span><span class="process-orb">✦</span></div>
+            <h3>从解析，到讲明白</h3>
+            <ol class="timeline">
+              <li><span class="timeline-icon">01</span><div><strong>理解资料</strong><small>提取文本、页码与知识点</small></div></li>
+              <li><span class="timeline-icon">02</span><div><strong>组织教学</strong><small>规划顺序、讲稿与画面要点</small></div></li>
+              <li><span class="timeline-icon">03</span><div><strong>检查来源</strong><small>逐段核对 PDF 页码和引文</small></div></li>
+              <li><span class="timeline-icon">04</span><div><strong>输出视频</strong><small>配音、画面与 MP4 合成</small></div></li>
+            </ol>
+            <div class="process-foot"><span>首版支持</span><strong>概念卡片 / 公式步骤 / 流程画面</strong></div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="job-section" class="results" hidden aria-live="polite">
+        <div class="section-heading"><div><span class="eyebrow">YOUR LESSON</span><h2>生成结果</h2></div><button id="delete-button" class="text-button" type="button" hidden>删除本地任务与资料</button></div>
+        <div class="job-card"><div class="job-status-row"><span id="job-badge" class="status-badge">排队中</span><span id="job-filename" class="filename"></span></div><h3 id="job-stage">等待处理</h3><div class="progress-track"><div id="job-progress" class="progress-fill"></div></div><p id="job-message">当前任务会在本机逐步处理。</p></div>
+        <div id="lesson-result" hidden>
+          <div class="result-grid"><div class="video-card"><div class="card-heading"><span class="eyebrow">VIDEO DEMO</span><a id="download-video" href="#" download="zhijiang-lesson.mp4">下载 MP4 ↗</a></div><video id="lesson-video" controls preload="metadata" playsinline></video><p id="voice-note" class="result-note"></p></div><div class="overview-card"><span class="eyebrow">COURSE OUTLINE</span><h3 id="lesson-title"></h3><p id="lesson-objective"></p><div id="lesson-notice" class="notice"></div><div class="overview-meta"><span id="segment-count"></span><span>逐段来源可核对</span></div></div></div>
+          <div class="script-heading"><h3>逐段讲稿与原文依据</h3><span>点击片段查看讲解内容</span></div>
+          <div id="segments" class="segments"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><span>智讲 Agent · 教育领域 AI Coding 参赛项目</span><span>文本型 PDF 首版 · 内容需人工复核</span></footer>
+  </div>
+</body>
+</html>
