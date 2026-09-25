@@ -8,10 +8,16 @@ from zhijiang.agents import (
     AIAgents,
     DemoAgents,
     GenerationError,
+    KnowledgeSelection,
+    KnowledgeSelectionPoint,
     OpenAICompatibleClient,
+    ScriptDraft,
+    ScriptDraftSegment,
+    source_candidates,
+    validate_evidence,
     validate_lesson,
 )
-from zhijiang.models import Mode, ReviewResult, VoiceMode
+from zhijiang.models import Evidence, Mode, ReviewResult, VoiceMode
 from zhijiang.pdf import PDFError, read_pdf
 
 
@@ -57,10 +63,45 @@ def test_fabricated_source_quote_is_rejected(sample_pdf):
         validate_lesson(document, lesson)
 
 
+def test_ai_source_selection_uses_exact_pdf_text_and_rejects_unknown_ids(sample_pdf):
+    document = read_pdf(sample_pdf, "original.pdf")
+    candidates = source_candidates(document)
+    assert len(candidates) >= 3
+    for item in candidates:
+        validate_evidence(document, Evidence(page=item["page"], quote=item["quote"]))
+
+    class BadClient:
+        calls = 0
+
+        def generate(self, schema, instruction, material):
+            self.calls += 1
+            return KnowledgeSelection(points=[
+                KnowledgeSelectionPoint(
+                    title=f"知识点 {index}", kind="concept", explanation="用于测试错误编号。",
+                    source_id=900 + index,
+                ) for index in range(3)
+            ])
+
+    client = BadClient()
+    with pytest.raises(GenerationError, match="片段编号"):
+        AIAgents(client).extract_knowledge(document)
+    assert client.calls == 2
+
+
 def test_ai_agents_use_four_stages_and_validate_citations(sample_pdf):
     document = read_pdf(sample_pdf, "original.pdf")
     demo = DemoAgents()
     bundle = demo.extract_knowledge(document)
+    candidates = source_candidates(document)
+    selection = KnowledgeSelection(points=[
+        KnowledgeSelectionPoint(
+            title=point.title, kind=point.kind, explanation=point.explanation,
+            source_id=next(
+                item["id"] for item in candidates
+                if item["page"] == point.evidence.page and item["quote"] == point.evidence.quote
+            ),
+        ) for point in bundle.points
+    ])
     outline = demo.plan(bundle)
     lesson = demo.script(bundle, outline, VoiceMode.SYSTEM)
     lesson.mode = Mode.AI
@@ -68,7 +109,13 @@ def test_ai_agents_use_four_stages_and_validate_citations(sample_pdf):
     for segment in lesson.segments:
         while len(segment.narration) < 180:
             segment.narration += "结合原文中的条件，逐步检查当前范围与比较结果。"
-    results = [bundle, outline, lesson, ReviewResult(approved=True)]
+    script_draft = ScriptDraft(segments=[
+        ScriptDraftSegment(
+            source_id=index, title=segment.title, kind=segment.kind,
+            narration=segment.narration, bullets=segment.bullets,
+        ) for index, segment in enumerate(lesson.segments, start=1)
+    ])
+    results = [selection, outline, script_draft, ReviewResult(approved=True)]
     received = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -86,8 +133,35 @@ def test_ai_agents_use_four_stages_and_validate_citations(sample_pdf):
         agents.review(scripted)
     validate_lesson(document, scripted)
     assert scripted.mode == Mode.AI
+    assert [segment.evidence for segment in scripted.segments] == [
+        point.evidence for point in bundle.points[:3]
+    ]
     assert len(received) == 4
     assert all("<source_data>" in item["messages"][1]["content"] for item in received)
+
+
+def test_script_rejects_unknown_source_ids(sample_pdf):
+    document = read_pdf(sample_pdf, "original.pdf")
+    bundle = DemoAgents().extract_knowledge(document)
+    outline = DemoAgents().plan(bundle)
+
+    class BadScriptClient:
+        calls = 0
+
+        def generate(self, schema, instruction, material):
+            self.calls += 1
+            return ScriptDraft(segments=[
+                ScriptDraftSegment(
+                    source_id=900 + index, title=f"片段 {index}", kind="concept",
+                    narration="学习这一知识点时，需要结合原文和例子逐步理解。" * 9,
+                    bullets=["要点"],
+                ) for index in range(3)
+            ])
+
+    client = BadScriptClient()
+    with pytest.raises(GenerationError, match="知识点编号"):
+        AIAgents(client).script(bundle, outline, VoiceMode.SYSTEM)
+    assert client.calls == 2
 
 
 def test_model_failure_does_not_expose_upstream_body():

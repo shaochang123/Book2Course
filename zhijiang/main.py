@@ -119,6 +119,28 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         return FileResponse(path, media_type="video/mp4", filename="zhijiang-lesson.mp4",
                             content_disposition_type="inline")
 
+    @application.post("/api/jobs/{job_id}/retry", status_code=202)
+    def retry_job(job_id: str) -> dict:
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(404, "任务不存在。")
+        if job["status"] != JobStatus.FAILED:
+            raise HTTPException(409, "只有失败任务可以重新生成。")
+        if Mode(job["mode"]) == Mode.AI and not settings.llm_ready:
+            raise HTTPException(400, "真实 AI 模式尚未配置文本模型服务。")
+        if VoiceMode(job["voice_mode"]) == VoiceMode.AI and not settings.ai_tts_ready:
+            raise HTTPException(400, "AI 配音尚未配置语音服务。")
+        external_text = Mode(job["mode"]) == Mode.AI and not settings.llm_is_local
+        external_voice = VoiceMode(job["voice_mode"]) == VoiceMode.AI and not settings.tts_is_local
+        if (external_text or external_voice) and not job["remote_consent"]:
+            raise HTTPException(400, "调用外部服务前须重新提交并同意发送文本。")
+        if not (store.jobs_dir / job_id / "source.pdf").is_file():
+            raise HTTPException(409, "原始 PDF 已丢失，请重新上传。")
+        if not store.retry(job_id):
+            raise HTTPException(409, "任务状态已改变，请刷新页面。")
+        runner.submit(job_id)
+        return store.get(job_id)
+
     @application.delete("/api/jobs/{job_id}", status_code=204)
     def delete_job(job_id: str) -> None:
         job = store.get(job_id)

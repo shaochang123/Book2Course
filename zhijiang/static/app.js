@@ -58,6 +58,7 @@ function showJob(job) {
   $("#job-stage").textContent = stages[job.stage] || job.stage || "等待处理";
   $("#job-progress").style.width = `${job.progress || 0}%`;
   $("#job-message").textContent = job.error || (job.status === "completed" ? "视频与逐段讲稿已生成。" : "当前任务会在本机逐步处理。请保持页面和服务运行。 ");
+  $("#retry-button").hidden = job.status !== "failed";
   $("#delete-button").hidden = !["completed", "failed"].includes(job.status);
 }
 
@@ -166,6 +167,22 @@ $("#delete-button").addEventListener("click", async () => {
     $("#lesson-video").removeAttribute("src");
     $("#lesson-video").load();
   } catch (error) { alert(error.message); }
+});
+
+$("#retry-button").addEventListener("click", async () => {
+  if (!currentJobId) return;
+  const button = $("#retry-button");
+  button.disabled = true;
+  try {
+    const job = await getJSON(`/api/jobs/${currentJobId}/retry`, { method: "POST" });
+    $("#lesson-result").hidden = true;
+    showJob(job);
+    startPolling();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 (async function initialize() {

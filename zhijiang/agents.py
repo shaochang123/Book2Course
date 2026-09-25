@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -257,12 +257,54 @@ class OllamaClient:
         raise GenerationError("本机 Ollama 未能生成有效内容。")
 
 
-class AILessonSegment(LessonSegment):
-    narration: str = Field(min_length=175, max_length=240)
+class ScriptDraftSegment(BaseModel):
+    source_id: int = Field(ge=1)
+    title: str = Field(min_length=2, max_length=80)
+    kind: Literal["concept", "formula", "process"]
+    narration: str = Field(min_length=175, max_length=210)
+    bullets: list[str] = Field(min_length=1, max_length=4)
 
 
-class AILesson(Lesson):
-    segments: list[AILessonSegment] = Field(min_length=3, max_length=5)
+class ScriptDraft(BaseModel):
+    segments: list[ScriptDraftSegment] = Field(min_length=3, max_length=4)
+
+
+class KnowledgeSelectionPoint(BaseModel):
+    title: str = Field(min_length=2, max_length=80)
+    kind: Literal["concept", "formula", "process"]
+    explanation: str = Field(min_length=8, max_length=500)
+    source_id: int = Field(ge=1)
+
+
+class KnowledgeSelection(BaseModel):
+    points: list[KnowledgeSelectionPoint] = Field(min_length=3, max_length=6)
+
+
+def source_candidates(document: SourceDocument) -> list[dict]:
+    """提供真实 PDF 中的短摘录，编号只在一次提取请求内有效。"""
+    candidates: list[dict] = []
+    seen: set[tuple[int, str]] = set()
+    for page in document.pages[:12]:
+        per_page = 0
+        for line in page.text[:3000].splitlines():
+            quote = line.strip()[:220]
+            key = (page.page, _compact(quote))
+            if len(_compact(quote)) < 20 or key in seen:
+                continue
+            if len(re.findall(r"[\u4e00-\u9fff]", quote)) < 6:
+                continue
+            seen.add(key)
+            candidates.append({"id": len(candidates) + 1, "page": page.page, "quote": quote})
+            per_page += 1
+            if per_page >= 6:
+                break
+    if len(candidates) < 3:
+        for page, quote in _candidates(document):
+            key = (page, _compact(quote))
+            if key not in seen:
+                candidates.append({"id": len(candidates) + 1, "page": page, "quote": quote})
+                seen.add(key)
+    return candidates
 
 
 class AIAgents:
@@ -270,19 +312,43 @@ class AIAgents:
         self.client = client
 
     def extract_knowledge(self, document: SourceDocument) -> KnowledgeBundle:
-        pages = [
-            {"page": page.page, "text": page.text[:3000]}
-            for page in document.pages[:12]
-        ]
-        material = json.dumps(pages, ensure_ascii=False)[:18000]
-        bundle = self.client.generate(
-            KnowledgeBundle,
-            "选取 3 到 6 个核心知识点；kind 为 concept、formula 或 process。"
-            "每个 evidence.quote 必须逐字摘自所标页码，长度为 8 到 300 字。",
-            material,
+        candidates = source_candidates(document)
+        if len(candidates) < 3:
+            raise GenerationError("可核验的原文片段不足，无法组成一节课。")
+        material = json.dumps(
+            {"filename": document.filename, "sources": candidates}, ensure_ascii=False
         )
-        validate_knowledge(document, bundle)
-        return bundle
+        by_id = {item["id"]: item for item in candidates}
+        for attempt in range(2):
+            selection = self.client.generate(
+                KnowledgeSelection,
+                "从给定编号的原文片段中选 3 到 6 个相互关联的知识点，"
+                "优先围绕文件名和多次出现的主题组织一节课。"
+                "source_id 必须是输入 sources 中存在的 id，每个 id 最多使用一次。"
+                "只生成标题、类型和解释；页码与逐字引文由程序填入。"
+                + ("上次选了不存在或重复的编号，请重新选择。" if attempt else ""),
+                material,
+            )
+            ids = [point.source_id for point in selection.points]
+            if len(set(ids)) != len(ids) or any(item not in by_id for item in ids):
+                continue
+            bundle = KnowledgeBundle(
+                points=[
+                    KnowledgePoint(
+                        title=point.title,
+                        kind=point.kind,
+                        explanation=point.explanation,
+                        evidence=Evidence(
+                            page=by_id[point.source_id]["page"],
+                            quote=by_id[point.source_id]["quote"],
+                        ),
+                    )
+                    for point in selection.points
+                ]
+            )
+            validate_knowledge(document, bundle)
+            return bundle
+        raise GenerationError("模型未能选择有效且不重复的原文片段编号。")
 
     def plan(self, bundle: KnowledgeBundle) -> CourseOutline:
         outline = self.client.generate(
@@ -299,37 +365,50 @@ class AIAgents:
         self, bundle: KnowledgeBundle, outline: CourseOutline, voice_mode: VoiceMode
     ) -> Lesson:
         material = json.dumps(
-            {"points": bundle.model_dump(), "outline": outline.model_dump(),
-             "voice_mode": voice_mode},
+            {"points": [
+                {"source_id": index, **point.model_dump()}
+                for index, point in enumerate(bundle.points, start=1)
+            ], "outline": outline.model_dump()},
             ensure_ascii=False,
         )
         instruction = (
-            "按大纲写 3 到 6 个中文教学片段，讲稿适合口播，画面要点简短。"
+            "按大纲写 3 到 4 个中文教学片段，讲稿适合口播，画面要点简短。"
             "每段 narration 写 175 至 210 个汉字，所有 narration 合计至少 520 个汉字；"
             "解释概念的条件、具体例子、步骤及常见错误，不要重复句子凑字数。"
-            "每段 evidence 必须复用输入知识点的页码和逐字引文。"
-            "mode 固定为 ai，voice_mode 按输入值，notice 写明自动生成内容需人工复核。"
+            "每段 source_id 必须指向输入 points 中存在的编号，每个编号最多用一次；"
+            "不要输出页码或原文引文，它们由程序按编号填入。"
         )
+        by_id = {index: point for index, point in enumerate(bundle.points, start=1)}
         for attempt in range(2):
             draft = self.client.generate(
-                AILesson,
-                instruction + ("上次讲稿过短；必须补充有教学价值的解释与例子。" if attempt else ""),
+                ScriptDraft,
+                instruction + ("上次讲稿过短或编号无效；请修正。" if attempt else ""),
                 material,
             )
-            if sum(len(segment.narration) for segment in draft.segments) >= 520:
+            ids = [segment.source_id for segment in draft.segments]
+            if (sum(len(segment.narration) for segment in draft.segments) >= 520
+                    and len(set(ids)) == len(ids)
+                    and all(item in by_id for item in ids)):
                 break
         else:
-            raise GenerationError("AI 讲稿过短，无法生成目标时长课程。")
-        draft.mode = Mode.AI
-        draft.voice_mode = voice_mode
-        draft.notice = "AI 生成：页码引文已自动核对，知识正确性仍需人工复核。"
-        allowed = {(item.evidence.page, _compact(item.evidence.quote)) for item in bundle.points}
-        if any(
-            (segment.evidence.page, _compact(segment.evidence.quote)) not in allowed
-            for segment in draft.segments
-        ):
-            raise GenerationError("讲稿引用了未经知识提取阶段核验的原文。")
-        return draft
+            raise GenerationError("AI 讲稿过短或未选择有效的知识点编号。")
+        return Lesson(
+            title=outline.title,
+            objective=outline.objective,
+            segments=[
+                LessonSegment(
+                    title=segment.title,
+                    kind=segment.kind,
+                    narration=segment.narration,
+                    bullets=segment.bullets,
+                    evidence=by_id[segment.source_id].evidence.model_copy(deep=True),
+                )
+                for segment in draft.segments
+            ],
+            mode=Mode.AI,
+            voice_mode=voice_mode,
+            notice="AI 生成：页码引文已自动核对，知识正确性仍需人工复核。",
+        )
 
     def review(self, lesson: Lesson) -> ReviewResult:
         result = self.client.generate(

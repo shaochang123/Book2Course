@@ -136,6 +136,18 @@ class JobStore:
                 (JobStatus.FAILED, "failed", message[:500], utc_now(), job_id),
             )
 
+    def retry(self, job_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE jobs SET status=?, stage=?, progress=0, error=NULL, "
+                "lesson_json=NULL, updated_at=? WHERE id=? AND status=?",
+                (JobStatus.QUEUED, "queued", utc_now(), job_id, JobStatus.FAILED),
+            )
+        if cursor.rowcount != 1:
+            return False
+        (self.jobs_dir / job_id / "lesson.mp4").unlink(missing_ok=True)
+        return True
+
     def delete(self, job_id: str) -> bool:
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM jobs WHERE id=?", (job_id,))

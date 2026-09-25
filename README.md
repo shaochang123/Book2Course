@@ -12,7 +12,7 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn zhijiang.main:app --host 127.0.0.1 --port 8765
 ```
 
-打开 `http://127.0.0.1:8765`，选择 [原创演示讲义](examples/binary_search_original.pdf)，确认资料使用权，保持默认的“确定性演示模式 / Windows 中文系统语音”，点击“生成一节课”。完成后可在页面查看引用和视频，并删除本地资料。上传上限为 20 MB、100 页；首版不支持扫描件 OCR。
+打开 `http://127.0.0.1:8765`，选择 [原创演示讲义](examples/binary_search_original.pdf)，确认资料使用权，保持默认的“确定性演示模式 / Windows 中文系统语音”，点击“生成一节课”。完成后可在页面查看引用和视频，并删除本地资料。失败任务可用保存的原 PDF 重新生成。上传上限为 20 MB、100 页；首版不支持扫描件 OCR。
 
 运行环境：Python 3.11+，已在 Python 3.13 / Windows 验证；系统需要安装中文语音“Microsoft Huihui Desktop”或通过环境变量改用本机其他语音。`imageio-ffmpeg` 的 wheel 提供视频合成所用 FFmpeg，无需预先安装系统 FFmpeg。
 
@@ -25,7 +25,9 @@ Copy-Item .env.local.example .env.local
 .\.venv\Scripts\python scripts\build_ollama_demo.py
 ```
 
-网页重启后可选“本机 Ollama 真实 AI 模式”。本机模型经原生 `/api/chat` 的 JSON Schema 输出课程，提取的文本留在本机；若改用外部模型，页面会要求额外发送同意。本机 Ollama Demo 为 [视频](demo/zhijiang_ollama_demo.mp4) 和 [讲稿与来源](demo/zhijiang_ollama_lesson.json)，实际生成时长约 2 分 21 秒。此视频的讲稿由模型生成，声音由 Windows 系统语音合成，**不是 AI 配音**。
+网页重启后可选“本机 Ollama 真实 AI 模式”。本机模型经原生 `/api/chat` 的 JSON Schema 输出课程，提取的文本留在本机；若改用外部模型，页面会要求额外发送同意。本机 Ollama Demo 为 [视频](demo/zhijiang_ollama_demo.mp4) 和 [讲稿与来源](demo/zhijiang_ollama_lesson.json)，当前提交版本的时长约 3 分 18 秒。此视频的讲稿由模型生成，声音由 Windows 系统语音合成，**不是 AI 配音**。
+
+真实模式先从 PDF 抽取带页码的原文片段，由模型选择片段编号；讲稿阶段再选择已核验的知识点编号。程序在两阶段填入原文并核验页码，避免模型改写引文造成虚假的来源。知识解释仍由模型生成，使用前仍需人工复核。此修复已用一份用户授权上传的 56 页教材在本机验证；该教材及生成视频留在被忽略的 `data/` 中，不随仓库分发。
 
 本机 Ollama 0.34.1 的 `/v1/audio/speech` 实测返回 404，当前版本没有可直接接入本项目 WAV 配音流程的服务，因此没有下载仅能生成文本 token 的所谓 TTS 模型。若将来配置一个真正支持该接口的语音服务，可使用下述可选配置。
 

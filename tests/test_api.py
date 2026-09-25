@@ -3,7 +3,10 @@ import wave
 import httpx
 from fastapi.testclient import TestClient
 
-from zhijiang.agents import AIAgents, DemoAgents, OpenAICompatibleClient
+from zhijiang.agents import (
+    AIAgents, DemoAgents, KnowledgeSelection, KnowledgeSelectionPoint,
+    OpenAICompatibleClient, ScriptDraft, ScriptDraftSegment, source_candidates,
+)
 from zhijiang.config import Settings
 from zhijiang.main import create_app
 from zhijiang.models import JobStatus, Mode, ReviewResult, VoiceMode
@@ -66,6 +69,23 @@ def test_api_upload_result_video_and_delete(tmp_path, sample_pdf):
         assert not (store.jobs_dir / job_id).exists()
 
 
+def test_failed_job_can_retry_with_saved_pdf(tmp_path, sample_pdf):
+    client, store = make_client(tmp_path)
+    with client:
+        response = client.post(
+            "/api/jobs", files={"file": ("original.pdf", sample_pdf)},
+            data={"mode": "demo", "voice_mode": "system", "rights_confirmed": "true"},
+        )
+        job_id = response.json()["id"]
+        assert client.post(f"/api/jobs/{job_id}/retry").status_code == 409
+        store.fail(job_id, "模拟先前失败")
+        assert (store.jobs_dir / job_id / "source.pdf").is_file()
+        retry = client.post(f"/api/jobs/{job_id}/retry")
+        assert retry.status_code == 202, retry.text
+        assert client.get(f"/api/jobs/{job_id}").json()["status"] == "completed"
+        assert client.get(f"/api/jobs/{job_id}/lesson").status_code == 200
+
+
 def test_upload_guards_and_error_messages(tmp_path, sample_pdf):
     client, _ = make_client(tmp_path)
     with client:
@@ -114,6 +134,16 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
     document = read_pdf(sample_pdf, "sample.pdf")
     demo = DemoAgents()
     bundle = demo.extract_knowledge(document)
+    candidates = source_candidates(document)
+    selection = KnowledgeSelection(points=[
+        KnowledgeSelectionPoint(
+            title=point.title, kind=point.kind, explanation=point.explanation,
+            source_id=next(
+                item["id"] for item in candidates
+                if item["page"] == point.evidence.page and item["quote"] == point.evidence.quote
+            ),
+        ) for point in bundle.points
+    ])
     outline = demo.plan(bundle)
     lesson = demo.script(bundle, outline, VoiceMode.SYSTEM)
     lesson.mode = Mode.AI
@@ -121,7 +151,13 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
     for segment in lesson.segments:
         while len(segment.narration) < 180:
             segment.narration += "结合原文中的条件，逐步检查当前范围与比较结果。"
-    replies = [bundle, outline, lesson, ReviewResult(approved=True)]
+    script_draft = ScriptDraft(segments=[
+        ScriptDraftSegment(
+            source_id=index, title=segment.title, kind=segment.kind,
+            narration=segment.narration, bullets=segment.bullets,
+        ) for index, segment in enumerate(lesson.segments, start=1)
+    ])
+    replies = [selection, outline, script_draft, ReviewResult(approved=True)]
     transport = httpx.MockTransport(
         lambda _: httpx.Response(
             200, json={"choices": [{"message": {"content": replies.pop(0).model_dump_json()}}]}
