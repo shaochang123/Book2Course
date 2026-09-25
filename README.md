@@ -1,10 +1,12 @@
 # 智讲 Agent（Book2Course）
 
-将**有使用权的文本型 PDF**转换为一节中文教学课：页面展示课程结构、逐段讲稿、PDF 页码与原文摘录，并生成可播放的 MP4。
+智讲 Agent 将有使用权的文本型 PDF 转换为一节中文教学视频。上传资料后，页面展示课程结构、逐段讲稿、PDF 页码与原文摘录，并提供可播放、可下载的 MP4。
 
-本仓库是教育领域 AI Coding 赛事的首版项目。`demo` 模式用确定性规则生成内容，页面和视频均明确标注；`ai` 模式可调用本机 Ollama 或外部兼容接口的真实文本模型。系统语音与可选 AI 配音分别标注。自动引用核验只确认摘录可在相应页找到，不替代人工知识审核。
+系统提供两种生成方式：**真实 AI 模式**调用本机 Ollama 或外部兼容模型；**确定性演示模式**无需模型或密钥，使用固定规则生成内容，并在页面与视频中标明。配音可使用 Windows 中文系统语音；配置兼容语音服务后也可选择 AI 配音。来源核验只确认摘录与对应 PDF 页面匹配，知识解释仍需人工复核。
 
-## 快速运行（Windows）
+## 快速开始（Windows）
+
+在项目目录运行：
 
 ```powershell
 python -m venv .venv
@@ -12,37 +14,34 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn zhijiang.main:app --host 127.0.0.1 --port 8765
 ```
 
-打开 `http://127.0.0.1:8765`，选择 [原创演示讲义](examples/binary_search_original.pdf)，确认资料使用权，保持默认的“确定性演示模式 / Windows 中文系统语音”，点击“生成一节课”。完成后可在页面查看引用和视频，并删除本地资料。失败任务可用保存的原 PDF 重新生成。上传上限为 20 MB、100 页；首版不支持扫描件 OCR。
+打开 [http://127.0.0.1:8765/](http://127.0.0.1:8765/)，上传有使用权的文本型 PDF，确认资料使用权后开始生成。可用[示例讲义](examples/binary_search_original.pdf)体验。生成完成后可查看来源、播放或下载视频，也可删除本地任务和资料。失败任务可用原 PDF 重新生成。按 `Ctrl+C` 关闭 Web 服务。
 
-运行环境：Python 3.11+，已在 Python 3.13 / Windows 验证；系统需要安装中文语音“Microsoft Huihui Desktop”或通过环境变量改用本机其他语音。`imageio-ffmpeg` 的 wheel 提供视频合成所用 FFmpeg，无需预先安装系统 FFmpeg。
+运行环境为 Python 3.11+ 与 Windows 中文系统语音；已在 Python 3.13 上验证。`imageio-ffmpeg` 提供视频合成所需的 FFmpeg，无需单独安装系统 FFmpeg。
 
-## 本机 Ollama 真实 AI 模式
+## 使用本机 Ollama
 
-在安装并启动 [Ollama](https://ollama.com/) 后，执行 `ollama list` 确认本机已有 `qwen2.5:7b`；若没有，再执行 `ollama pull qwen2.5:7b`。复制仓库中的配置模板，按实际模型名修改。`.env.local` 已列入 `.gitignore`，不会提交本机地址或密钥。
+安装并启动 [Ollama](https://ollama.com/)，通过 `ollama list` 检查模型。默认模板使用 `qwen2.5:7b`；如果本机没有该模型，可运行 `ollama pull qwen2.5:7b`。复制配置模板后重启 Web 服务：
 
 ```powershell
 Copy-Item .env.local.example .env.local
-.\.venv\Scripts\python scripts\build_ollama_demo.py
 ```
 
-网页重启后可选“本机 Ollama 真实 AI 模式”。本机模型经原生 `/api/chat` 的 JSON Schema 输出课程，提取的文本留在本机；若改用外部模型，页面会要求额外发送同意。本机 Ollama Demo 为 [视频](demo/zhijiang_ollama_demo.mp4) 和 [讲稿与来源](demo/zhijiang_ollama_lesson.json)，当前提交版本的时长约 3 分 18 秒。此视频的讲稿由模型生成，声音由 Windows 系统语音合成，**不是 AI 配音**。
+`.env.local` 已加入 `.gitignore`。可在其中修改 Ollama 地址和模型名。真实 AI 模式通过本机 `/api/chat` 生成知识点、课程规划和讲稿；PDF 提取文本不会发送到外部文本模型。模型先选择带页码的原文片段编号，程序再填入并核验引文，减少模型改写原文造成的错误。
 
-真实模式先从 PDF 抽取带页码的原文片段，由模型选择片段编号；讲稿阶段再选择已核验的知识点编号。程序在两阶段填入原文并核验页码，避免模型改写引文造成虚假的来源。知识解释仍由模型生成，使用前仍需人工复核。此修复已用一份用户授权上传的 56 页教材在本机验证；该教材及生成视频留在被忽略的 `data/` 中，不随仓库分发。
+已生成的[示例视频](demo/zhijiang_ollama_demo.mp4)与[讲稿及来源](demo/zhijiang_ollama_lesson.json)可直接查看。示例视频的讲稿由本机模型生成，声音来自 Windows 系统语音。
 
-本机 Ollama 0.34.1 的 `/v1/audio/speech` 实测返回 404，当前版本没有可直接接入本项目 WAV 配音流程的服务，因此没有下载仅能生成文本 token 的所谓 TTS 模型。若将来配置一个真正支持该接口的语音服务，可使用下述可选配置。
+## 外部模型与语音服务
 
-## 接入外部兼容模型与可选 AI 配音
-
-在**启动服务前**设置环境变量，不要把密钥写入仓库：
+如需使用外部文本模型，在启动服务前设置兼容 `POST /chat/completions` 的服务地址、模型名和密钥：
 
 ```powershell
+$env:ZHIJIANG_LLM_PROVIDER = "openai"
 $env:ZHIJIANG_LLM_BASE_URL = "https://你的服务地址/v1"
 $env:ZHIJIANG_LLM_API_KEY = "你的密钥"
 $env:ZHIJIANG_LLM_MODEL = "你的模型名"
-$env:ZHIJIANG_LLM_PROVIDER = "openai"
 ```
 
-文本服务须兼容 `POST /chat/completions` 并返回 `choices[0].message.content`。可选 AI 配音须兼容 `POST /audio/speech`、接受 `response_format: wav`：
+可选 AI 配音需要兼容 `POST /audio/speech` 并能返回 WAV：
 
 ```powershell
 $env:ZHIJIANG_TTS_BASE_URL = "https://你的语音服务地址/v1"
@@ -51,26 +50,22 @@ $env:ZHIJIANG_TTS_MODEL = "你的语音模型名"
 $env:ZHIJIANG_TTS_VOICE = "alloy"
 ```
 
-网页会在使用外部文本服务或外部配音时要求额外同意。未配置密钥时，离线演示模式和本机 Ollama 模式仍可使用。真实模型路径已用本机 `qwen2.5:7b` 验证；外部兼容接口通过模拟 HTTP 服务测试。仓库不包含服务密钥。
+使用外部服务时，网页会要求额外确认发送提取文本或讲稿。不要将密钥提交到仓库。
 
-## 复现、测试与参赛材料
+## 测试与示例
 
 ```powershell
 .\.venv\Scripts\python -m pytest
 .\.venv\Scripts\python scripts\generate_sample_pdf.py
 .\.venv\Scripts\python scripts\build_demo.py
 .\.venv\Scripts\python scripts\build_ollama_demo.py
-.\.venv\Scripts\python scripts\build_submission.py
 ```
 
-- [产品说明书](docs/产品说明书.md)：介绍、设计思路、设计过程、商业价值与创新点。
-- [AI Coding 全过程](docs/AI_Coding_全过程.md)：单列工具、交互、开发阶段与测试证据。
-- [Demo 操作说明](docs/Demo_操作说明.md)：本地网站与视频演示步骤。
-- [第三方来源与许可](docs/第三方来源与许可.md)：依赖、视频工具和示例素材来源。
-- [本机 Ollama 演示视频](demo/zhijiang_ollama_demo.mp4) 与 [结构化课程结果](demo/zhijiang_ollama_lesson.json)；另保留 [无需模型的演示视频](demo/zhijiang_demo.mp4)。
+`build_ollama_demo.py` 需要先配置本机 Ollama。项目还提供[无需模型的示例视频](demo/zhijiang_demo.mp4)。
 
-`scripts/build_submission.py` 生成 `submission/智讲Agent_参赛材料.zip`，其中包含产品说明书 PDF、独立 AI Coding 全过程 PDF、Demo MP4 和原创演示 PDF。提交前请按照主办方平台实际格式要求核对，并在 **2026 年 10 月 23 日 24:00（中国时间）** 前完成上传。
+## 当前支持范围
 
-## 首版边界
-
-单机、单任务顺序处理；一份 PDF 生成一节课，默认从前部可提取内容选取知识点。真实模型分析前 12 个有文字的页面；演示模式选取前 6 个合格文本片段。复杂公式绘图、全书系列课、OCR 和知识事实自动证明属于后续工作。
+- 单机顺序处理任务；一份 PDF 生成一节课。
+- 支持可提取文字的 PDF，最多 20 MB、100 页；暂不支持扫描件 OCR。
+- AI 模式分析前 12 个有文字的页面；演示模式选取前 6 个合格文本片段。
+- 支持概念卡片、公式步骤和流程画面。复杂动画、全书系列课与知识事实自动证明尚未实现。
