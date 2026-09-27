@@ -22,7 +22,7 @@
         <div class="hero-copy">
           <span class="eyebrow">从知识材料，到可学习的讲解</span>
           <h1 id="hero-title">让一份 PDF，<br><em>讲成一节课。</em></h1>
-          <p>上传有使用权的文本型教材或讲义，生成课程结构、逐段讲稿、原文页码与可播放的中文教学视频。</p>
+          <p>上传有使用权的教材或讲义 PDF，生成课程结构、逐段讲稿、来源页码与可播放的中文教学视频。扫描页可自动识别文字。</p>
           <div class="hero-points"><span>01 · 内容溯源</span><span>02 · 分镜表达</span><span>03 · 视频合成</span></div>
         </div>
         <div class="hero-visual" aria-hidden="true">
@@ -34,21 +34,37 @@
       </section>
 
       <section class="workspace" aria-labelledby="workspace-title">
-        <div class="section-heading"><div><span class="eyebrow">CREATE A LESSON</span><h2 id="workspace-title">开始生成</h2></div><span class="section-note">一份资料 · 一节约 2–4 分钟的课</span></div>
+        <div class="section-heading"><div><span class="eyebrow">CREATE A LESSON</span><h2 id="workspace-title">开始生成</h2></div><span class="section-note">课程长度随资料内容变化</span></div>
         <div class="workspace-grid">
           <form id="upload-form" class="control-panel">
             <label class="field-title" for="pdf-file"><span class="step-number">01</span>选择学习资料</label>
             <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="选择 PDF 文件">
               <div class="upload-icon">↥</div>
               <strong id="file-label">拖放 PDF 到这里，或点击选择</strong>
-              <small id="pdf-limits">仅支持可提取文字的 PDF；不支持扫描件 OCR</small>
+              <small id="pdf-limits">支持文字版和扫描版 PDF；扫描页自动 OCR</small>
               <input id="pdf-file" name="file" type="file" accept=".pdf,application/pdf" required>
             </div>
 
             <fieldset class="choice-group"><legend class="field-title"><span class="step-number">02</span>选择生成方式</legend>
               <label class="choice-card"><input type="radio" name="mode" value="demo" checked><span><strong>确定性演示模式</strong><small>无需密钥 · 使用规则生成，绝不标称 AI 内容</small></span><span class="choice-mark"></span></label>
-              <label class="choice-card" id="ai-choice"><input type="radio" name="mode" value="ai"><span><strong>真实 AI 模式</strong><small id="ai-ready-label">等待读取模型配置…</small></span><span class="choice-mark"></span></label>
+              <label class="choice-card" id="ai-choice"><input type="radio" name="mode" value="ai"><span><strong>真实 AI 模式</strong><small id="ai-ready-label">可在下方填写本次使用的模型 API</small></span><span class="choice-mark"></span></label>
             </fieldset>
+
+            <div id="ai-settings" class="advanced-fields" hidden>
+              <h3>本次任务的大模型 API</h3>
+              <p>填写后只作用于这次生成。密钥仅在任务运行时保留在内存中，刷新或重启后重试需重新输入。</p>
+              <label for="llm-provider">接口类型</label>
+              <select id="llm-provider" name="llm_provider"><option value="ollama">本机 Ollama</option><option value="openai">兼容 Chat Completions 的 API</option></select>
+              <label for="llm-base-url">API 基础地址</label>
+              <input id="llm-base-url" name="llm_base_url" type="url" placeholder="http://127.0.0.1:11434 或 https://服务地址/v1">
+              <label for="llm-model">模型名称</label>
+              <input id="llm-model" name="llm_model" type="text" placeholder="例如 qwen2.5:7b">
+              <label for="llm-api-key">API 密钥 <span id="api-key-hint">兼容接口需要填写</span></label>
+              <input id="llm-api-key" name="llm_api_key" type="password" autocomplete="off" placeholder="仅当前任务使用">
+              <label for="custom-prompt">自定义提示词（可选）</label>
+              <textarea id="custom-prompt" name="custom_prompt" rows="4" maxlength="4000" placeholder="例如：面向零基础学生，解释术语时多用生活例子；讲解节奏放慢，给出常见误区。"></textarea>
+              <p>提示词控制讲解风格和内容深度；来源页码与引文核验规则仍会执行。</p>
+            </div>
 
             <fieldset class="choice-group"><legend class="field-title"><span class="step-number">03</span>选择讲解声音</legend>
               <label class="choice-card compact"><input type="radio" name="voice_mode" value="system" checked><span><strong>Windows 中文系统语音</strong><small>离线可用；不属于 AI 配音</small></span><span class="choice-mark"></span></label>
@@ -60,7 +76,7 @@
               <label id="remote-consent-row" hidden><input id="remote-consent" type="checkbox"><span>我同意把提取的文本或讲稿发送至所配置的外部模型/语音服务。</span></label>
             </div>
             <button id="submit-button" class="primary-button" type="submit">生成一节课 <span aria-hidden="true">↗</span></button>
-            <p class="privacy-note">资料和产物默认存储在本机；如选外部服务，须额外同意发送。自动引用核验不保证知识正确性，请在正式使用前人工复核。</p>
+            <p class="privacy-note">资料和产物默认存储在本机；如选外部服务，须额外同意发送。OCR 可能识别错误；自动引用核验不保证知识正确性，请在正式使用前人工复核。</p>
           </form>
 
           <aside class="process-panel" aria-label="生成流程">

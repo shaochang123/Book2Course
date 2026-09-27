@@ -13,8 +13,7 @@ from dotenv import dotenv_values
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path("data").resolve())
-    max_pdf_bytes: int = 20 * 1024 * 1024
-    max_pdf_pages: int = 100
+    max_pdf_bytes: int = 200 * 1024 * 1024
     llm_provider: str = "openai"
     llm_base_url: str = ""
     llm_api_key: str = ""

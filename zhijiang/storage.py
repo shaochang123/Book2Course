@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from zhijiang.models import JobStatus, Lesson, Mode, VoiceMode
+from zhijiang.models import GenerationOptions, JobStatus, Lesson, Mode, VoiceMode
 
 
 def utc_now() -> str:
@@ -20,6 +20,7 @@ class JobStore:
         self.data_dir = data_dir
         self.jobs_dir = data_dir / "jobs"
         self.db_path = data_dir / "jobs.sqlite3"
+        self._api_keys: dict[str, str] = {}
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -45,9 +46,13 @@ class JobStore:
                     error TEXT,
                     lesson_json TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    options_json TEXT NOT NULL DEFAULT '{}'
                 )"""
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
+            if "options_json" not in columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
             connection.execute(
                 "UPDATE jobs SET status=?, stage=?, error=?, updated_at=? "
                 "WHERE status IN (?, ?)",
@@ -69,6 +74,7 @@ class JobStore:
         rights_confirmed: bool,
         remote_consent: bool,
         pdf: bytes,
+        options: GenerationOptions | None = None,
     ) -> dict:
         job_id = uuid.uuid4().hex
         folder = self.jobs_dir / job_id
@@ -77,14 +83,37 @@ class JobStore:
         now = utc_now()
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs (id, filename, mode, voice_mode, rights_confirmed, "
+                "remote_consent, status, stage, progress, error, lesson_json, "
+                "created_at, updated_at, options_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job_id, filename, mode, voice_mode, int(rights_confirmed),
                     int(remote_consent), JobStatus.QUEUED, "queued", 0, None,
-                    None, now, now,
+                    None, now, now, (options or GenerationOptions()).model_dump_json(),
                 ),
             )
+        if options and options.api_key:
+            self._api_keys[job_id] = options.api_key
         return self.get(job_id)  # type: ignore[return-value]
+
+    def get_options(self, job_id: str) -> GenerationOptions:
+        with self._connect() as connection:
+            row = connection.execute("SELECT options_json FROM jobs WHERE id=?", (job_id,)).fetchone()
+        options = GenerationOptions.model_validate_json(row["options_json"] if row else "{}")
+        options.api_key = self._api_keys.get(job_id, "")
+        return options
+
+    def set_api_key(self, job_id: str, api_key: str) -> None:
+        if api_key:
+            self._api_keys[job_id] = api_key
+
+    def update_options(self, job_id: str, options: GenerationOptions) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE jobs SET options_json=? WHERE id=?",
+                               (options.model_dump_json(), job_id))
+
+    def clear_api_key(self, job_id: str) -> None:
+        self._api_keys.pop(job_id, None)
 
     def get(self, job_id: str) -> dict | None:
         with self._connect() as connection:
@@ -97,6 +126,7 @@ class JobStore:
         result["has_lesson"] = result["lesson_json"] is not None
         result["has_video"] = (self.jobs_dir / job_id / "lesson.mp4").is_file()
         result.pop("lesson_json")
+        result["model_settings"] = json.loads(result.pop("options_json"))
         return result
 
     def set_progress(self, job_id: str, stage: str, progress: int) -> None:
@@ -149,6 +179,7 @@ class JobStore:
         return True
 
     def delete(self, job_id: str) -> bool:
+        self.clear_api_key(job_id)
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM jobs WHERE id=?", (job_id,))
         return cursor.rowcount > 0

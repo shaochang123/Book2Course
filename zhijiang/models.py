@@ -31,6 +31,7 @@ VisualKind = Literal["concept", "formula", "process"]
 class PageText(BaseModel):
     page: int = Field(ge=1)
     text: str = Field(min_length=1)
+    ocr: bool = False
 
 
 class SourceDocument(BaseModel):
@@ -41,6 +42,15 @@ class SourceDocument(BaseModel):
 class Evidence(BaseModel):
     page: int = Field(ge=1)
     quote: str = Field(min_length=8, max_length=300)
+    ocr: bool = False
+
+
+class GenerationOptions(BaseModel):
+    provider: Literal["ollama", "openai"] = "openai"
+    base_url: str = ""
+    model: str = ""
+    api_key: str = Field(default="", exclude=True)
+    prompt: str = Field(default="", max_length=4000)
 
 
 class KnowledgePoint(BaseModel):
@@ -51,19 +61,19 @@ class KnowledgePoint(BaseModel):
 
 
 class KnowledgeBundle(BaseModel):
-    points: list[KnowledgePoint] = Field(min_length=3, max_length=6)
+    points: list[KnowledgePoint] = Field(min_length=3)
 
 
 class CourseOutline(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     objective: str = Field(min_length=8, max_length=240)
-    point_titles: list[str] = Field(min_length=3, max_length=6)
+    point_titles: list[str] = Field(min_length=3)
 
 
 class LessonSegment(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     kind: VisualKind
-    narration: str = Field(min_length=20, max_length=1100)
+    narration: str = Field(min_length=20)
     bullets: list[str] = Field(min_length=1, max_length=4)
     evidence: Evidence
 
@@ -71,7 +81,7 @@ class LessonSegment(BaseModel):
 class Lesson(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     objective: str = Field(min_length=8, max_length=240)
-    segments: list[LessonSegment] = Field(min_length=3, max_length=6)
+    segments: list[LessonSegment] = Field(min_length=3)
     mode: Mode
     voice_mode: VoiceMode
     notice: str

@@ -12,7 +12,7 @@ from zhijiang.agents import (
     validate_lesson,
 )
 from zhijiang.config import Settings
-from zhijiang.models import JobStatus, Mode, VoiceMode
+from zhijiang.models import GenerationOptions, JobStatus, Mode, VoiceMode
 from zhijiang.pdf import PDFError, read_pdf
 from zhijiang.speech import AISpeech, SpeechError, SystemSpeech
 from zhijiang.storage import JobStore
@@ -37,19 +37,19 @@ class JobProcessor:
         self.speech_factory = speech_factory
         self.video_renderer = video_renderer
 
-    def _agents(self, mode: Mode):
+    def _agents(self, mode: Mode, options: GenerationOptions):
         if self.agent_factory:
             return self.agent_factory(mode)
         if mode == Mode.DEMO:
             return DemoAgents()
-        if self.settings.llm_provider == "ollama":
-            return AIAgents(OllamaClient(self.settings.llm_base_url, self.settings.llm_model))
+        if options.provider == "ollama":
+            return AIAgents(OllamaClient(options.base_url, options.model), options.prompt)
         return AIAgents(
             OpenAICompatibleClient(
-                self.settings.llm_base_url,
-                self.settings.llm_api_key,
-                self.settings.llm_model,
-            )
+                options.base_url,
+                options.api_key,
+                options.model,
+            ), options.prompt
         )
 
     def _speech(self, mode: VoiceMode):
@@ -75,19 +75,22 @@ class JobProcessor:
             self.store.set_progress(job_id, "解析 PDF", 8)
             document = read_pdf(
                 (folder / "source.pdf").read_bytes(),
-                job["filename"], self.settings.max_pdf_pages,
+                job["filename"],
             )
             mode = Mode(job["mode"])
             voice_mode = VoiceMode(job["voice_mode"])
-            agents = self._agents(mode)
+            options = self.store.get_options(job_id)
+            agents = self._agents(mode, options)
             self.store.set_progress(job_id, "提取知识点", 22)
             bundle = agents.extract_knowledge(document)
             self.store.set_progress(job_id, "设计课程结构", 38)
             outline = agents.plan(bundle)
             self.store.set_progress(job_id, "编写讲稿与分镜", 53)
             lesson = agents.script(bundle, outline, voice_mode)
-            if mode == Mode.AI and self.settings.llm_provider == "ollama":
+            if mode == Mode.AI and options.provider == "ollama":
                 lesson.notice = "本机 Ollama 生成：页码引文已自动核对，知识正确性仍需人工复核。"
+            if any(page.ocr for page in document.pages):
+                lesson.notice += " 扫描页文字经 OCR 识别，请核对识别结果和引用。"
             self.store.set_progress(job_id, "核验引用与讲解结构", 64)
             validate_lesson(document, lesson)
             agents.review(lesson)
@@ -108,6 +111,7 @@ class JobProcessor:
             logger.exception("任务 %s 发生未预期的错误", job_id)
             self.store.fail(job_id, "处理失败，请检查服务日志后重试。")
         finally:
+            self.store.clear_api_key(job_id)
             if agents is not None and isinstance(agents, AIAgents):
                 agents.client.close()
             if speech is not None and isinstance(speech, AISpeech):

@@ -1,4 +1,5 @@
 import wave
+import sqlite3
 
 import httpx
 from fastapi.testclient import TestClient
@@ -123,11 +124,54 @@ def test_remote_consent_and_running_delete_guard(tmp_path, sample_pdf):
         assert client.delete(f"/api/jobs/{response.json()['id']}").status_code == 409
 
 
+def test_web_model_overrides_and_prompt_do_not_store_api_key(tmp_path, sample_pdf):
+    class QueuedRunner:
+        def submit(self, job_id):
+            pass
+        def shutdown(self):
+            pass
+
+    app = create_app(Settings(data_dir=tmp_path / "data"), QueuedRunner())
+    with TestClient(app) as client:
+        assert 'id="custom-prompt"' in client.get("/").text
+        payload = {
+            "rights_confirmed": "true", "mode": "ai", "remote_consent": "true",
+            "llm_provider": "openai", "llm_base_url": "https://example.invalid/v1",
+            "llm_model": "my-model", "llm_api_key": "secret-for-this-job",
+            "custom_prompt": "给初学者讲得详细一些，增加例子。",
+        }
+        response = client.post("/api/jobs", files={"file": ("source.pdf", sample_pdf)}, data=payload)
+        assert response.status_code == 202, response.text
+        job_id = response.json()["id"]
+        options = app.state.store.get_options(job_id)
+        assert options.model == "my-model"
+        assert "初学者" in options.prompt
+        assert options.api_key == "secret-for-this-job"
+        assert "secret-for-this-job" not in str(response.json())
+        assert b"secret-for-this-job" not in app.state.store.db_path.read_bytes()
+
+
 def test_store_marks_interrupted_jobs_failed(tmp_path, sample_pdf):
     store = JobStore(tmp_path / "data")
     job = store.create("sample.pdf", Mode.DEMO, VoiceMode.SYSTEM, True, False, sample_pdf)
     restarted = JobStore(tmp_path / "data")
     assert restarted.get(job["id"])["status"] == JobStatus.FAILED
+
+
+def test_existing_job_database_is_migrated(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    with sqlite3.connect(data_dir / "jobs.sqlite3") as connection:
+        connection.execute("""CREATE TABLE jobs (
+            id TEXT PRIMARY KEY, filename TEXT NOT NULL, mode TEXT NOT NULL,
+            voice_mode TEXT NOT NULL, rights_confirmed INTEGER NOT NULL,
+            remote_consent INTEGER NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL,
+            progress INTEGER NOT NULL, error TEXT, lesson_json TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+    store = JobStore(data_dir)
+    assert store.get_options("missing").provider == "openai"
+    with sqlite3.connect(store.db_path) as connection:
+        assert "options_json" in {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
 
 
 def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):

@@ -5,6 +5,7 @@ const dropzone = $("#dropzone");
 let currentJobId = localStorage.getItem("zhijiang-job-id");
 let pollTimer = null;
 let config = null;
+let shownSettingsJobId = null;
 
 async function getJSON(url, options = {}) {
   const response = await fetch(url, options);
@@ -20,11 +21,19 @@ async function getJSON(url, options = {}) {
 function selected(name) { return form.querySelector(`input[name="${name}"]:checked`)?.value; }
 
 function updateConsent() {
-  const remote = (selected("mode") === "ai" && !config?.llm_is_local) ||
+  const ai = selected("mode") === "ai";
+  $("#ai-settings").hidden = !ai;
+  const modelURL = $("#llm-base-url").value || config?.llm_base_url || "";
+  let localModel = false;
+  try { localModel = ["localhost", "127.0.0.1", "[::1]"].includes(new URL(modelURL).hostname); } catch (_) {}
+  const remote = (ai && !localModel) ||
     (selected("voice_mode") === "ai" && !config?.tts_is_local);
   $("#remote-consent-row").hidden = !remote;
   $("#remote-consent").required = remote;
   if (!remote) $("#remote-consent").checked = false;
+  $("#llm-api-key").required = ai && $("#llm-provider").value === "openai" && !config?.llm_ready;
+  $("#api-key-hint").textContent = $("#llm-provider").value === "ollama" ? "本机 Ollama 无需填写" :
+    (config?.llm_ready ? "服务器已有默认密钥；更换接口时请填写" : "兼容接口需要填写");
 }
 
 function setFile(file) {
@@ -46,8 +55,24 @@ dropzone.addEventListener("drop", (event) => {
 });
 fileInput.addEventListener("change", () => { if (fileInput.files.length) $("#file-label").textContent = fileInput.files[0].name; });
 form.querySelectorAll('input[type="radio"]').forEach((input) => input.addEventListener("change", updateConsent));
+$("#llm-provider").addEventListener("change", updateConsent);
+$("#llm-base-url").addEventListener("input", updateConsent);
 
 function showJob(job) {
+  if (shownSettingsJobId !== job.id) {
+    shownSettingsJobId = job.id;
+    const modeChoice = form.querySelector(`input[name="mode"][value="${job.mode}"]`);
+    if (modeChoice) modeChoice.checked = true;
+    const voiceChoice = form.querySelector(`input[name="voice_mode"][value="${job.voice_mode}"]`);
+    if (voiceChoice) voiceChoice.checked = true;
+    if (job.mode === "ai" && job.model_settings) {
+      $("#llm-provider").value = job.model_settings.provider || "openai";
+      $("#llm-base-url").value = job.model_settings.base_url || "";
+      $("#llm-model").value = job.model_settings.model || "";
+      $("#custom-prompt").value = job.model_settings.prompt || "";
+    }
+    updateConsent();
+  }
   $("#job-section").hidden = false;
   $("#job-filename").textContent = job.filename || "";
   const badge = $("#job-badge");
@@ -70,7 +95,7 @@ function addSegment(segment, index) {
   const title = document.createElement("strong");
   title.textContent = `${String(index + 1).padStart(2, "0")} · ${segment.title}`;
   const page = document.createElement("span");
-  page.textContent = `PDF 第 ${segment.evidence.page} 页 ↗`;
+  page.textContent = `PDF 第 ${segment.evidence.page} 页${segment.evidence.ocr ? " · OCR" : ""} ↗`;
   summary.append(title, page);
   const body = document.createElement("div");
   body.className = "segment-body";
@@ -141,7 +166,13 @@ form.addEventListener("submit", async (event) => {
     body.append("voice_mode", selected("voice_mode"));
     body.append("rights_confirmed", String($("#rights-confirmed").checked));
     body.append("remote_consent", String($("#remote-consent").checked));
+    if (selected("mode") === "ai") {
+      for (const name of ["llm_provider", "llm_base_url", "llm_model", "llm_api_key", "custom_prompt"]) {
+        body.append(name, form.elements[name].value);
+      }
+    }
     const job = await getJSON("/api/jobs", { method: "POST", body });
+    $("#llm-api-key").value = "";
     currentJobId = job.id;
     localStorage.setItem("zhijiang-job-id", job.id);
     $("#lesson-result").hidden = true;
@@ -174,7 +205,10 @@ $("#retry-button").addEventListener("click", async () => {
   const button = $("#retry-button");
   button.disabled = true;
   try {
-    const job = await getJSON(`/api/jobs/${currentJobId}/retry`, { method: "POST" });
+    const body = new FormData();
+    body.append("llm_api_key", $("#llm-api-key").value);
+    const job = await getJSON(`/api/jobs/${currentJobId}/retry`, { method: "POST", body });
+    $("#llm-api-key").value = "";
     $("#lesson-result").hidden = true;
     showJob(job);
     startPolling();
@@ -188,10 +222,12 @@ $("#retry-button").addEventListener("click", async () => {
 (async function initialize() {
   try {
     config = await getJSON("/api/config");
-    $("#pdf-limits").textContent = `仅支持可提取文字的 PDF · 最多 ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB / ${config.max_pdf_pages} 页 · 不支持扫描件 OCR`;
-    $("#ai-choice input").disabled = !config.llm_ready;
-    $("#ai-ready-label").textContent = !config.llm_ready ? "未配置可用模型，当前不可选" :
-      (config.llm_is_local ? `本机 ${config.llm_provider} · ${config.llm_model}，文本在本机处理` : "已配置外部模型 · 发送提取文本前需同意");
+    $("#pdf-limits").textContent = `文字版和扫描版 PDF · 最多 ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB · 无页数上限`;
+    $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
+    $("#llm-base-url").value = config.llm_base_url || "";
+    $("#llm-model").value = config.llm_model || "";
+    $("#ai-ready-label").textContent = config.llm_ready ?
+      `默认：${config.llm_provider} · ${config.llm_model}；可在下方修改` : "在下方填写本次使用的模型 API";
     $("#tts-choice input").disabled = !config.ai_tts_ready;
     $("#tts-ready-label").textContent = !config.ai_tts_ready ? "未配置语音服务，当前不可选" :
       (config.tts_is_local ? "已配置本机语音服务" : "已配置外部语音服务 · 需同意发送讲稿");

@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 from zhijiang.agents import DemoAgents, OllamaClient
 from zhijiang.config import Settings
 from zhijiang.main import create_app
-from zhijiang.models import KnowledgeBundle
+from zhijiang.models import KnowledgeBundle, PageText, SourceDocument
+from zhijiang.agents import source_candidates
 from zhijiang.pdf import read_pdf
 
 
@@ -46,6 +47,32 @@ def test_ollama_native_json_schema_request(sample_pdf):
         client = OllamaClient("http://127.0.0.1:11434", "qwen2.5:7b", http_client)
         assert client.generate(KnowledgeBundle, "提取", "测试资料") == bundle
     assert len(requests) == 1
+
+
+def test_qwen3_uses_non_thinking_mode(sample_pdf):
+    bundle = DemoAgents().extract_knowledge(read_pdf(sample_pdf, "original.pdf"))
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["think"] is False
+        return httpx.Response(200, json={"message": {"content": bundle.model_dump_json()}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client = OllamaClient("http://127.0.0.1:11434", "qwen3:4b", http_client)
+        assert client.generate(KnowledgeBundle, "提取", "资料") == bundle
+
+
+def test_long_english_pdf_candidates_fit_small_batches():
+    document = SourceDocument(filename="paper.pdf", pages=[
+        PageText(page=number, text="\n".join(
+            f"Page {number} paragraph {index} explains a substantial part of the method and results."
+            for index in range(20)))
+        for number in range(1, 18)
+    ])
+    candidates = source_candidates(document)
+    assert len(candidates) == 34
+    assert candidates[-1]["page"] == 17
+    assert all(len(item["quote"]) <= 120 for item in candidates)
 
 
 def test_local_ollama_does_not_require_remote_consent(tmp_path, sample_pdf):

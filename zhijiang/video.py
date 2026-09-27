@@ -177,7 +177,7 @@ def render_video(lesson: Lesson, audio_files: list[Path], output: Path) -> None:
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
             "-shortest", str(output),
         ],
-        capture_output=True, text=True, timeout=300, check=False,
+        capture_output=True, text=True, check=False,
     )
     if process.returncode != 0 or not output.is_file() or output.stat().st_size < 1000:
         raise VideoError("FFmpeg 视频合成失败。")
