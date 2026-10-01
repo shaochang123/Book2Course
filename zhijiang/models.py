@@ -53,6 +53,13 @@ class GenerationOptions(BaseModel):
     prompt: str = Field(default="", max_length=4000)
 
 
+class SpeechOptions(BaseModel):
+    base_url: str = ""
+    model: str = ""
+    voice: str = ""
+    api_key: str = Field(default="", exclude=True)
+
+
 class KnowledgePoint(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     kind: VisualKind

@@ -20,20 +20,33 @@ async function getJSON(url, options = {}) {
 
 function selected(name) { return form.querySelector(`input[name="${name}"]:checked`)?.value; }
 
+function isLocalURL(value) {
+  try { return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(value).hostname); }
+  catch (_) { return false; }
+}
+
 function updateConsent() {
   const ai = selected("mode") === "ai";
+  const aiVoice = selected("voice_mode") === "ai";
   $("#ai-settings").hidden = !ai;
+  $("#tts-settings").hidden = !aiVoice;
   const modelURL = $("#llm-base-url").value || config?.llm_base_url || "";
-  let localModel = false;
-  try { localModel = ["localhost", "127.0.0.1", "[::1]"].includes(new URL(modelURL).hostname); } catch (_) {}
-  const remote = (ai && !localModel) ||
-    (selected("voice_mode") === "ai" && !config?.tts_is_local);
+  const ttsURL = $("#tts-base-url").value || config?.tts_base_url || "";
+  const localVoice = isLocalURL(ttsURL);
+  const remote = (ai && !isLocalURL(modelURL)) || (aiVoice && !localVoice);
   $("#remote-consent-row").hidden = !remote;
   $("#remote-consent").required = remote;
   if (!remote) $("#remote-consent").checked = false;
   $("#llm-api-key").required = ai && $("#llm-provider").value === "openai" && !config?.llm_ready;
   $("#api-key-hint").textContent = $("#llm-provider").value === "ollama" ? "本机 Ollama 无需填写" :
     (config?.llm_ready ? "服务器已有默认密钥；更换接口时请填写" : "兼容接口需要填写");
+  for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
+    form.elements[name].required = aiVoice;
+  }
+  const usesDefaultVoice = ttsURL === config?.tts_base_url &&
+    $("#tts-model").value === config?.tts_model && $("#tts-voice").value === config?.tts_voice;
+  $("#tts-api-key").required = aiVoice && !localVoice && !(usesDefaultVoice && config?.ai_tts_ready);
+  $("#tts-key-hint").textContent = localVoice ? "本机服务无需填写" : "外部服务需要填写；默认服务可使用服务器密钥";
 }
 
 function setFile(file) {
@@ -57,6 +70,9 @@ fileInput.addEventListener("change", () => { if (fileInput.files.length) $("#fil
 form.querySelectorAll('input[type="radio"]').forEach((input) => input.addEventListener("change", updateConsent));
 $("#llm-provider").addEventListener("change", updateConsent);
 $("#llm-base-url").addEventListener("input", updateConsent);
+for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
+  form.elements[name].addEventListener("input", updateConsent);
+}
 
 function showJob(job) {
   if (shownSettingsJobId !== job.id) {
@@ -70,6 +86,11 @@ function showJob(job) {
       $("#llm-base-url").value = job.model_settings.base_url || "";
       $("#llm-model").value = job.model_settings.model || "";
       $("#custom-prompt").value = job.model_settings.prompt || "";
+    }
+    if (job.voice_mode === "ai" && job.voice_settings) {
+      $("#tts-base-url").value = job.voice_settings.base_url || "";
+      $("#tts-model").value = job.voice_settings.model || "";
+      $("#tts-voice").value = job.voice_settings.voice || "";
     }
     updateConsent();
   }
@@ -116,7 +137,7 @@ async function showLesson(jobId) {
   $("#lesson-objective").textContent = lesson.objective;
   $("#lesson-notice").textContent = lesson.notice;
   $("#segment-count").textContent = `${lesson.segments.length} 个讲解片段`;
-  $("#voice-note").textContent = lesson.voice_mode === "ai" ? "本视频使用所配置的在线 AI 语音服务。" : "本视频使用 Windows 系统语音；此配音不是 AI 语音。";
+  $("#voice-note").textContent = lesson.voice_mode === "ai" ? "本视频使用所配置的 AI 语音服务。" : "本视频使用 Windows 系统语音；此配音不是 AI 语音。";
   $("#segments").replaceChildren();
   lesson.segments.forEach(addSegment);
   const videoURL = `/api/jobs/${jobId}/video`;
@@ -171,8 +192,14 @@ form.addEventListener("submit", async (event) => {
         body.append(name, form.elements[name].value);
       }
     }
+    if (selected("voice_mode") === "ai") {
+      for (const name of ["tts_base_url", "tts_model", "tts_voice", "tts_api_key"]) {
+        body.append(name, form.elements[name].value);
+      }
+    }
     const job = await getJSON("/api/jobs", { method: "POST", body });
     $("#llm-api-key").value = "";
+    $("#tts-api-key").value = "";
     currentJobId = job.id;
     localStorage.setItem("zhijiang-job-id", job.id);
     $("#lesson-result").hidden = true;
@@ -207,8 +234,10 @@ $("#retry-button").addEventListener("click", async () => {
   try {
     const body = new FormData();
     body.append("llm_api_key", $("#llm-api-key").value);
+    body.append("tts_api_key", $("#tts-api-key").value);
     const job = await getJSON(`/api/jobs/${currentJobId}/retry`, { method: "POST", body });
     $("#llm-api-key").value = "";
+    $("#tts-api-key").value = "";
     $("#lesson-result").hidden = true;
     showJob(job);
     startPolling();
@@ -226,11 +255,13 @@ $("#retry-button").addEventListener("click", async () => {
     $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
     $("#llm-base-url").value = config.llm_base_url || "";
     $("#llm-model").value = config.llm_model || "";
+    $("#tts-base-url").value = config.tts_base_url || "";
+    $("#tts-model").value = config.tts_model || "";
+    $("#tts-voice").value = config.tts_voice || "";
     $("#ai-ready-label").textContent = config.llm_ready ?
       `默认：${config.llm_provider} · ${config.llm_model}；可在下方修改` : "在下方填写本次使用的模型 API";
-    $("#tts-choice input").disabled = !config.ai_tts_ready;
-    $("#tts-ready-label").textContent = !config.ai_tts_ready ? "未配置语音服务，当前不可选" :
-      (config.tts_is_local ? "已配置本机语音服务" : "已配置外部语音服务 · 需同意发送讲稿");
+    $("#tts-ready-label").textContent = !config.ai_tts_ready ? "可在下方填写本次使用的语音 API" :
+      (config.tts_is_local ? "默认连接本机语音模型；可在下方修改" : "默认连接外部语音服务；可在下方修改");
     updateConsent();
     if (currentJobId) startPolling();
   } catch (error) {

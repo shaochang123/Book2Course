@@ -5,12 +5,23 @@ from io import BytesIO
 import httpx
 import imageio_ffmpeg
 import pytest
+from fastapi.testclient import TestClient
 
 from zhijiang.agents import DemoAgents
+from zhijiang.local_tts import create_app as create_local_tts_app
 from zhijiang.models import VoiceMode
 from zhijiang.pdf import read_pdf
 from zhijiang.speech import AISpeech, SpeechError
 from zhijiang.video import render_video
+
+
+def test_local_tts_reports_missing_model(tmp_path):
+    with TestClient(create_local_tts_app(tmp_path)) as client:
+        assert client.get("/health").json()["installed"] is False
+        payload = {"model": "kokoro-82m-v1.1-zh", "voice": "zf_001", "input": "你好"}
+        assert client.post("/v1/audio/speech", json=payload).status_code == 503
+        payload["model"] = "wrong-model"
+        assert client.post("/v1/audio/speech", json=payload).status_code == 400
 
 
 def test_ai_speech_rejects_service_failure(tmp_path):

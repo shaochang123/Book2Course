@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from zhijiang.config import Settings
-from zhijiang.models import GenerationOptions, JobStatus, Mode, VoiceMode
+from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
 from zhijiang.pdf import PDFError, validate_pdf
 from zhijiang.pipeline import JobProcessor, JobRunner
 from zhijiang.storage import JobStore
@@ -48,6 +48,28 @@ def model_options(settings: Settings, provider: str, base_url: str, model: str,
     return options
 
 
+def speech_options(settings: Settings, base_url: str, model: str, voice: str,
+                   api_key: str) -> SpeechOptions:
+    customized = bool(api_key or (base_url and base_url.rstrip("/") != settings.tts_base_url.rstrip("/"))
+                      or (model and model != settings.tts_model)
+                      or (voice and voice != settings.tts_voice))
+    options = SpeechOptions(
+        base_url=(base_url or settings.tts_base_url).strip().rstrip("/"),
+        model=(model or settings.tts_model).strip(),
+        voice=(voice or settings.tts_voice).strip(),
+        api_key=api_key.strip() if customized else settings.tts_api_key,
+    )
+    parsed = urlparse(options.base_url)
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or parsed.username or parsed.password or parsed.query or parsed.fragment):
+        raise HTTPException(400, "请填写有效的 HTTP(S) 语音 API 地址。")
+    if not options.model or not options.voice:
+        raise HTTPException(400, "请填写语音模型名称和音色。")
+    if not Settings._is_loopback(options.base_url) and not options.api_key:
+        raise HTTPException(400, "外部语音 API 需要密钥。")
+    return options
+
+
 def create_app(settings: Settings | None = None, runner: JobRunner | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = JobStore(settings.data_dir)
@@ -79,6 +101,9 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             "tts_is_local": settings.tts_is_local,
             "max_pdf_bytes": settings.max_pdf_bytes,
             "llm_base_url": settings.llm_base_url,
+            "tts_base_url": settings.tts_base_url,
+            "tts_model": settings.tts_model,
+            "tts_voice": settings.tts_voice,
             "demo_notice": "演示模式的知识选择和讲稿由确定性规则生成，并非 AI 生成。",
         }
 
@@ -94,15 +119,19 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         llm_model: Annotated[str, Form()] = "",
         llm_api_key: Annotated[str, Form()] = "",
         custom_prompt: Annotated[str, Form()] = "",
+        tts_base_url: Annotated[str, Form()] = "",
+        tts_model: Annotated[str, Form()] = "",
+        tts_voice: Annotated[str, Form()] = "",
+        tts_api_key: Annotated[str, Form()] = "",
     ) -> dict:
         if not rights_confirmed:
             raise HTTPException(400, "请先确认拥有资料使用权。")
         options = model_options(settings, llm_provider, llm_base_url, llm_model,
                                 llm_api_key, custom_prompt) if mode == Mode.AI else GenerationOptions()
-        if voice_mode == VoiceMode.AI and not settings.ai_tts_ready:
-            raise HTTPException(400, "AI 配音尚未配置语音服务。")
+        voice_options = speech_options(settings, tts_base_url, tts_model, tts_voice,
+                                       tts_api_key) if voice_mode == VoiceMode.AI else SpeechOptions()
         external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
-        external_voice = voice_mode == VoiceMode.AI and not settings.tts_is_local
+        external_voice = voice_mode == VoiceMode.AI and not Settings._is_loopback(voice_options.base_url)
         if (external_text or external_voice) and not remote_consent:
             raise HTTPException(400, "调用外部服务前须同意发送提取文本或讲稿。")
         filename = (file.filename or "source.pdf").replace("\\", "/").split("/")[-1]
@@ -121,7 +150,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         except PDFError as exc:
             raise HTTPException(400, str(exc)) from exc
         job = store.create(filename, mode, voice_mode, rights_confirmed, remote_consent,
-                           content, options)
+                           content, options, voice_options)
         runner.submit(job["id"])
         return job
 
@@ -153,7 +182,8 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                             content_disposition_type="inline")
 
     @application.post("/api/jobs/{job_id}/retry", status_code=202)
-    def retry_job(job_id: str, llm_api_key: Annotated[str, Form()] = "") -> dict:
+    def retry_job(job_id: str, llm_api_key: Annotated[str, Form()] = "",
+                  tts_api_key: Annotated[str, Form()] = "") -> dict:
         job = store.get(job_id)
         if job is None:
             raise HTTPException(404, "任务不存在。")
@@ -167,10 +197,18 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             store.update_options(job_id, options)
         if Mode(job["mode"]) == Mode.AI and options.provider == "openai" and not options.api_key:
             raise HTTPException(400, "请重新输入此任务的 API 密钥后重试。")
-        if VoiceMode(job["voice_mode"]) == VoiceMode.AI and not settings.ai_tts_ready:
-            raise HTTPException(400, "AI 配音尚未配置语音服务。")
+        voice_options = store.get_speech_options(job_id)
+        if tts_api_key:
+            voice_options.api_key = tts_api_key
+        if VoiceMode(job["voice_mode"]) == VoiceMode.AI and not voice_options.base_url:
+            voice_options = speech_options(settings, "", "", "", tts_api_key)
+            store.update_speech_options(job_id, voice_options)
+        if (VoiceMode(job["voice_mode"]) == VoiceMode.AI
+                and not Settings._is_loopback(voice_options.base_url) and not voice_options.api_key):
+            raise HTTPException(400, "请重新输入此任务的语音 API 密钥后重试。")
         external_text = Mode(job["mode"]) == Mode.AI and not Settings._is_loopback(options.base_url)
-        external_voice = VoiceMode(job["voice_mode"]) == VoiceMode.AI and not settings.tts_is_local
+        external_voice = (VoiceMode(job["voice_mode"]) == VoiceMode.AI
+                          and not Settings._is_loopback(voice_options.base_url))
         if (external_text or external_voice) and not job["remote_consent"]:
             raise HTTPException(400, "调用外部服务前须重新提交并同意发送文本。")
         if not (store.jobs_dir / job_id / "source.pdf").is_file():
@@ -178,6 +216,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         if not store.retry(job_id):
             raise HTTPException(409, "任务状态已改变，请刷新页面。")
         store.set_api_key(job_id, options.api_key)
+        store.set_tts_api_key(job_id, voice_options.api_key)
         runner.submit(job_id)
         return store.get(job_id)
 
@@ -198,4 +237,16 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
     return application
 
 
-app = create_app()
+class LazyApplication:
+    """Do not open the persistent job store merely by importing this module."""
+
+    def __init__(self) -> None:
+        self._app: FastAPI | None = None
+
+    async def __call__(self, scope: dict, receive, send) -> None:
+        if self._app is None:
+            self._app = create_app()
+        await self._app(scope, receive, send)
+
+
+app = LazyApplication()

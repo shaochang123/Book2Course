@@ -1,4 +1,4 @@
-"""Windows 系统语音与可选在线 AI 语音适配器。"""
+"""Windows 系统语音与本机或外部 AI 语音适配器。"""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class AISpeech:
         self.api_key = api_key
         self.model = model
         self.voice = voice
-        self.http_client = http_client or httpx.Client(timeout=120)
+        self.http_client = http_client or httpx.Client(timeout=300)
         self._owns_client = http_client is None
 
     def close(self) -> None:
@@ -72,7 +72,7 @@ class AISpeech:
         try:
             response = self.http_client.post(
                 f"{self.base_url}/audio/speech",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                 json={
                     "model": self.model,
                     "voice": self.voice,

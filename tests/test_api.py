@@ -151,6 +151,64 @@ def test_web_model_overrides_and_prompt_do_not_store_api_key(tmp_path, sample_pd
         assert b"secret-for-this-job" not in app.state.store.db_path.read_bytes()
 
 
+def test_web_voice_overrides_use_local_service_without_key(tmp_path, sample_pdf):
+    class QueuedRunner:
+        def submit(self, job_id):
+            pass
+        def shutdown(self):
+            pass
+
+    app = create_app(Settings(data_dir=tmp_path / "data"), QueuedRunner())
+    with TestClient(app) as client:
+        page = client.get("/").text
+        assert 'id="tts-base-url"' in page
+        assert 'id="tts-voice"' in page
+        response = client.post(
+            "/api/jobs", files={"file": ("source.pdf", sample_pdf)},
+            data={
+                "rights_confirmed": "true", "voice_mode": "ai",
+                "tts_base_url": "http://127.0.0.1:8766/v1",
+                "tts_model": "kokoro-82m-v1.1-zh", "tts_voice": "zf_xiaoxiao",
+            },
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["voice_settings"]["voice"] == "zf_xiaoxiao"
+        assert app.state.store.get_speech_options(response.json()["id"]).model == "kokoro-82m-v1.1-zh"
+
+
+def test_external_voice_requires_consent_and_retry_key(tmp_path, sample_pdf):
+    class QueuedRunner:
+        def submit(self, job_id):
+            pass
+        def shutdown(self):
+            pass
+
+    app = create_app(Settings(data_dir=tmp_path / "data"), QueuedRunner())
+    payload = {
+        "rights_confirmed": "true", "voice_mode": "ai",
+        "tts_base_url": "https://example.invalid/v1",
+        "tts_model": "speech-model", "tts_voice": "voice-a",
+        "tts_api_key": "voice-secret",
+    }
+    with TestClient(app) as client:
+        denied = client.post("/api/jobs", files={"file": ("source.pdf", sample_pdf)}, data=payload)
+        assert denied.status_code == 400
+        assert "同意" in denied.json()["detail"]
+        payload["remote_consent"] = "true"
+        response = client.post("/api/jobs", files={"file": ("source.pdf", sample_pdf)}, data=payload)
+        assert response.status_code == 202, response.text
+        job_id = response.json()["id"]
+        assert "voice-secret" not in str(response.json())
+        assert b"voice-secret" not in app.state.store.db_path.read_bytes()
+        app.state.store.fail(job_id, "模拟语音失败")
+        app.state.store.clear_api_key(job_id)
+        assert client.post(f"/api/jobs/{job_id}/retry").status_code == 400
+        retry = client.post(f"/api/jobs/{job_id}/retry", data={"tts_api_key": "new-secret"})
+        assert retry.status_code == 202, retry.text
+        assert app.state.store.get_speech_options(job_id).api_key == "new-secret"
+        assert b"new-secret" not in app.state.store.db_path.read_bytes()
+
+
 def test_store_marks_interrupted_jobs_failed(tmp_path, sample_pdf):
     store = JobStore(tmp_path / "data")
     job = store.create("sample.pdf", Mode.DEMO, VoiceMode.SYSTEM, True, False, sample_pdf)

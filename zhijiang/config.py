@@ -56,7 +56,8 @@ class Settings:
 
     @property
     def ai_tts_ready(self) -> bool:
-        return bool(self.tts_base_url and self.tts_api_key and self.tts_model)
+        return bool(self.tts_base_url and self.tts_model and self.tts_voice
+                    and (self.tts_is_local or self.tts_api_key))
 
     @staticmethod
     def _is_loopback(url: str) -> bool:

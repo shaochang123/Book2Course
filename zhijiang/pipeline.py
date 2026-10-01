@@ -12,7 +12,7 @@ from zhijiang.agents import (
     validate_lesson,
 )
 from zhijiang.config import Settings
-from zhijiang.models import GenerationOptions, JobStatus, Mode, VoiceMode
+from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
 from zhijiang.pdf import PDFError, read_pdf
 from zhijiang.speech import AISpeech, SpeechError, SystemSpeech
 from zhijiang.storage import JobStore
@@ -52,15 +52,15 @@ class JobProcessor:
             ), options.prompt
         )
 
-    def _speech(self, mode: VoiceMode):
+    def _speech(self, mode: VoiceMode, options: SpeechOptions):
         if self.speech_factory:
             return self.speech_factory(mode)
         if mode == VoiceMode.AI:
             return AISpeech(
-                self.settings.tts_base_url,
-                self.settings.tts_api_key,
-                self.settings.tts_model,
-                self.settings.tts_voice,
+                options.base_url,
+                options.api_key,
+                options.model,
+                options.voice,
             )
         return SystemSpeech(self.settings.system_voice)
 
@@ -96,12 +96,16 @@ class JobProcessor:
             agents.review(lesson)
             self.store.save_lesson(job_id, lesson)
             self.store.set_progress(job_id, "合成配音", 73)
-            speech = self._speech(voice_mode)
+            speech = self._speech(voice_mode, self.store.get_speech_options(job_id))
             audio_files: list[Path] = []
             for index, segment in enumerate(lesson.segments):
                 audio = folder / f"audio-{index}.wav"
                 speech.synthesize(segment.narration, audio)
                 audio_files.append(audio)
+                self.store.set_progress(
+                    job_id, f"合成配音（{index + 1}/{len(lesson.segments)}）",
+                    73 + (index + 1) * 14 // len(lesson.segments),
+                )
             self.store.set_progress(job_id, "合成教学视频", 88)
             self.video_renderer(lesson, audio_files, folder / "lesson.mp4")
             self.store.complete(job_id)

@@ -4,7 +4,7 @@
 
 智讲 Agent 将有使用权的 PDF 转换为中文教学视频。文字版 PDF 直接提取内容，扫描页在本机 OCR。上传资料后，页面展示课程结构、逐段讲稿、PDF 页码与原文摘录，并提供可播放、可下载的 MP4。
 
-系统提供两种生成方式：**真实 AI 模式**调用本机 Ollama 或外部兼容模型；**确定性演示模式**无需模型或密钥，使用固定规则生成内容，并在页面与视频中标明。网页可为单次任务调整模型提供方、API 地址、模型名称、密钥和讲解提示词。配音可使用 Windows 中文系统语音；配置兼容语音服务后也可选择 AI 配音。来源核验只确认摘录与对应提取/OCR 文字匹配，知识解释和 OCR 准确性仍需人工复核。
+系统提供两种生成方式：**真实 AI 模式**调用本机 Ollama 或外部兼容模型；**确定性演示模式**无需模型或密钥，使用固定规则生成内容，并在页面与视频中标明。网页可为单次任务调整文本模型提供方、API 地址、模型名称、密钥和讲解提示词，也可单独设置语音 API 地址、模型、音色和密钥。配音可使用 Windows 中文系统语音、本机 Kokoro 中文 AI 语音模型或外部兼容语音服务。来源核验只确认摘录与对应提取/OCR 文字匹配，知识解释和 OCR 准确性仍需人工复核。
 
 ## 快速开始（Windows）
 
@@ -18,11 +18,11 @@ python -m venv .venv
 
 打开 [http://127.0.0.1:8765/](http://127.0.0.1:8765/)，上传有使用权的 PDF，确认资料使用权后开始生成。可用[示例讲义](examples/binary_search_original.pdf)体验。生成完成后可查看来源、播放或下载视频，也可删除本地任务和资料。失败任务可用原 PDF 重新生成。按 `Ctrl+C` 关闭 Web 服务。
 
-运行环境为 Python 3.11+ 与 Windows 中文系统语音；已在 Python 3.13 上验证。`rapidocr` 和 `onnxruntime` 在本机执行 OCR，`pypdfium2` 负责扫描页渲染。`imageio-ffmpeg` 提供视频合成所需的 FFmpeg，无需单独安装系统 FFmpeg。
+运行环境为 Python 3.11+；选择系统配音时需要 Windows 中文系统语音。已在 Python 3.13 上验证。`rapidocr` 和 `onnxruntime` 在本机执行 OCR，`pypdfium2` 负责扫描页渲染。`imageio-ffmpeg` 提供视频合成所需的 FFmpeg，无需单独安装系统 FFmpeg。
 
 ## 使用本机 Ollama
 
-安装并启动 [Ollama](https://ollama.com/)，通过 `ollama list` 检查模型。默认模板使用 `qwen2.5:7b`；如果本机没有该模型，可运行 `ollama pull qwen2.5:7b`。复制配置模板后重启 Web 服务：
+安装并启动 [Ollama](https://ollama.com/)，通过 `ollama list` 检查模型。默认模板使用 `qwen3:4b`；如果本机没有该模型，可运行 `ollama pull qwen3:4b`。复制配置模板后重启 Web 服务：
 
 ```powershell
 Copy-Item .env.local.example .env.local
@@ -33,6 +33,23 @@ Copy-Item .env.local.example .env.local
 也可以不创建 `.env.local`，直接在网页选择真实 AI 模式并填写本次任务的 API 配置。API 密钥仅在任务运行期间留在服务进程内存，不写入 SQLite、课程 JSON 或网页响应；刷新页面或服务重启后重试外部模型任务，需要重新输入密钥。自定义提示词作用于课程规划和讲稿风格，不能绕过来源核验。
 
 已生成的[示例视频](demo/zhijiang_ollama_demo.mp4)与[讲稿及来源](demo/zhijiang_ollama_lesson.json)可直接查看。示例视频的讲稿由本机模型生成，声音来自 Windows 系统语音。
+
+## 使用本机 AI 配音
+
+本机无 NVIDIA 显卡时，可通过 CPU 运行支持中文的 [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)。在项目目录安装可选依赖并下载 [ONNX Community 的量化模型](https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX)及 4 种中文音色（约 130 MB，保存在忽略提交的 `data/models/kokoro/`，下载脚本会校验 SHA-256）：
+
+```powershell
+.\.venv\Scripts\python -m pip install -e ".[local-tts]"
+.\.venv\Scripts\python scripts\download_local_tts.py
+```
+
+在一个终端启动本机语音 API，并保持运行：
+
+```powershell
+.\.venv\Scripts\python -m uvicorn zhijiang.local_tts:app --host 127.0.0.1 --port 8766
+```
+
+在另一个终端启动主 Web 服务。复制 `.env.local.example` 为 `.env.local` 后，网页会默认填入 `http://127.0.0.1:8766/v1`、模型 `kokoro-82m-v1.1-zh` 和中文音色 `zf_001`。还可选择 `zf_002`、`zm_009`、`zm_010`。也可不创建配置文件，直接在网页选择“AI 语音配音”并填写这些值。本机接口无需 API 密钥，语音合成在本机进行；首次请求需加载模型，长讲稿在 CPU 上需要更多时间。可打开 [语音服务健康检查](http://127.0.0.1:8766/health)确认模型文件已安装。
 
 ## 外部模型与语音服务
 
@@ -45,7 +62,7 @@ $env:ZHIJIANG_LLM_API_KEY = "你的密钥"
 $env:ZHIJIANG_LLM_MODEL = "你的模型名"
 ```
 
-可选 AI 配音需要兼容 `POST /audio/speech` 并能返回 WAV：
+外部 AI 配音需要兼容 `POST /audio/speech` 并能返回 WAV。以下变量可替换 `.env.local` 中的本机语音配置；也可在网页为单次任务填写：
 
 ```powershell
 $env:ZHIJIANG_TTS_BASE_URL = "https://你的语音服务地址/v1"
@@ -54,7 +71,7 @@ $env:ZHIJIANG_TTS_MODEL = "你的语音模型名"
 $env:ZHIJIANG_TTS_VOICE = "alloy"
 ```
 
-使用外部服务时，网页会要求额外确认发送提取文本或讲稿。不要将密钥提交到仓库。
+使用外部服务时，网页会要求额外确认发送提取文本或讲稿。语音和文本 API 密钥仅在任务运行期间保留在服务进程内存；失败后重试外部语音任务需要重新输入语音密钥。不要将密钥提交到仓库。
 
 ## 测试与示例
 

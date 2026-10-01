@@ -27,6 +27,10 @@ test = [
   "pytest>=8,<10",
   "reportlab>=4,<5",
 ]
+local-tts = [
+  "kokoro-onnx==0.6.1",
+  "misaki[zh]==0.7.4",
+]
 
 [tool.setuptools.packages.find]
 include = ["zhijiang*"]

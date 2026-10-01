@@ -68,8 +68,21 @@
 
             <fieldset class="choice-group"><legend class="field-title"><span class="step-number">03</span>选择讲解声音</legend>
               <label class="choice-card compact"><input type="radio" name="voice_mode" value="system" checked><span><strong>Windows 中文系统语音</strong><small>离线可用；不属于 AI 配音</small></span><span class="choice-mark"></span></label>
-              <label class="choice-card compact" id="tts-choice"><input type="radio" name="voice_mode" value="ai"><span><strong>在线 AI 配音</strong><small id="tts-ready-label">等待读取语音配置…</small></span><span class="choice-mark"></span></label>
+              <label class="choice-card compact" id="tts-choice"><input type="radio" name="voice_mode" value="ai"><span><strong>AI 语音配音</strong><small id="tts-ready-label">本机模型或兼容语音 API</small></span><span class="choice-mark"></span></label>
             </fieldset>
+
+            <div id="tts-settings" class="advanced-fields" hidden>
+              <h3>本次任务的语音模型 API</h3>
+              <p>可连接本机 Kokoro 或兼容 <code>POST /audio/speech</code>、返回 WAV 的语音服务。密钥只在任务运行时保留在内存中。</p>
+              <label for="tts-base-url">语音 API 基础地址</label>
+              <input id="tts-base-url" name="tts_base_url" type="url" placeholder="http://127.0.0.1:8766/v1 或 https://服务地址/v1">
+              <label for="tts-model">语音模型名称</label>
+              <input id="tts-model" name="tts_model" type="text" placeholder="例如 kokoro-82m-v1.1-zh">
+              <label for="tts-voice">音色</label>
+              <input id="tts-voice" name="tts_voice" type="text" placeholder="例如 zf_001">
+              <label for="tts-api-key">语音 API 密钥 <span id="tts-key-hint">本机服务无需填写</span></label>
+              <input id="tts-api-key" name="tts_api_key" type="password" autocomplete="off" placeholder="仅当前任务使用">
+            </div>
 
             <div class="consents">
               <label><input id="rights-confirmed" type="checkbox" required><span>我确认拥有此资料的使用权，或资料采用开放许可。</span></label>
