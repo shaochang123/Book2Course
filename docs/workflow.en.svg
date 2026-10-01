@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Zhijiang Agent: PDF-to-video workflow and planned PPT extension</title>
+  <desc id="desc">The upper solid-line path is implemented: upload an authorized PDF, extract text or run local OCR, select source-backed knowledge points, write and validate a lesson, synthesize narration, and produce an MP4. The lower purple dashed path is planned: slide outline and speaker notes, SVG and LaTeX visuals, Manim animation, and editable PPTX output.</desc>
+  <defs>
+    <marker id="arrow-current" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 1 1 L 11 6 L 1 11 Z" fill="#6EE1CD"/>
+    </marker>
+    <marker id="arrow-planned" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 1 1 L 11 6 L 1 11 Z" fill="#C6A4FF"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" fill="#091723"/>
+  <rect x="36" y="25" width="5" height="66" rx="2.5" fill="#6EE1CD"/>
+  <text x="55" y="56" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="32" font-weight="700">From PDF to Lesson Video</text>
+  <text x="56" y="85" fill="#ADC2CD" font-family="Arial, sans-serif" font-size="16">Source-grounded teaching design, visuals, narration, and video assembly</text>
+
+  <line x1="844" y1="47" x2="887" y2="47" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
+  <text x="897" y="53" fill="#D9EEE8" font-family="Arial, sans-serif" font-size="17">Implemented</text>
+  <line x1="1013" y1="47" x2="1056" y2="47" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrow-planned)"/>
+  <text x="1066" y="53" fill="#E9DEFF" font-family="Arial, sans-serif" font-size="17">Planned</text>
+
+  <rect x="36" y="118" width="1128" height="315" rx="18" fill="#102A36" stroke="#2C5965" stroke-width="1.5"/>
+  <text x="59" y="151" fill="#77E4D1" font-family="Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1">CURRENT VIDEO WORKFLOW</text>
+
+  <rect x="58" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
+  <rect x="77" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
+  <text x="85" y="212" fill="#E8FFFA" font-family="Arial, sans-serif" font-size="17" font-weight="700">01</text>
+  <text x="129" y="214" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="23" font-weight="700">Input &amp; recognition</text>
+  <line x1="78" y1="233" x2="365" y2="233" stroke="#3C6B75"/>
+  <text x="79" y="264" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Rights-confirmed PDF upload</text>
+  <text x="79" y="296" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Extract text directly</text>
+  <text x="79" y="328" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Local OCR for scanned pages</text>
+  <text x="79" y="360" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Keep original page numbers</text>
+
+  <path d="M 390 286 H 429" fill="none" stroke="#6EE1CD" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-current)"/>
+
+  <rect x="435" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
+  <rect x="454" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
+  <text x="462" y="212" fill="#E8FFFA" font-family="Arial, sans-serif" font-size="17" font-weight="700">02</text>
+  <text x="506" y="214" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="23" font-weight="700">Lesson design &amp; checks</text>
+  <line x1="455" y1="233" x2="742" y2="233" stroke="#3C6B75"/>
+  <text x="456" y="261" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Select numbered source excerpts</text>
+  <text x="456" y="289" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">AI or demo rules derive points</text>
+  <text x="456" y="317" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Plan outline, script, and scenes</text>
+  <text x="456" y="345" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Program verifies exact citations</text>
+  <text x="456" y="373" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">AI mode reviews explanations</text>
+
+  <path d="M 767 286 H 806" fill="none" stroke="#6EE1CD" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-current)"/>
+
+  <rect x="812" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
+  <rect x="831" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
+  <text x="839" y="212" fill="#E8FFFA" font-family="Arial, sans-serif" font-size="17" font-weight="700">03</text>
+  <text x="883" y="214" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="23" font-weight="700">Audio &amp; video</text>
+  <line x1="832" y1="233" x2="1119" y2="233" stroke="#3C6B75"/>
+  <text x="833" y="261" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Windows or AI narration</text>
+  <text x="833" y="289" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Concept, formula, process frames</text>
+  <text x="833" y="317" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">FFmpeg audio-video assembly</text>
+  <text x="833" y="345" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Export lesson MP4</text>
+  <text x="833" y="373" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Show scripts and sources online</text>
+
+  <rect x="36" y="477" width="1128" height="145" rx="18" fill="#211D35" stroke="#765DA4" stroke-width="1.5" stroke-dasharray="8 6"/>
+  <path d="M 599 399 V 454 H 445 V 527" fill="none" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="8 6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-planned)"/>
+  <text x="59" y="512" fill="#D3BBFF" font-family="Arial, sans-serif" font-size="18" font-weight="700">PPT EXTENSION · PLANNED</text>
+  <text x="60" y="548" fill="#B6AACF" font-family="Arial, sans-serif" font-size="15">Build editable slides from</text>
+  <text x="60" y="573" fill="#B6AACF" font-family="Arial, sans-serif" font-size="15">validated lesson content.</text>
+
+  <rect x="320" y="529" width="250" height="69" rx="11" fill="#322946" stroke="#A78AD9" stroke-width="1.8"/>
+  <text x="337" y="558" fill="#F5EFFF" font-family="Arial, sans-serif" font-size="19" font-weight="700">Slide outline &amp; speech</text>
+  <text x="337" y="583" fill="#D5C8E9" font-family="Arial, sans-serif" font-size="15">Page plan · speaker notes</text>
+  <path d="M 574 563 H 597" fill="none" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrow-planned)"/>
+
+  <rect x="603" y="529" width="250" height="69" rx="11" fill="#322946" stroke="#A78AD9" stroke-width="1.8"/>
+  <text x="620" y="558" fill="#F5EFFF" font-family="Arial, sans-serif" font-size="19" font-weight="700">Visuals &amp; animation</text>
+  <text x="620" y="583" fill="#D5C8E9" font-family="Arial, sans-serif" font-size="15">SVG · LaTeX · Manim</text>
+  <path d="M 857 563 H 880" fill="none" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrow-planned)"/>
+
+  <rect x="886" y="529" width="250" height="69" rx="11" fill="#322946" stroke="#A78AD9" stroke-width="1.8"/>
+  <text x="903" y="558" fill="#F5EFFF" font-family="Arial, sans-serif" font-size="19" font-weight="700">Editable PPTX output</text>
+  <text x="903" y="583" fill="#D5C8E9" font-family="Arial, sans-serif" font-size="15">Slides with optional clips</text>
+
+  <text x="51" y="654" fill="#A8B8C6" font-family="Arial, sans-serif" font-size="15">Note: the purple dashed path is planned; this version does not generate PPTX, LaTeX visuals, or Manim animation.</text>
+</svg>

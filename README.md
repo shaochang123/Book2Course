@@ -6,6 +6,27 @@
 
 系统提供两种生成方式：**真实 AI 模式**调用本机 Ollama 或外部兼容模型；**确定性演示模式**无需模型或密钥，使用固定规则生成内容，并在页面与视频中标明。网页可为单次任务调整文本模型提供方、API 地址、模型名称、密钥和讲解提示词，也可单独设置语音 API 地址、模型、音色和密钥。配音可使用 Windows 中文系统语音、本机 Kokoro 中文 AI 语音模型或外部兼容语音服务。来源核验只确认摘录与对应提取/OCR 文字匹配，知识解释和 OCR 准确性仍需人工复核。
 
+## 从书籍到课程的流程
+
+草稿中的“书籍 → OCR／排版 → 页面”和“主画面 → 配音／动画 → 合成”在这里整理为同一条可溯源的制作链。**绿色实线是当前已实现的视频流程；紫色虚线是计划中的可编辑 PPT 增强**。来源核验能检查引文位置，不能保证知识覆盖完整或讲解正确，正式使用前仍要人工核对。
+
+[![从书籍 PDF 到教学视频的流程图](docs/workflow.zh.svg)](docs/workflow.zh.svg)
+
+当前视频画面由 Pillow 绘制为临时 PNG 帧并随任务清理，尚不能导出可编辑 PPTX；LaTeX 公式排版、SVG 教学图与 Manim 动画也还未接入网页生成流程。规划中的 PPT 分支保留原文页码、控制知识点遗漏，并让大纲、演讲稿、视觉风格和动画节奏在人工复核后保持一致。
+
+### PPT 内容制作 skills
+
+仓库内的以下 Codex skills 可用于后续制作可编辑 PPT 的内容和素材；它们不会被网页任务自动调用，也不改变当前 MP4 输出格式。可以在本项目的 Codex 任务中按名称调用：
+
+| Skill | 用途 |
+| --- | --- |
+| [`$book2course-ppt-outline`](.agents/skills/book2course-ppt-outline/SKILL.md) | 按知识依赖和来源页码规划逐页大纲，检查重要知识点是否遗漏。 |
+| [`$book2course-ppt-script`](.agents/skills/book2course-ppt-script/SKILL.md) | 为每页写演讲稿、讲者备注、配音文案和画面播放提示。 |
+| [`$book2course-svg-diagrams`](.agents/skills/book2course-svg-diagrams/SKILL.md) | 制作可编辑的 SVG 流程图、概念关系图和公式步骤图。 |
+| [`$book2course-explainer-animation`](.agents/skills/book2course-explainer-animation/SKILL.md) | 设计连续变换式讲解动画，并核对画面、口播和时间线；可按需使用 [Manim Community](https://docs.manim.community/en/stable/)。 |
+
+实际制作 PPTX 时，可再用 Codex 的 Presentations skill 组装大纲、讲稿、SVG 与动画素材，并检查幻灯片版式和讲者备注。Manim 是按需安装的动画制作工具，不属于本项目 Web 服务的基础依赖。
+
 ## 快速开始（Windows）
 
 在项目目录运行：

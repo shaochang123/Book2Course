@@ -6,6 +6,27 @@ Zhijiang Agent turns PDFs that you have the right to use into Chinese educationa
 
 There are two generation modes: **real AI mode** uses local Ollama or an external compatible model; **deterministic demo mode** uses fixed rules and needs no model or API key. The demo is labeled in the page and video. For each job, the web page lets you set the text model provider, API URL, model name, API key, and an instruction prompt. You can configure the speech API URL, model, voice, and key separately. Narration can use a Chinese Windows system voice, a local Chinese Kokoro AI speech model, or an external compatible speech service. Source verification checks that excerpts match the corresponding extracted or OCR text; the accuracy of explanations and OCR still needs human review.
 
+## From book to course
+
+The sketch's “book → OCR/typesetting → pages” and “main slides → narration/animation → assembly” paths are combined here into one source-linked workflow. **Green solid arrows show the video workflow already implemented; purple dashed arrows show the planned editable PPT extension.** Citation checks locate excerpts in the extracted text. They do not guarantee complete topic coverage or correct teaching explanations, so review the result before use.
+
+[![Workflow from PDF to lesson video](docs/workflow.en.svg)](docs/workflow.en.svg)
+
+The current visuals are temporary PNG frames drawn with Pillow and cleaned up after each job; editable PPTX export is not available. LaTeX formula typesetting, SVG teaching diagrams, and Manim animation are not yet part of the web pipeline. The planned PPT branch keeps page citations, checks for missing knowledge points, and aligns the outline, speaker script, visual style, and animation timing through human review.
+
+### PPT production skills
+
+The following repository Codex skills support future editable PPT content and assets. Web jobs do not invoke them automatically, and they do not change the current MP4 output format. Invoke them by name in a Codex task for this project:
+
+| Skill | Purpose |
+| --- | --- |
+| [`$book2course-ppt-outline`](.agents/skills/book2course-ppt-outline/SKILL.md) | Plan slides from learning dependencies and source pages; check for missing key concepts. |
+| [`$book2course-ppt-script`](.agents/skills/book2course-ppt-script/SKILL.md) | Write a page-aligned speaker script, notes, narration, and visual cues. |
+| [`$book2course-svg-diagrams`](.agents/skills/book2course-svg-diagrams/SKILL.md) | Create editable SVG flowcharts, concept diagrams, and formula step diagrams. |
+| [`$book2course-explainer-animation`](.agents/skills/book2course-explainer-animation/SKILL.md) | Design explanatory visual transformations and check visuals against narration and timing; use [Manim Community](https://docs.manim.community/en/stable/) when needed. |
+
+To produce a PPTX, use Codex's Presentations skill to assemble the outline, script, SVGs, and animation assets, then inspect slide layout and speaker notes. Manim is an optional animation authoring tool and is not a base dependency of the web service.
+
 ## Quick start (Windows)
 
 Run these commands in the project directory:
