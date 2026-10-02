@@ -139,6 +139,9 @@ def _normalize_audio(source: Path, target: Path, ffmpeg: str) -> float:
 def render_video(lesson: Lesson, audio_files: list[Path], output: Path) -> None:
     if len(audio_files) != len(lesson.segments):
         raise VideoError("讲稿片段与配音数量不一致。")
+    if any(segment.math_scene or segment.visual_scene for segment in lesson.segments):
+        _render_with_math(lesson, audio_files, output)
+        return
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     workdir = output.parent
     concatenated = workdir / "narration.wav"
@@ -181,3 +184,38 @@ def render_video(lesson: Lesson, audio_files: list[Path], output: Path) -> None:
     )
     if process.returncode != 0 or not output.is_file() or output.stat().st_size < 1000:
         raise VideoError("FFmpeg 视频合成失败。")
+
+
+def _render_with_math(lesson: Lesson, audio_files: list[Path], output: Path) -> None:
+    import tempfile
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    with tempfile.TemporaryDirectory(prefix="course-clips-", dir=output.parent) as temporary:
+        work = Path(temporary)
+        clips = []
+        for index, (segment, audio) in enumerate(zip(lesson.segments, audio_files)):
+            if segment.math_scene or segment.visual_scene:
+                clip = output.parent / ("math" if segment.math_scene else "visual") / f"scene-{index+1:02d}" / "clip.mp4"
+                if not clip.is_file():
+                    raise VideoError("教学场景视频尚未渲染。")
+            else:
+                part = work / str(index)
+                part.mkdir()
+                raw = part / "basic.mp4"
+                render_video(lesson.model_copy(update={"segments": [segment]}), [audio], raw)
+                clip = part / "normalized.mp4"
+                result = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(raw),
+                    "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000",
+                    "-ac", "2", str(clip)], capture_output=True)
+                if result.returncode:
+                    raise VideoError("基础片段格式合并失败。")
+            clips.append(clip)
+        manifest = work / "clips.txt"
+        # Source paths are generated job paths, not document filenames.
+        manifest.write_text("\n".join(f"file '{clip.resolve().as_posix()}'" for clip in clips), encoding="utf-8")
+        # AAC padding can shift concat boundaries by a few milliseconds. Produce
+        # a true 30 fps timeline while retaining the original clip audio streams.
+        result = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(manifest), "-r", "30", "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "veryfast",
+            "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output)], capture_output=True)
+        if result.returncode or not output.is_file():
+            raise VideoError("教学视频合并失败。")

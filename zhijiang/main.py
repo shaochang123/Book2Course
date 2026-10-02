@@ -14,6 +14,9 @@ from fastapi.staticfiles import StaticFiles
 
 from zhijiang.config import Settings
 from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
+from zhijiang.models import AnimationMode
+from zhijiang.math_planning import math_capabilities
+from zhijiang.visual_planning import PRIMITIVES, CHECKERS, DOMAIN_VALIDATORS
 from zhijiang.pdf import PDFError, validate_pdf
 from zhijiang.pipeline import JobProcessor, JobRunner
 from zhijiang.storage import JobStore
@@ -105,6 +108,11 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             "tts_model": settings.tts_model,
             "tts_voice": settings.tts_voice,
             "demo_notice": "演示模式的知识选择和讲稿由确定性规则生成，并非 AI 生成。",
+            "math_animation": math_capabilities(),
+            "visual_animation": {**math_capabilities(), "subject_restriction": None,
+                "topics": None, "primitives": list(PRIMITIVES),
+                "numeric_checks": sorted(CHECKERS), "domain_validators": sorted(DOMAIN_VALIDATORS),
+                "verification_scope": "几何、表达式与声明的数值关系；领域事实需复核"},
         }
 
     @application.post("/api/jobs", status_code=202)
@@ -119,6 +127,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         llm_model: Annotated[str, Form()] = "",
         llm_api_key: Annotated[str, Form()] = "",
         custom_prompt: Annotated[str, Form()] = "",
+        animation_mode: Annotated[AnimationMode, Form()] = "auto",
         tts_base_url: Annotated[str, Form()] = "",
         tts_model: Annotated[str, Form()] = "",
         tts_voice: Annotated[str, Form()] = "",
@@ -128,6 +137,11 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             raise HTTPException(400, "请先确认拥有资料使用权。")
         options = model_options(settings, llm_provider, llm_base_url, llm_model,
                                 llm_api_key, custom_prompt) if mode == Mode.AI else GenerationOptions()
+        if mode == Mode.DEMO and animation_mode in {"math","visual"}:
+            raise HTTPException(400, "数学推演需要选择真实 AI 模式。")
+        options.animation_mode = animation_mode if mode == Mode.AI else "basic"
+        if options.animation_mode in {"math","visual"} and not math_capabilities()["ready"]:
+            raise HTTPException(400, "数学动画环境未就绪：" + math_capabilities()["reason"])
         voice_options = speech_options(settings, tts_base_url, tts_model, tts_voice,
                                        tts_api_key) if voice_mode == VoiceMode.AI else SpeechOptions()
         external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
@@ -195,40 +209,92 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             filename="zhijiang-lesson.pptx",
         )
 
+    @application.get("/api/jobs/{job_id}/math-scenes")
+    def get_math_scenes(job_id: str) -> FileResponse:
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(404, "任务不存在。")
+        path = store.jobs_dir / job_id / "math-scenes.json"
+        if job["status"] != JobStatus.COMPLETED or not path.is_file():
+            raise HTTPException(409, "数学场景数据尚未生成。")
+        return FileResponse(path, media_type="application/json", filename="math-scenes.json")
+
+    @application.get("/api/jobs/{job_id}/scenes")
+    def get_scenes(job_id: str) -> FileResponse:
+        job=store.get(job_id)
+        if job is None:
+            raise HTTPException(404,"任务不存在。")
+        folder=store.jobs_dir/job_id
+        path=folder/"scene-data.json"
+        if not path.is_file():
+            path=folder/"math-scenes.json"
+        if job["status"]!=JobStatus.COMPLETED or not path.is_file():
+            raise HTTPException(409,"教学场景数据尚未生成。")
+        return FileResponse(path,media_type="application/json",filename="teaching-scenes.json")
+
     @application.post("/api/jobs/{job_id}/retry", status_code=202)
     def retry_job(job_id: str, llm_api_key: Annotated[str, Form()] = "",
-                  tts_api_key: Annotated[str, Form()] = "") -> dict:
+                  tts_api_key: Annotated[str, Form()] = "",
+                  mode: Annotated[Mode | None, Form()] = None,
+                  voice_mode: Annotated[VoiceMode | None, Form()] = None,
+                  llm_provider: Annotated[str | None, Form()] = None,
+                  llm_base_url: Annotated[str | None, Form()] = None,
+                  llm_model: Annotated[str | None, Form()] = None,
+                  custom_prompt: Annotated[str | None, Form()] = None,
+                  animation_mode: Annotated[AnimationMode | None, Form()] = None,
+                  tts_base_url: Annotated[str | None, Form()] = None,
+                  tts_model: Annotated[str | None, Form()] = None,
+                  tts_voice: Annotated[str | None, Form()] = None,
+                  replace_settings: Annotated[bool, Form()] = False,
+                  remote_consent: Annotated[bool | None, Form()] = None) -> dict:
         job = store.get(job_id)
         if job is None:
             raise HTTPException(404, "任务不存在。")
         if job["status"] != JobStatus.FAILED:
             raise HTTPException(409, "只有失败任务可以重新生成。")
+        mode = mode or Mode(job["mode"])
+        voice_mode = voice_mode or VoiceMode(job["voice_mode"])
+        if mode == Mode.DEMO and animation_mode in {"math", "visual"}:
+            raise HTTPException(400, "教学过程与数学推演需要选择真实 AI 模式。")
         options = store.get_options(job_id)
-        if llm_api_key:
-            options.api_key = llm_api_key
-        if Mode(job["mode"]) == Mode.AI and not options.base_url:
-            options = model_options(settings, "", "", "", llm_api_key, options.prompt)
-            store.update_options(job_id, options)
-        if Mode(job["mode"]) == Mode.AI and options.provider == "openai" and not options.api_key:
-            raise HTTPException(400, "请重新输入此任务的 API 密钥后重试。")
+        if mode == Mode.AI:
+            provider = options.provider if llm_provider is None else llm_provider
+            base_url = options.base_url if llm_base_url is None else llm_base_url
+            same_destination = (base_url.strip().rstrip("/") == options.base_url.rstrip("/")
+                                and provider == options.provider)
+            options = model_options(settings, provider if options.base_url else llm_provider or "",
+                base_url, options.model if llm_model is None else llm_model,
+                llm_api_key or (options.api_key if same_destination else ""),
+                ("" if replace_settings else options.prompt) if custom_prompt is None else custom_prompt)
+            options.animation_mode = animation_mode or store.get_options(job_id).animation_mode
+            if options.animation_mode in {"math", "visual"} and not math_capabilities()["ready"]:
+                raise HTTPException(400, "教学动画环境未就绪：" + math_capabilities()["reason"])
+        else:
+            options = GenerationOptions(animation_mode="basic")
         voice_options = store.get_speech_options(job_id)
-        if tts_api_key:
-            voice_options.api_key = tts_api_key
-        if VoiceMode(job["voice_mode"]) == VoiceMode.AI and not voice_options.base_url:
-            voice_options = speech_options(settings, "", "", "", tts_api_key)
-            store.update_speech_options(job_id, voice_options)
-        if (VoiceMode(job["voice_mode"]) == VoiceMode.AI
-                and not Settings._is_loopback(voice_options.base_url) and not voice_options.api_key):
-            raise HTTPException(400, "请重新输入此任务的语音 API 密钥后重试。")
-        external_text = Mode(job["mode"]) == Mode.AI and not Settings._is_loopback(options.base_url)
-        external_voice = (VoiceMode(job["voice_mode"]) == VoiceMode.AI
+        if voice_mode == VoiceMode.AI:
+            base_url = voice_options.base_url if tts_base_url is None else tts_base_url
+            same_destination = base_url.strip().rstrip("/") == voice_options.base_url.rstrip("/")
+            voice_options = speech_options(settings, base_url,
+                voice_options.model if tts_model is None else tts_model,
+                voice_options.voice if tts_voice is None else tts_voice,
+                tts_api_key or (voice_options.api_key if same_destination else ""))
+        else:
+            voice_options = SpeechOptions()
+        external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
+        external_voice = (voice_mode == VoiceMode.AI
                           and not Settings._is_loopback(voice_options.base_url))
-        if (external_text or external_voice) and not job["remote_consent"]:
+        consent = job["remote_consent"] if remote_consent is None else remote_consent
+        changed_external_destination = ((external_text and options.base_url != job["model_settings"].get("base_url"))
+                                        or (external_voice and voice_options.base_url != job["voice_settings"].get("base_url")))
+        if (external_text or external_voice) and (not consent or (changed_external_destination and remote_consent is not True)):
             raise HTTPException(400, "调用外部服务前须重新提交并同意发送文本。")
         if not (store.jobs_dir / job_id / "source.pdf").is_file():
             raise HTTPException(409, "原始 PDF 已丢失，请重新上传。")
-        if not store.retry(job_id):
+        if not store.retry(job_id, mode=mode, voice_mode=voice_mode, options=options,
+                           speech_options=voice_options, remote_consent=consent):
             raise HTTPException(409, "任务状态已改变，请刷新页面。")
+        store.clear_api_key(job_id)
         store.set_api_key(job_id, options.api_key)
         store.set_tts_api_key(job_id, voice_options.api_key)
         runner.submit(job_id)

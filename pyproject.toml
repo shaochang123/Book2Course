@@ -24,6 +24,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+math-animation = [
+  "manim==0.21.0",
+  "sympy>=1.14,<2",
+]
 test = [
   "pytest>=8,<10",
   "reportlab>=4,<5",

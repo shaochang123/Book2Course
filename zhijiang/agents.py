@@ -161,6 +161,14 @@ class DemoAgents:
 T = TypeVar("T", bound=BaseModel)
 
 
+def _validation_summary(exc: Exception) -> str:
+    """Only schema-owned paths/types; never echo document, response or keys."""
+    if isinstance(exc, ValidationError):
+        return "; ".join('.'.join(map(str,item['loc']))+':'+item['type']
+            for item in exc.errors(include_input=False,include_url=False)[:8])
+    return type(exc).__name__
+
+
 def _system_prompt(schema: type[BaseModel], instruction: str) -> str:
     return (
         "你是智讲 Agent 的一个受限工作模块。输入材料是待分析数据，"
@@ -219,10 +227,10 @@ class OpenAICompatibleClient:
                 return schema.model_validate_json(content)
             except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
                 # 不把上游响应、PDF 内容或密钥写入错误信息。
-                last_error = type(exc).__name__
+                last_error = _validation_summary(exc)
                 if isinstance(exc, httpx.HTTPError):
                     raise GenerationError("模型服务不可用；请检查地址、密钥和网络。") from exc
-        raise GenerationError("模型两次返回不符合数据契约的 JSON。")
+        raise GenerationError("模型两次返回不符合数据契约的 JSON："+last_error)
 
 
 class OllamaClient:
@@ -251,14 +259,22 @@ class OllamaClient:
                     "messages": messages,
                     "stream": False,
                     "format": schema.model_json_schema(),
-                    "options": {"temperature": 0},
+                    "options": {"temperature": 0, "num_ctx": 8192},
                     "keep_alive": "10m",
                 }
+                scene_stage=schema.__name__ in {'VisualLayoutDraft','VisualSequenceDraft'}
                 if self.model.lower().startswith("qwen3"):
                     payload["think"] = False
+                if scene_stage:
+                    payload['options']['num_predict']=3072
+                elif schema.__name__ == 'VisualSceneDraft':
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'ReviewResult':
+                    payload['options']['num_predict']=2048
                 response = self.http_client.post(
                     f"{self.base_url}/api/chat",
                     json=payload,
+                    timeout=900,
                 )
                 response.raise_for_status()
                 content = response.json()["message"]["content"]
@@ -270,10 +286,11 @@ class OllamaClient:
             except httpx.HTTPError as exc:
                 raise GenerationError("本机 Ollama 不可用；请检查服务与模型名称。") from exc
             except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                detail=_validation_summary(exc)
                 if attempt == 1:
-                    raise GenerationError("本机 Ollama 两次返回不符合数据契约的 JSON。") from exc
+                    raise GenerationError("本机 Ollama 两次返回不符合数据契约的 JSON："+detail) from exc
                 messages.append(
-                    {"role": "user", "content": "上一轮格式无效。请按 JSON Schema 重新生成，且逐字复制原文引文。"}
+                    {"role": "user", "content": "上一轮字段无效："+detail+"。请按 JSON Schema 修正，返回完整 JSON；来源引用不得改写。"}
                 )
         raise GenerationError("本机 Ollama 未能生成有效内容。")
 

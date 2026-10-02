@@ -66,6 +66,15 @@
               <p>提示词控制讲解风格和内容深度；来源页码与引文核验规则仍会执行。</p>
             </div>
 
+            <div class="advanced-fields">
+              <h3>教学图示与推演动画</h3>
+              <label for="animation-mode">动画生成方式</label>
+              <select id="animation-mode" name="animation_mode"><option value="auto">自动选择：专用推演或通用教学场景</option><option value="visual">通用教学过程：学科不限（Manim）</option><option value="math">专用数学推演：二维线性变换（Manim）</option><option value="basic">基础图示与要点呈现</option></select>
+              <p id="math-ready-label">正在检查数学动画环境。</p>
+              <p>数学推演展示向量、网格、矩阵与公式的连续变化，PPT 内含同步配音。支持经过计算核验的原创教学示例。可在提示词中指定矩阵与向量。</p>
+              <p>通用场景使用曲线、粒子、图形与关系，按参数和讲解步骤连续变化，学科不限。二维线性变换有专用执行器。检查范围包括几何、表达式及声明的数值关系；领域事实和示意简化仍需复核。</p>
+            </div>
+
             <fieldset class="choice-group"><legend class="field-title"><span class="step-number">03</span>选择讲解声音</legend>
               <label class="choice-card compact"><input type="radio" name="voice_mode" value="system" checked><span><strong>Windows 中文系统语音</strong><small>离线可用；不属于 AI 配音</small></span><span class="choice-mark"></span></label>
               <label class="choice-card compact" id="tts-choice"><input type="radio" name="voice_mode" value="ai"><span><strong>AI 语音配音</strong><small id="tts-ready-label">本机模型或兼容语音 API</small></span><span class="choice-mark"></span></label>
@@ -101,7 +110,7 @@
               <li><span class="timeline-icon">03</span><div><strong>检查来源</strong><small>逐段核对 PDF 页码和引文</small></div></li>
               <li><span class="timeline-icon">04</span><div><strong>输出视频与课件</strong><small>合成 MP4，嵌入 SVG 图示与讲解动画</small></div></li>
             </ol>
-            <div class="process-foot"><span>画面形式</span><strong>概念卡片 / 公式步骤 / 流程画面</strong></div>
+            <div class="process-foot"><span>画面形式</span><strong>曲线 / 粒子 / 关系 / 数学推演</strong></div>
           </aside>
         </div>
       </section>
@@ -111,13 +120,15 @@
         <div class="job-card"><div class="job-status-row"><span id="job-badge" class="status-badge">排队中</span><span id="job-filename" class="filename"></span></div><h3 id="job-stage">等待处理</h3><div class="progress-track"><div id="job-progress" class="progress-fill"></div></div><p id="job-message">当前任务会在本机逐步处理。</p></div>
         <div id="lesson-result" hidden>
           <div class="result-grid"><div class="video-card"><div class="card-heading"><span class="eyebrow">LESSON VIDEO</span><a id="download-video" href="#" download="zhijiang-lesson.mp4">下载 MP4 ↗</a></div><video id="lesson-video" controls preload="metadata" playsinline></video><p id="voice-note" class="result-note"></p><div id="presentation-export" class="presentation-export" hidden><div><strong>演示用 PPT 课件</strong><span>含可编辑文字、SVG 教学图和可播放的逐段动画；放映时点击动画播放。</span></div><a id="download-presentation" href="#" download="zhijiang-lesson.pptx">下载 PPTX ↗</a></div></div><div class="overview-card"><span class="eyebrow">COURSE OUTLINE</span><h3 id="lesson-title"></h3><p id="lesson-objective"></p><div id="lesson-notice" class="notice"></div><div class="overview-meta"><span id="segment-count"></span><span>逐段来源可核对</span></div></div></div>
+          <div id="math-report" class="notice" hidden></div>
+          <p><a id="download-math-scenes" class="text-button" href="#" hidden>下载教学场景与核验数据 ↗</a></p>
           <div class="script-heading"><h3>逐段讲稿与原文依据</h3><span>点击片段查看讲解内容</span></div>
           <div id="segments" class="segments"></div>
         </div>
       </section>
     </main>
 
-    <footer class="site-footer"><span>智讲 Agent · Book2Course</span><span>文本型 PDF · 生成内容需人工复核</span></footer>
+    <footer class="site-footer"><span>智讲 Agent · Book2Course</span><span>文字与扫描 PDF · 生成内容需人工复核</span></footer>
   </div>
 </body>
 </html>

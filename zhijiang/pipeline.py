@@ -13,6 +13,10 @@ from zhijiang.agents import (
 )
 from zhijiang.config import Settings
 from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
+from zhijiang.math_planning import MathAnimationError, math_capabilities, plan_math_lesson, supports_math
+from zhijiang.math_media import render_math_assets
+from zhijiang.visual_planning import plan_general_lesson
+from zhijiang.visual_media import render_visual_assets
 from zhijiang.pdf import PDFError, read_pdf
 from zhijiang.presentation import PresentationError, render_presentation
 from zhijiang.speech import AISpeech, SpeechError, SystemSpeech
@@ -84,24 +88,63 @@ class JobProcessor:
             voice_mode = VoiceMode(job["voice_mode"])
             options = self.store.get_options(job_id)
             agents = self._agents(mode, options)
-            self.store.set_progress(job_id, "提取知识点", 22)
-            bundle = agents.extract_knowledge(document)
-            self.store.set_progress(job_id, "设计课程结构", 38)
-            outline = agents.plan(bundle)
-            self.store.set_progress(job_id, "编写讲稿与分镜", 53)
-            lesson = agents.script(bundle, outline, voice_mode)
+            use_math = mode == Mode.AI and options.animation_mode in {"auto","math"} and supports_math(document)
+            use_visual = mode == Mode.AI and options.animation_mode in {"auto","visual"} and not use_math
+            fallback_reason = "当前任务选择基础图示。"
+            if options.animation_mode == "math" and not use_math:
+                raise MathAnimationError("数学模式首轮仅支持有足够原文依据的二维线性变换，请使用相关讲义。")
+            if use_math or use_visual:
+                capability = math_capabilities()
+                if not capability["ready"]:
+                    if options.animation_mode in {"math","visual"}:
+                        raise MathAnimationError("请安装 math-animation 依赖和 LaTeX：" + capability["reason"])
+                    use_math = False
+                    use_visual = False
+                    fallback_reason = "数学动画环境未就绪，自动模式使用基础图示：" + capability["reason"]
+            if use_math:
+                self.store.set_progress(job_id, "规划数学对象与推理分镜", 25)
+                lesson = plan_math_lesson(agents.client, document, options.prompt, voice_mode,
+                    lambda stage, value: self.store.set_progress(job_id, stage, value))
+            else:
+                self.store.set_progress(job_id, "提取知识点", 22)
+                bundle = agents.extract_knowledge(document)
+                self.store.set_progress(job_id, "设计课程结构", 38)
+                if use_visual:
+                    lesson=plan_general_lesson(agents.client,bundle,document,options.prompt,voice_mode,
+                        lambda stage,value: self.store.set_progress(job_id,stage,value),draft_output=folder/'visual-planning.json')
+                else:
+                    outline = agents.plan(bundle)
+                    self.store.set_progress(job_id, "编写讲稿与分镜", 53)
+                    lesson = agents.script(bundle, outline, voice_mode)
+                    lesson.animation_report = {"renderer": "Pillow basic", "scene_count": 0,
+                        "reason": fallback_reason}
             if mode == Mode.AI and options.provider == "ollama":
                 lesson.notice = lesson.notice.replace("AI 生成：", "本机 Ollama 生成：", 1)
             if any(page.ocr for page in document.pages):
                 lesson.notice += " 扫描页文字经 OCR 识别，请核对识别结果和引用。"
             self.store.set_progress(job_id, "核验引用与讲解结构", 64)
             validate_lesson(document, lesson)
-            agents.review(lesson)
+            if not use_math and not use_visual:
+                agents.review(lesson)
             self.store.save_lesson(job_id, lesson)
             self.store.set_progress(job_id, "合成配音", 73)
             speech = self._speech(voice_mode, self.store.get_speech_options(job_id))
             audio_files: list[Path] = []
+            if use_math:
+                render_math_assets(lesson, speech, folder,
+                    lambda stage, value: self.store.set_progress(job_id, stage, value))
+                self.store.save_lesson(job_id, lesson)
+            if use_visual:
+                render_visual_assets(lesson,speech,folder,
+                    lambda stage,value: self.store.set_progress(job_id,stage,value))
+                self.store.save_lesson(job_id,lesson)
             for index, segment in enumerate(lesson.segments):
+                if segment.math_scene:
+                    audio_files.append(folder / "math" / f"scene-{index+1:02d}" / "narration.wav")
+                    continue
+                if segment.visual_scene:
+                    audio_files.append(folder / "visual" / f"scene-{index+1:02d}" / "narration.wav")
+                    continue
                 audio = folder / f"audio-{index}.wav"
                 speech.synthesize(segment.narration, audio)
                 audio_files.append(audio)
@@ -114,7 +157,7 @@ class JobProcessor:
             self.store.set_progress(job_id, "制作 SVG 教学图与 PPT 动画", 94)
             self.presentation_renderer(lesson, folder / "lesson.pptx")
             self.store.complete(job_id)
-        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError) as exc:
+        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError, MathAnimationError) as exc:
             self.store.fail(job_id, str(exc))
         except Exception:
             logger.exception("任务 %s 发生未预期的错误", job_id)

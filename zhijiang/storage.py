@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,6 +153,8 @@ class JobStore:
         result["has_lesson"] = result["lesson_json"] is not None
         result["has_video"] = (self.jobs_dir / job_id / "lesson.mp4").is_file()
         result["has_presentation"] = (self.jobs_dir / job_id / "lesson.pptx").is_file()
+        result["has_math_scenes"] = (self.jobs_dir / job_id / "math-scenes.json").is_file()
+        result["has_scenes"] = result["has_math_scenes"] or (self.jobs_dir/job_id/"scene-data.json").is_file()
         result.pop("lesson_json")
         result["model_settings"] = json.loads(result.pop("options_json"))
         result["voice_settings"] = json.loads(result.pop("speech_options_json"))
@@ -194,17 +197,33 @@ class JobStore:
                 (JobStatus.FAILED, "failed", message[:500], utc_now(), job_id),
             )
 
-    def retry(self, job_id: str) -> bool:
+    def retry(self, job_id: str, *, mode: Mode | None = None,
+              voice_mode: VoiceMode | None = None, options: GenerationOptions | None = None,
+              speech_options: SpeechOptions | None = None, remote_consent: bool | None = None) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE jobs SET status=?, stage=?, progress=0, error=NULL, "
-                "lesson_json=NULL, updated_at=? WHERE id=? AND status=?",
-                (JobStatus.QUEUED, "queued", utc_now(), job_id, JobStatus.FAILED),
+                "lesson_json=NULL, updated_at=?, mode=COALESCE(?,mode), "
+                "voice_mode=COALESCE(?,voice_mode), options_json=COALESCE(?,options_json), "
+                "speech_options_json=COALESCE(?,speech_options_json), "
+                "remote_consent=COALESCE(?,remote_consent) WHERE id=? AND status=?",
+                (JobStatus.QUEUED, "queued", utc_now(), mode, voice_mode,
+                 options.model_dump_json() if options else None,
+                 speech_options.model_dump_json() if speech_options else None,
+                 remote_consent, job_id, JobStatus.FAILED),
             )
         if cursor.rowcount != 1:
             return False
         (self.jobs_dir / job_id / "lesson.mp4").unlink(missing_ok=True)
         (self.jobs_dir / job_id / "lesson.pptx").unlink(missing_ok=True)
+        (self.jobs_dir / job_id / "math-scenes.json").unlink(missing_ok=True)
+        (self.jobs_dir/job_id/"scene-data.json").unlink(missing_ok=True)
+        for name in ("math","visual"):
+            scene_folder=(self.jobs_dir/job_id/name).resolve()
+            if not scene_folder.is_relative_to(self.jobs_dir.resolve()):
+                raise ValueError("场景素材路径不在任务目录内。")
+            if scene_folder.is_dir():
+                shutil.rmtree(scene_folder)
         return True
 
     def delete(self, job_id: str) -> bool:

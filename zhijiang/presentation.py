@@ -550,13 +550,31 @@ def _textbox(slide, text: str, x: float, y: float, w: float, h: float,
     run.font.color.rgb = _color(color)
 
 
-def _notes(slide, segment: LessonSegment, *, animation: bool) -> None:
+def _notes(slide, segment: LessonSegment, *, animation: bool,
+           spoken_steps: list[str] | None = None) -> None:
     frame = slide.notes_slide.notes_text_frame
     if frame is not None:
         heading = "动画演示讲解" if animation else "教学图讲解"
         frame.text = (f"{heading}\n{_safe_text(segment.narration)}\n\n"
                       f"来源：PDF 第 {segment.evidence.page} 页\n"
                       f"原文摘录：{_safe_text(segment.evidence.quote)}")
+        if segment.math_scene:
+            import json
+            frame.text += ("\n\n条件与约定：二维欧氏平面、列向量、标准输入/输出基；角度以度计。"
+                           "投影为过原点直线上的正交投影；换基时依次使用平行、垂直方向。"
+                           "一般矩阵的中间形变表示过渡，不宣称每个中间帧保留面积或长度。\n"
+                           "教学参数："+json.dumps(segment.math_scene.parameters.model_dump(),ensure_ascii=False))
+            frame.text += "\n\n数学推演分镜（教学示例，计算已核验）：\n" + "\n".join(
+                f"{index+1}. {beat.action}：{beat.narration}"
+                for index, beat in enumerate(segment.math_scene.beats))
+        if segment.visual_scene:
+            import json
+            scene=segment.visual_scene
+            frame.text += ("\n\n通用场景参数："+json.dumps(scene.parameters,ensure_ascii=False)+
+                "\n示意与简化条件："+"；".join(scene.simplifications)+
+                "\n核验范围：表达式、几何与声明的数值关系；领域事实和教学解释需要复核。\n"+
+                "\n".join(f"{i+1}. {words}" for i, words in enumerate(
+                    spoken_steps or [b.narration for b in scene.beats])))
 
 
 def _set_title(slide, segment: LessonSegment, number: int, total: int,
@@ -564,9 +582,11 @@ def _set_title(slide, segment: LessonSegment, number: int, total: int,
     _background(slide)
     _textbox(slide, segment.title, 0.66, 0.25, 10.8, 0.7,
              size=32, bold=True)
-    label = "点击播放动画" if animation else "SVG 教学图"
+    label = ("点击播放数学推演 · 含配音" if animation else "SVG 数学摘要") if segment.math_scene else (
+        ("点击播放教学过程 · 含配音" if animation else "SVG 场景摘要") if segment.visual_scene else
+        ("点击播放动画" if animation else "SVG 教学图"))
     _textbox(slide, f"{number:02d} / {total:02d}  ·  {label}",
-             0.69, 1.03, 5.6, 0.35, size=16, color=ACCENT, bold=True)
+             0.69, 1.03, 11.8, 0.35, size=16, color=ACCENT, bold=True)
     _textbox(slide, f"来源：PDF 第 {segment.evidence.page} 页",
              0.69, 7.05, 5.8, 0.25, size=13, color=MUTED)
 
@@ -628,7 +648,7 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
 
     The visual diagram is embedded as an SVG object plus a PNG compatibility
     fallback. Titles and footers are native editable text. Each animation is a
-    self-contained, silent MP4 media shape playable in slideshow mode. Narration
+    self-contained MP4 media shape playable in slideshow mode (scene clips include audio). Narration
     and exact PDF excerpts are in speaker notes.
     """
     if not lesson.segments:
@@ -662,31 +682,54 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
         cover_notes = cover.notes_slide.notes_text_frame
         if cover_notes is not None:
             cover_notes.text = f"课程目标：{_safe_text(lesson.objective)}"
+            attribution = lesson.animation_report.get("source_attribution", {})
+            if attribution:
+                credit = f"原理来源：{attribution['author']} · {attribution['title']} · {attribution['license']}"
+                _textbox(cover, credit, 1.03, 5.65, 11.4, 0.6, size=15, color=MUTED)
+                cover_notes.text += f"\n{credit}\n{attribution['url']}\n{attribution['license_url']}\n本课数值例子、动画和中文解释为补充教学示例。"
 
         svg_assets: dict[int, tuple[int, bytes]] = {}
+        spoken_by_segment = {
+            asset.get("segment_index", index): [cue["text"] for cue in asset.get("timing", [])]
+            for index, asset in enumerate(lesson.animation_report.get("assets", []))
+        }
         total = len(lesson.segments)
         for index, segment in enumerate(lesson.segments, start=1):
-            diagram_png = work / f"diagram-{index}.png"
-            _diagram_png(segment, diagram_png)
+            math_folder = output.parent / ("math" if segment.math_scene else "visual") / f"scene-{index:02d}"
+            if segment.math_scene or segment.visual_scene:
+                diagram_png = math_folder / "summary.png"
+                svg_bytes = (math_folder / "summary.svg").read_bytes()
+                diagram_height = 5.0
+            else:
+                diagram_png = work / f"diagram-{index}.png"
+                _diagram_png(segment, diagram_png)
+                svg_bytes = _diagram_svg(segment)
+                diagram_height = 4.5
             diagram_slide = presentation.slides.add_slide(blank)
             _set_title(diagram_slide, segment, index, total, animation=False)
             picture = diagram_slide.shapes.add_picture(
                 str(diagram_png), Inches(0.67), Inches(1.55),
-                width=Inches(12.0), height=Inches(4.93)
+                width=Inches(12.0), height=Inches(diagram_height)
             )
-            svg_assets[len(presentation.slides)] = (picture.shape_id, _diagram_svg(segment))
-            _notes(diagram_slide, segment, animation=False)
+            svg_assets[len(presentation.slides)] = (picture.shape_id, svg_bytes)
+            _notes(diagram_slide, segment, animation=False,
+                   spoken_steps=spoken_by_segment.get(index - 1))
 
-            clip = work / f"animation-{index}.mp4"
-            poster = work / f"animation-{index}.png"
-            _render_animation(segment, index, total, clip, poster)
+            if segment.math_scene or segment.visual_scene:
+                clip = math_folder / "clip.mp4"
+                poster = math_folder / "poster.png"
+            else:
+                clip = work / f"animation-{index}.mp4"
+                poster = work / f"animation-{index}.png"
+                _render_animation(segment, index, total, clip, poster)
             animation_slide = presentation.slides.add_slide(blank)
             _set_title(animation_slide, segment, index, total, animation=True)
             animation_slide.shapes.add_movie(
-                str(clip), Inches(1.1), Inches(1.48), Inches(11.13), Inches(5.26),
+                str(clip), Inches(1.9915), Inches(1.48), Inches(9.35), Inches(5.2594),
                 poster_frame_image=str(poster), mime_type="video/mp4"
             )
-            _notes(animation_slide, segment, animation=True)
+            _notes(animation_slide, segment, animation=True,
+                   spoken_steps=spoken_by_segment.get(index - 1))
 
         original = work / "presentation-base.pptx"
         presentation.save(original)

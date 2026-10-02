@@ -51,15 +51,40 @@ def test_ollama_native_json_schema_request(sample_pdf):
 
 def test_qwen3_uses_non_thinking_mode(sample_pdf):
     bundle = DemoAgents().extract_knowledge(read_pdf(sample_pdf, "original.pdf"))
+    scene_stage=False
+    response_content=bundle.model_dump_json()
 
     def handler(request):
         body = json.loads(request.content)
         assert body["think"] is False
-        return httpx.Response(200, json={"message": {"content": bundle.model_dump_json()}})
+        if scene_stage:
+            assert body['options']['num_ctx']==8192 and body['options']['num_predict']==3072
+        return httpx.Response(200, json={"message": {"content": response_content}})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         client = OllamaClient("http://127.0.0.1:11434", "qwen3:4b", http_client)
         assert client.generate(KnowledgeBundle, "提取", "资料") == bundle
+        from scripts.build_general_examples import fixtures
+        from zhijiang.visual_planning import VisualLayoutDraft
+        scene_stage=True
+        from zhijiang.visual_planning import LAYOUT_FIELDS
+        response_content=fixtures()[0].model_dump_json(include=LAYOUT_FIELDS)
+        assert client.generate(VisualLayoutDraft,'生成分镜','资料').domain=='微积分'
+
+
+def test_schema_repair_identifies_field_without_echoing_sensitive_input(sample_pdf):
+    bundle=DemoAgents().extract_knowledge(read_pdf(sample_pdf,'original.pdf'))
+    calls=[]
+    def handler(request):
+        body=json.loads(request.content);calls.append(body)
+        if len(calls)==1:
+            return httpx.Response(200,json={'message':{'content':json.dumps({'points':'private-input-do-not-echo'})}})
+        repair=body['messages'][-1]['content']
+        assert 'points:list_type' in repair and 'private-input-do-not-echo' not in repair
+        return httpx.Response(200,json={'message':{'content':bundle.model_dump_json()}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        assert OllamaClient('http://127.0.0.1:11434','qwen3:4b',http_client).generate(KnowledgeBundle,'提取','资料')==bundle
+    assert len(calls)==2
 
 
 def test_long_english_pdf_candidates_fit_small_batches():

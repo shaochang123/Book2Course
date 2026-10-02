@@ -69,6 +69,10 @@ dropzone.addEventListener("drop", (event) => {
 fileInput.addEventListener("change", () => { if (fileInput.files.length) $("#file-label").textContent = fileInput.files[0].name; });
 form.querySelectorAll('input[type="radio"]').forEach((input) => input.addEventListener("change", updateConsent));
 $("#llm-provider").addEventListener("change", updateConsent);
+$("#animation-mode").addEventListener("change", () => {
+  if (["math","visual"].includes($("#animation-mode").value)) form.querySelector('input[name="mode"][value="ai"]').checked = true;
+  updateConsent();
+});
 $("#llm-base-url").addEventListener("input", updateConsent);
 for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
   form.elements[name].addEventListener("input", updateConsent);
@@ -86,6 +90,7 @@ function showJob(job) {
       $("#llm-base-url").value = job.model_settings.base_url || "";
       $("#llm-model").value = job.model_settings.model || "";
       $("#custom-prompt").value = job.model_settings.prompt || "";
+      $("#animation-mode").value = job.model_settings.animation_mode || "auto";
     }
     if (job.voice_mode === "ai" && job.voice_settings) {
       $("#tts-base-url").value = job.voice_settings.base_url || "";
@@ -93,6 +98,7 @@ function showJob(job) {
       $("#tts-voice").value = job.voice_settings.voice || "";
     }
     updateConsent();
+    if (!$("#remote-consent-row").hidden) $("#remote-consent").checked = job.remote_consent;
   }
   $("#job-section").hidden = false;
   $("#job-filename").textContent = job.filename || "";
@@ -128,7 +134,18 @@ function addSegment(segment, index) {
   const quote = document.createElement("div");
   quote.className = "source-quote";
   quote.textContent = `原文摘录：${segment.evidence.quote}`;
-  body.append(narration, quote);
+  const scene = segment.math_scene || segment.visual_scene;
+  if (!scene) body.append(narration);
+  if (scene) {
+    const steps = document.createElement("ol");
+    scene.beats.forEach((beat) => {
+      const item = document.createElement("li");
+      item.textContent = beat.narration;
+      steps.append(item);
+    });
+    body.append(steps);
+  }
+  body.append(quote);
   details.append(summary, body);
   $("#segments").append(details);
 }
@@ -147,6 +164,13 @@ async function showLesson(jobId) {
   $("#lesson-video").src = videoURL;
   $("#download-video").href = videoURL;
   $("#download-presentation").href = `/api/jobs/${jobId}/presentation`;
+  const report = lesson.animation_report || {};
+  $("#math-report").hidden = !report.renderer;
+  $("#math-report").textContent = report.scene_count ? (report.scene_type === "general" ?
+    `${report.scene_count} 个通用教学场景 · ${report.renderer} · 含同步配音。几何、表达式与声明的数值关系已检查；领域事实、示意简化和教学解释需复核。` :
+    `${report.scene_count} 个数学推演场景 · ${report.renderer} · 含同步配音。矩阵、向量与几何计算已核验；讲解质量和引用含义仍需人工核对。`) : report.reason || "基础图示";
+  $("#download-math-scenes").hidden = !report.scene_count;
+  $("#download-math-scenes").href = `/api/jobs/${jobId}/scenes`;
 }
 
 async function refreshJob() {
@@ -189,6 +213,7 @@ form.addEventListener("submit", async (event) => {
     body.append("file", fileInput.files[0]);
     body.append("mode", selected("mode"));
     body.append("voice_mode", selected("voice_mode"));
+    body.append("animation_mode", $("#animation-mode").value);
     body.append("rights_confirmed", String($("#rights-confirmed").checked));
     body.append("remote_consent", String($("#remote-consent").checked));
     if (selected("mode") === "ai") {
@@ -237,8 +262,21 @@ $("#retry-button").addEventListener("click", async () => {
   button.disabled = true;
   try {
     const body = new FormData();
-    body.append("llm_api_key", $("#llm-api-key").value);
-    body.append("tts_api_key", $("#tts-api-key").value);
+    body.append("mode", selected("mode"));
+    body.append("voice_mode", selected("voice_mode"));
+    body.append("animation_mode", $("#animation-mode").value);
+    body.append("remote_consent", String($("#remote-consent").checked));
+    body.append("replace_settings", "true");
+    if (selected("mode") === "ai") {
+      for (const name of ["llm_provider", "llm_base_url", "llm_model", "llm_api_key", "custom_prompt"]) {
+        body.append(name, form.elements[name].value);
+      }
+    }
+    if (selected("voice_mode") === "ai") {
+      for (const name of ["tts_base_url", "tts_model", "tts_voice", "tts_api_key"]) {
+        body.append(name, form.elements[name].value);
+      }
+    }
     const job = await getJSON(`/api/jobs/${currentJobId}/retry`, { method: "POST", body });
     $("#llm-api-key").value = "";
     $("#tts-api-key").value = "";
@@ -255,6 +293,9 @@ $("#retry-button").addEventListener("click", async () => {
 (async function initialize() {
   try {
     config = await getJSON("/api/config");
+    $("#math-ready-label").textContent = config.math_animation?.ready ?
+      "教学动画环境就绪：通用场景支持各学科；二维线性变换提供专用推演。" :
+      `数学动画环境未就绪：${config.math_animation?.reason || "请安装 math-animation 依赖"}。基础图示仍可使用。`;
     $("#pdf-limits").textContent = `文字版和扫描版 PDF · 最多 ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB · 无页数上限`;
     $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
     $("#llm-base-url").value = config.llm_base_url || "";

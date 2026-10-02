@@ -1,83 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-  <title id="title">Zhijiang Agent: PDF to lesson video and presentation</title>
-  <desc id="desc">Implemented workflow: upload an authorized PDF, extract text or run local OCR, select page-numbered source excerpts, then design and validate the lesson. The lesson branches into narrated MP4 video and a PPTX with editable text, speaker notes, embedded SVG teaching diagrams, and per-segment explanatory MP4 clips. Dedicated LaTeX and Manim generation remains planned.</desc>
-  <defs>
-    <marker id="arrow-current" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
-      <path d="M 1 1 L 11 6 L 1 11 Z" fill="#6EE1CD"/>
-    </marker>
-    <marker id="arrow-planned" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
-      <path d="M 1 1 L 11 6 L 1 11 Z" fill="#C6A4FF"/>
-    </marker>
-  </defs>
-
-  <rect width="1200" height="675" fill="#091723"/>
-  <rect x="36" y="25" width="5" height="66" rx="2.5" fill="#6EE1CD"/>
-  <text x="55" y="56" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="32" font-weight="700">From PDF to Lesson Video and PPTX</text>
-  <text x="56" y="85" fill="#ADC2CD" font-family="Arial, sans-serif" font-size="16">Source-grounded teaching design, diagrams, animation, and narration</text>
-
-  <line x1="844" y1="47" x2="887" y2="47" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
-  <text x="897" y="53" fill="#D9EEE8" font-family="Arial, sans-serif" font-size="17">Implemented</text>
-  <line x1="1013" y1="47" x2="1056" y2="47" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrow-planned)"/>
-  <text x="1066" y="53" fill="#E9DEFF" font-family="Arial, sans-serif" font-size="17">Planned</text>
-
-  <rect x="36" y="118" width="1128" height="315" rx="18" fill="#102A36" stroke="#2C5965" stroke-width="1.5"/>
-  <text x="59" y="151" fill="#77E4D1" font-family="Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1">LESSON GENERATION AND VIDEO · IMPLEMENTED</text>
-
-  <rect x="58" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
-  <rect x="77" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
-  <text x="85" y="212" fill="#E8FFFA" font-family="Arial, sans-serif" font-size="17" font-weight="700">01</text>
-  <text x="129" y="214" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="23" font-weight="700">Input &amp; recognition</text>
-  <line x1="78" y1="233" x2="365" y2="233" stroke="#3C6B75"/>
-  <text x="79" y="264" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Rights-confirmed PDF upload</text>
-  <text x="79" y="296" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Extract text directly</text>
-  <text x="79" y="328" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Local OCR for scanned pages</text>
-  <text x="79" y="360" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="19">Keep original page numbers</text>
-
-  <path d="M 390 286 H 429" fill="none" stroke="#6EE1CD" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-current)"/>
-
-  <rect x="435" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
-  <rect x="454" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
-  <text x="462" y="212" fill="#E8FFFA" font-family="Arial, sans-serif" font-size="17" font-weight="700">02</text>
-  <text x="506" y="214" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="23" font-weight="700">Lesson design &amp; checks</text>
-  <line x1="455" y1="233" x2="742" y2="233" stroke="#3C6B75"/>
-  <text x="456" y="261" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Select numbered source excerpts</text>
-  <text x="456" y="289" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">AI or demo rules derive points</text>
-  <text x="456" y="317" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Plan outline, script, and scenes</text>
-  <text x="456" y="345" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Program verifies exact citations</text>
-  <text x="456" y="373" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">AI mode reviews explanations</text>
-
-  <path d="M 767 286 H 806" fill="none" stroke="#6EE1CD" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrow-current)"/>
-
-  <rect x="812" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
-  <rect x="831" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
-  <text x="839" y="212" fill="#E8FFFA" font-family="Arial, sans-serif" font-size="17" font-weight="700">03</text>
-  <text x="883" y="214" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="23" font-weight="700">Audio &amp; video</text>
-  <line x1="832" y1="233" x2="1119" y2="233" stroke="#3C6B75"/>
-  <text x="833" y="261" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Windows or AI narration</text>
-  <text x="833" y="289" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Concept, formula, process frames</text>
-  <text x="833" y="317" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">FFmpeg audio-video assembly</text>
-  <text x="833" y="345" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Export lesson MP4</text>
-  <text x="833" y="373" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="18">Show scripts and sources online</text>
-
-  <rect x="36" y="477" width="1128" height="145" rx="18" fill="#102A36" stroke="#2C5965" stroke-width="1.5"/>
-  <path d="M 599 399 V 454 H 445 V 527" fill="none" stroke="#6EE1CD" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-current)"/>
-  <text x="59" y="512" fill="#77E4D1" font-family="Arial, sans-serif" font-size="18" font-weight="700">PPTX EXPORT · IMPLEMENTED</text>
-  <text x="60" y="548" fill="#B8D7DE" font-family="Arial, sans-serif" font-size="15">Use validated lesson content</text>
-  <text x="60" y="573" fill="#B8D7DE" font-family="Arial, sans-serif" font-size="15">for live teaching.</text>
-
-  <rect x="320" y="529" width="250" height="69" rx="11" fill="#183947" stroke="#58A99F" stroke-width="1.8"/>
-  <text x="337" y="558" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="19" font-weight="700">Slide plan &amp; script</text>
-  <text x="337" y="583" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="15">Editable text · speaker notes</text>
-  <path d="M 574 563 H 597" fill="none" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
-
-  <rect x="603" y="529" width="250" height="69" rx="11" fill="#183947" stroke="#58A99F" stroke-width="1.8"/>
-  <text x="620" y="558" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="19" font-weight="700">Diagrams &amp; clips</text>
-  <text x="620" y="583" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="15">Embedded SVG · segment MP4</text>
-  <path d="M 857 563 H 880" fill="none" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
-
-  <rect x="886" y="529" width="250" height="69" rx="11" fill="#183947" stroke="#58A99F" stroke-width="1.8"/>
-  <text x="903" y="558" fill="#F4FAFD" font-family="Arial, sans-serif" font-size="19" font-weight="700">Editable PPTX output</text>
-  <text x="903" y="583" fill="#D4E6EB" font-family="Arial, sans-serif" font-size="15">Notes · source page refs</text>
-
-  <text x="51" y="654" fill="#A8B8C6" font-family="Arial, sans-serif" font-size="15">Note: PPTX includes editable text, SVG diagrams, and segment clips; dedicated LaTeX / Manim generation remains planned.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1010" viewBox="0 0 1200 1010" role="img" aria-labelledby="title desc">
+<title id="title">From PDF to lessons across subjects</title><desc id="desc">Source references · Extensible scenes · Shared speech and animation timing. auto: specialist/general; visual: general; math: specialist; basic: basic. Validate domain facts and teaching quality.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#6EE1CD"/></marker></defs>
+<rect width="1200" height="1010" fill="#091723"/>
+<text x="45" y="53" fill="#F4FAFD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="31" text-anchor="start">From PDF to lessons across subjects</text>
+<text x="45" y="84" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Source references · Extensible scenes · Shared speech and animation timing</text>
+<rect x="45" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="61" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">01 Source input</text>
+<text x="61" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Upload a permitted PDF</text>
+<text x="61" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Choose model, voice and mode</text>
+<rect x="460" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="476" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">02 Content recognition</text>
+<text x="476" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Text extraction / local OCR</text>
+<text x="476" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Keep excerpts and page refs</text>
+<rect x="875" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="891" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">03 Teaching plan</text>
+<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Model: questions / storyboard</text>
+<text x="891" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Check sources; label examples</text>
+<path d="M 325 185 H 460" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 740 185 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 1015 240 V 270 H 600 V 300" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 600 300 L 775 365 L 600 430 L 425 365 Z" fill="#102A36" stroke="#58A99F" stroke-width="2"/>
+<text x="600" y="358" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="19" text-anchor="middle">Choose scene executor</text>
+<text x="600" y="385" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="19" text-anchor="middle">Mode and environment</text>
+<path d="M 425 365 H 185 V 485" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="210" y="344" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">Basic / env fallback</text>
+<path d="M 775 365 H 1015 V 485" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="875" y="344" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">Linear transformations</text>
+<path d="M 600 430 V 485" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="620" y="465" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">General / any subject</text>
+<rect x="45" y="485" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="61" y="514" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Basic diagrams</text>
+<text x="61" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Concept / formula / process</text>
+<text x="61" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Explain the selected fallback</text>
+<rect x="875" y="485" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="891" y="514" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Math checks · SymPy</text>
+<text x="891" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Products / area / projections</text>
+<text x="891" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Bind narration; reject bad math</text>
+<rect x="460" y="485" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="476" y="514" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">General scene graph</text>
+<text x="476" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Curves / particles / relations</text>
+<text x="476" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Parameter steps; domain hooks</text>
+<text x="476" y="589" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Geometry and numeric checks</text>
+<path d="M 185 620 V 660 H 540 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 1015 620 V 660 H 660 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 600 620 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="460" y="695" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="476" y="724" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Narration and rendering</text>
+<text x="476" y="749" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Speech cues → motion</text>
+<text x="476" y="774" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Scenes: Manim + TeX</text>
+<text x="476" y="799" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Basic: Pillow</text>
+<text x="1015" y="688" fill="#F2AC99" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="middle">Failed checks: revise or fail</text>
+<path d="M 600 830 V 855" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="460" y="855" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="476" y="884" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Shared teaching assets</text>
+<text x="476" y="909" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">SVG summary + segment MP4</text>
+<text x="476" y="934" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Sources, scripts and check JSON</text>
+<rect x="45" y="855" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="61" y="884" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Full lesson MP4</text>
+<text x="61" y="909" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Join clips with narration</text>
+<text x="61" y="934" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Play and download on the web</text>
+<rect x="875" y="855" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
+<text x="891" y="884" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Presentation PPTX</text>
+<text x="891" y="909" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">SVG and original-ratio MP4</text>
+<text x="891" y="934" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Page refs and speaker notes</text>
+<path d="M 460 910 H 325" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 740 910 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="45" y="992" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">auto: specialist/general; visual: general; math: specialist; basic: basic. Validate domain facts and teaching quality.</text>
 </svg>

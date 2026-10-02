@@ -10,7 +10,7 @@ from zhijiang.agents import (
 )
 from zhijiang.config import Settings
 from zhijiang.main import create_app
-from zhijiang.models import JobStatus, Mode, ReviewResult, VoiceMode
+from zhijiang.models import GenerationOptions, JobStatus, Mode, ReviewResult, VoiceMode
 from zhijiang.pdf import read_pdf
 from zhijiang.pipeline import JobProcessor
 from zhijiang.speech import SpeechError
@@ -87,10 +87,15 @@ def test_failed_job_can_retry_with_saved_pdf(tmp_path, sample_pdf):
         assert client.post(f"/api/jobs/{job_id}/retry").status_code == 409
         store.fail(job_id, "模拟先前失败")
         assert (store.jobs_dir / job_id / "source.pdf").is_file()
+        for name in ("math", "visual"):
+            scene_folder=store.jobs_dir / job_id / name / "scene-01"
+            scene_folder.mkdir(parents=True)
+            (scene_folder / "clip.mp4").write_bytes(b"obsolete scene media")
         retry = client.post(f"/api/jobs/{job_id}/retry")
         assert retry.status_code == 202, retry.text
         assert client.get(f"/api/jobs/{job_id}").json()["status"] == "completed"
         assert client.get(f"/api/jobs/{job_id}/lesson").status_code == 200
+        assert all(not (store.jobs_dir / job_id / name).exists() for name in ("math", "visual"))
 
 
 def test_upload_guards_and_error_messages(tmp_path, sample_pdf):
@@ -155,6 +160,27 @@ def test_web_model_overrides_and_prompt_do_not_store_api_key(tmp_path, sample_pd
         assert options.api_key == "secret-for-this-job"
         assert "secret-for-this-job" not in str(response.json())
         assert b"secret-for-this-job" not in app.state.store.db_path.read_bytes()
+        app.state.store.fail(job_id, "模拟分镜失败")
+        changed = {"llm_base_url": "https://another.invalid/v1", "llm_model": "stronger-model",
+                   "custom_prompt": "改用连续教学过程", "animation_mode": "basic"}
+        # A destination change must not inherit the old credential or consent.
+        assert client.post(f"/api/jobs/{job_id}/retry", data=changed).status_code == 400
+        changed["llm_api_key"] = "new-destination-secret"
+        assert client.post(f"/api/jobs/{job_id}/retry", data=changed).status_code == 400
+        assert app.state.store.get(job_id)["status"] == JobStatus.FAILED
+        assert app.state.store.get_options(job_id).base_url == "https://example.invalid/v1"
+        changed["remote_consent"] = "true"
+        retry = client.post(f"/api/jobs/{job_id}/retry", data=changed)
+        assert retry.status_code == 202, retry.text
+        updated = app.state.store.get_options(job_id)
+        assert updated.model == "stronger-model" and updated.prompt == "改用连续教学过程"
+        assert updated.animation_mode == "basic" and updated.api_key == "new-destination-secret"
+        assert b"new-destination-secret" not in app.state.store.db_path.read_bytes()
+        assert "new-destination-secret" not in str(retry.json())
+        app.state.store.fail(job_id, "再次模拟失败")
+        cleared = client.post(f"/api/jobs/{job_id}/retry", data={"replace_settings": "true", "custom_prompt": ""})
+        assert cleared.status_code == 202, cleared.text
+        assert app.state.store.get_options(job_id).prompt == ""
 
 
 def test_web_voice_overrides_use_local_service_without_key(tmp_path, sample_pdf):
@@ -180,6 +206,15 @@ def test_web_voice_overrides_use_local_service_without_key(tmp_path, sample_pdf)
         assert response.status_code == 202, response.text
         assert response.json()["voice_settings"]["voice"] == "zf_xiaoxiao"
         assert app.state.store.get_speech_options(response.json()["id"]).model == "kokoro-82m-v1.1-zh"
+        job_id = response.json()["id"]
+        app.state.store.fail(job_id, "模拟失败")
+        retry = client.post(f"/api/jobs/{job_id}/retry", data={"mode":"ai", "voice_mode":"ai",
+            "llm_provider":"ollama", "llm_base_url":"http://127.0.0.1:11434", "llm_model":"qwen3:4b",
+            "custom_prompt":"重新规划分镜", "animation_mode":"basic", "tts_voice":"zf_002"})
+        assert retry.status_code == 202, retry.text
+        assert retry.json()["mode"] == "ai"
+        assert retry.json()["voice_settings"]["voice"] == "zf_002"
+        assert app.state.store.get_options(job_id).prompt == "重新规划分镜"
 
 
 def test_external_voice_requires_consent_and_retry_key(tmp_path, sample_pdf):
@@ -274,7 +309,8 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
     settings = Settings(data_dir=tmp_path / "data", llm_base_url="https://example.invalid/v1",
                         llm_api_key="fake", llm_model="fake")
     store = JobStore(settings.data_dir)
-    job = store.create("sample.pdf", Mode.AI, VoiceMode.SYSTEM, True, True, sample_pdf)
+    job = store.create("sample.pdf", Mode.AI, VoiceMode.SYSTEM, True, True, sample_pdf,
+                       GenerationOptions(animation_mode="basic"))
     with httpx.Client(transport=transport) as http_client:
         ai_agents = AIAgents(OpenAICompatibleClient(settings.llm_base_url, "fake", "fake", http_client))
         processor = JobProcessor(
