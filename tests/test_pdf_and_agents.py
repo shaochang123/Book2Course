@@ -18,7 +18,8 @@ from zhijiang.agents import (
     validate_evidence,
     validate_lesson,
 )
-from zhijiang.models import CourseOutline, Evidence, Mode, PageText, ReviewResult, SourceDocument, VoiceMode
+from zhijiang.models import (CourseOutline, Evidence, KnowledgeBundle, KnowledgePoint,
+                             Mode, PageText, ReviewResult, SourceDocument, VoiceMode)
 from zhijiang.pdf import PDFError, read_pdf
 
 
@@ -121,6 +122,106 @@ def test_ai_source_selection_uses_exact_pdf_text_and_rejects_unknown_ids(sample_
     with pytest.raises(GenerationError, match="片段编号"):
         AIAgents(client).extract_knowledge(document)
     assert client.calls == 2
+
+
+def test_english_pdf_selects_late_subject_definitions_over_unrelated_sidebar():
+    document = SourceDocument(filename="lesson.pdf", pages=[
+        PageText(page=1, text="\n".join([
+            "Grade 7 Family Guide",
+            "Introduction to Probability",
+            "Students use number cubes and spinners to understand",
+            "the terminology of probability and possible outcomes.",
+            "The probability of an event is a value from 0 to 1,",
+            "with 0 meaning impossible and 1 meaning certain.",
+        ])),
+        PageText(page=2, text="\n".join([
+            "Myth: Cramming for an exam is just as good as",
+            "spaced practice for long-term retention.",
+            "You may remember material for tomorrow's test,",
+            "but repeated study helps your memory over time.",
+            "Ask your student good questions while studying",
+            "and give them time to think about each answer.",
+            "Key Terms",
+            "sample space",
+            "A list of all possible outcomes of an",
+            "experiment is called a sample space.",
+            "theoretical probability",
+            "Theoretical probability is the ratio of desired outcomes",
+            "to the total number of possible outcomes.",
+            "experimental probability",
+            "Experimental probability is the ratio of event occurrences",
+            "to the total number of trials performed.",
+        ])),
+    ])
+    candidates = source_candidates(document)
+    page_two = [item["quote"].lower() for item in candidates if item["page"] == 2]
+    assert any("sample space" in quote and "outcomes" in quote for quote in page_two)
+    assert any("theoretical probability" in quote and "ratio" in quote for quote in page_two)
+    assert any("experimental probability" in quote and "trials" in quote for quote in page_two)
+    assert all("cramming" not in quote and "spaced practice" not in quote for quote in page_two)
+    for item in candidates:
+        validate_evidence(document, Evidence(page=item["page"], quote=item["quote"]))
+
+
+def test_source_candidates_scan_late_text_when_no_title_topic_is_available():
+    document = SourceDocument(filename="notes.pdf", pages=[PageText(page=1, text="\n".join(
+        f"Lesson statement {index} explains a separate concept in a complete sentence."
+        for index in range(12)))])
+    candidates = source_candidates(document)
+    assert len(candidates) == 6
+    assert "statement 11" in candidates[-1]["quote"]
+    for item in candidates:
+        validate_evidence(document, Evidence(page=1, quote=item["quote"]))
+
+
+def test_ai_script_rewrites_unsupported_probability_values_and_definition():
+    bundle = KnowledgeBundle(points=[
+        KnowledgePoint(title="理论概率", kind="formula", explanation="有利结果数与所有可能结果数的比值。",
+                       evidence=Evidence(page=1, quote="Theoretical probability is the ratio of the number of desired outcomes to the total number of possible outcomes.")),
+        KnowledgePoint(title="实验概率", kind="formula", explanation="事件出现次数与总试验次数的比值。",
+                       evidence=Evidence(page=1, quote="Experimental probability is the ratio of the number of times an event occurs to the total number of trials performed.")),
+        KnowledgePoint(title="概率范围", kind="concept", explanation="概率在零与一之间，不可能为零，必然为一。",
+                       evidence=Evidence(page=1, quote="The probability of an event is a value from 0 to 1, with 0 meaning impossible and 1 meaning certain.")),
+    ])
+    outline = CourseOutline(title="概率导论", objective="理解理论概率、实验概率与概率范围。",
+                            point_titles=[point.title for point in bundle.points])
+
+    def draft(wrong: bool) -> ScriptDraft:
+        return ScriptDraft(segments=[
+            ScriptDraftSegment(source_id=1, title="理论概率", kind="formula",
+                               narration="理论概率要比较有利结果与所有可能结果，先明确事件和样本空间。",
+                               bullets=["理论概率 = 期望成功次数 / 总结果数" if wrong else
+                                        "理论概率 = 有利结果数 / 总可能结果数"]),
+            ScriptDraftSegment(source_id=2, title="实验概率", kind="formula",
+                               narration="重复试验后统计事件出现次数，再与总试验次数比较。",
+                               bullets=["事件出现次数 / 总试验次数"]),
+            ScriptDraftSegment(source_id=3, title="概率范围", kind="concept",
+                               narration=("概率值位于零和一之间，两端分别代表不可能和必然。"
+                                          + ("例如，某地降雨概率为0.999。" if wrong else "")),
+                               bullets=["太阳升起概率为 0.999" if wrong else "0 表示不可能；1 表示必然"]),
+        ])
+
+    class RevisingClient:
+        calls = 0
+        def generate(self, schema, instruction, material):
+            self.calls += 1
+            return draft(wrong=self.calls == 1)
+
+    client = RevisingClient()
+    lesson = AIAgents(client).script(bundle, outline, VoiceMode.SYSTEM)
+    assert client.calls == 2
+    assert lesson.segments[0].bullets == ["理论概率 = 有利结果数 / 总可能结果数"]
+    assert all("0.999" not in " ".join(segment.bullets) for segment in lesson.segments)
+
+    class StubbornClient:
+        def generate(self, schema, instruction, material):
+            return draft(wrong=True)
+
+    repaired = AIAgents(StubbornClient()).script(bundle, outline, VoiceMode.SYSTEM)
+    assert repaired.segments[0].bullets == ["理论概率 = 有利结果数 / 总结果数"]
+    assert all("0.999" not in " ".join(segment.bullets) for segment in repaired.segments)
+    assert repaired.segments[2].narration == "概率值位于零和一之间，两端分别代表不可能和必然。"
+    assert "自动删改" in repaired.notice
 
 
 def test_ai_selection_reaches_pages_after_twelve():

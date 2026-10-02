@@ -181,6 +181,20 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         return FileResponse(path, media_type="video/mp4", filename="zhijiang-lesson.mp4",
                             content_disposition_type="inline")
 
+    @application.get("/api/jobs/{job_id}/presentation")
+    def get_presentation(job_id: str) -> FileResponse:
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(404, "任务不存在。")
+        path = store.jobs_dir / job_id / "lesson.pptx"
+        if job["status"] != JobStatus.COMPLETED or not path.is_file():
+            raise HTTPException(409, "PPT 课件尚未生成。")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            filename="zhijiang-lesson.pptx",
+        )
+
     @application.post("/api/jobs/{job_id}/retry", status_code=202)
     def retry_job(job_id: str, llm_api_key: Annotated[str, Form()] = "",
                   tts_api_key: Annotated[str, Form()] = "") -> dict:

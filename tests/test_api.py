@@ -44,6 +44,7 @@ def make_client(tmp_path):
         settings, app.state.store,
         speech_factory=lambda _: FakeSpeech(),
         video_renderer=lambda lesson, audio, path: path.write_bytes(b"fake mp4"),
+        presentation_renderer=lambda lesson, path: path.write_bytes(b"fake pptx"),
     )
     return TestClient(app), app.state.store
 
@@ -65,6 +66,11 @@ def test_api_upload_result_video_and_delete(tmp_path, sample_pdf):
         assert len(lesson["segments"]) == 6
         assert lesson["segments"][0]["evidence"]["page"] == 1
         assert client.get(f"/api/jobs/{job_id}/video").status_code == 200
+        assert status["has_presentation"]
+        presentation = client.get(f"/api/jobs/{job_id}/presentation")
+        assert presentation.status_code == 200
+        assert presentation.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation")
         assert client.delete(f"/api/jobs/{job_id}").status_code == 204
         assert client.get(f"/api/jobs/{job_id}").status_code == 404
         assert not (store.jobs_dir / job_id).exists()
@@ -276,6 +282,7 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
             agent_factory=lambda _: ai_agents,
             speech_factory=lambda _: FakeSpeech(),
             video_renderer=lambda lesson, audio, path: path.write_bytes(b"fake mp4"),
+            presentation_renderer=lambda lesson, path: path.write_bytes(b"fake pptx"),
         )
         processor.process(job["id"])
     assert store.get(job["id"])["status"] == JobStatus.COMPLETED

@@ -103,7 +103,10 @@ function showJob(job) {
   const stages = { queued: "等待处理", completed: "生成完成", failed: "生成失败", interrupted: "服务中断" };
   $("#job-stage").textContent = stages[job.stage] || job.stage || "等待处理";
   $("#job-progress").style.width = `${job.progress || 0}%`;
-  $("#job-message").textContent = job.error || (job.status === "completed" ? "视频与逐段讲稿已生成。" : "当前任务会在本机逐步处理。请保持页面和服务运行。 ");
+  $("#job-message").textContent = job.error || (job.status === "completed" ?
+    (job.has_presentation ? "视频、PPT 课件与逐段讲稿已生成。" : "视频与逐段讲稿已生成；旧任务可重新上传 PDF 生成 PPT。") :
+    "当前任务会在本机逐步处理。请保持页面和服务运行。 ");
+  $("#presentation-export").hidden = !(job.status === "completed" && job.has_presentation);
   $("#retry-button").hidden = job.status !== "failed";
   $("#delete-button").hidden = !["completed", "failed"].includes(job.status);
 }
@@ -143,6 +146,7 @@ async function showLesson(jobId) {
   const videoURL = `/api/jobs/${jobId}/video`;
   $("#lesson-video").src = videoURL;
   $("#download-video").href = videoURL;
+  $("#download-presentation").href = `/api/jobs/${jobId}/presentation`;
 }
 
 async function refreshJob() {
@@ -215,7 +219,7 @@ form.addEventListener("submit", async (event) => {
 });
 
 $("#delete-button").addEventListener("click", async () => {
-  if (!currentJobId || !confirm("确定删除此任务的本地 PDF、课程和视频吗？")) return;
+  if (!currentJobId || !confirm("确定删除此任务的本地 PDF、课程、视频和 PPT 吗？")) return;
   try {
     await getJSON(`/api/jobs/${currentJobId}`, { method: "DELETE" });
     currentJobId = null;

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
+from pathlib import Path
 from typing import Literal, TypeVar
 
 import httpx
@@ -299,6 +301,118 @@ class KnowledgeSelection(BaseModel):
     points: list[KnowledgeSelectionPoint] = Field(min_length=3, max_length=6)
 
 
+_SENTENCE_END = re.compile(r"[.!?。！？；;][\"'”’)]*$")
+_WORD = re.compile(r"[^\W\d_]{4,}")
+_NUMBER = re.compile(r"(?<!\d)\d+(?:\.\d+)?(?:%|％)?(?!\d)")
+
+
+def _script_fidelity_issues(draft: ScriptDraft, by_id: dict[int, KnowledgePoint]) -> list[str]:
+    """Catch explicit invented values and a known mistranslation of a source ratio."""
+    issues: list[str] = []
+    for segment in draft.segments:
+        point = by_id[segment.source_id]
+        text = " ".join((segment.narration, *segment.bullets))
+        text = re.sub(r"第\s*\d+\s*(?:部分|节|页|张|段|步)", "", text)
+        source_values = set(_NUMBER.findall(point.evidence.quote))
+        novel_values = sorted(set(_NUMBER.findall(text)) - source_values)
+        if novel_values:
+            issues.append(f"《{segment.title}》出现引文未提供的数值：{', '.join(novel_values)}")
+        quote = point.evidence.quote.casefold()
+        if ("theoretical probability" in quote and "desired outcomes" in quote
+                and ("期望成功次数" in text or "预期成功次数" in text)):
+            issues.append(f"《{segment.title}》把有利结果数误写为期望成功次数")
+    return issues
+
+
+def _sanitize_script_draft(draft: ScriptDraft,
+                           by_id: dict[int, KnowledgePoint]) -> ScriptDraft:
+    """Keep the source-backed explanation when a small model repeats invented values."""
+    repaired: list[ScriptDraftSegment] = []
+    for segment in draft.segments:
+        point = by_id[segment.source_id]
+        allowed = set(_NUMBER.findall(point.evidence.quote))
+        definition = "theoretical probability" in point.evidence.quote.casefold()
+        definition &= "desired outcomes" in point.evidence.quote.casefold()
+
+        def clean_terms(value: str) -> str:
+            if definition:
+                value = value.replace("期望成功次数", "有利结果数")
+                value = value.replace("预期成功次数", "有利结果数")
+            return value
+
+        def supported(value: str) -> bool:
+            without_ordinals = re.sub(r"第\s*\d+\s*(?:部分|节|页|张|段|步)", "", value)
+            return set(_NUMBER.findall(without_ordinals)) <= allowed
+
+        bullets = [text for raw in segment.bullets
+                   if supported(text := clean_terms(raw))]
+        if not bullets:
+            bullets = ["对照原文理解定义与条件"]
+        narration = clean_terms(segment.narration)
+        # The narration is Chinese; do not split a decimal such as 0.5 at its dot.
+        sentences = re.split(r"(?<=[。！？!?])", narration)
+        narration = "".join(sentence for sentence in sentences if supported(sentence)).strip()
+        if len(narration) < 20:
+            narration = "本段依据原文解释这一概念。请先辨认原文讨论的对象和条件，再说明它们之间的关系。"
+        repaired.append(ScriptDraftSegment(
+            source_id=segment.source_id, title=segment.title, kind=segment.kind,
+            narration=narration, bullets=bullets,
+        ))
+    return ScriptDraft(segments=repaired)
+
+
+def _topic_term(document: SourceDocument) -> str:
+    """Use a repeated title word as a modest relevance signal, if one exists."""
+    counts = Counter(word.casefold() for page in document.pages
+                     for word in _WORD.findall(page.text))
+    filename_words = {word.casefold() for word in _WORD.findall(Path(document.filename).stem)}
+    title_words = {word.casefold() for line in document.pages[0].text.splitlines()[:8]
+                   for word in _WORD.findall(line)}
+    choices = [word for word in filename_words if counts[word] >= 2]
+    if not choices:
+        choices = [word for word in title_words if counts[word] >= 3]
+    return max(choices, key=lambda word: (counts[word], len(word)), default="")
+
+
+def _page_quotes(text: str, quote_limit: int, minimum_length: int) -> list[str]:
+    """Keep complete lines, joining PDF line wraps when most lines are fragments."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    substantive = [line for line in lines if len(_compact(line)) >= minimum_length]
+    wrapped = bool(substantive) and sum(not _SENTENCE_END.search(line)
+                                        for line in substantive) > len(substantive) / 2
+    if not wrapped:
+        return [line[:quote_limit] for line in substantive]
+
+    quotes: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            quote = " ".join(pending)[:quote_limit]
+            if len(_compact(quote)) >= minimum_length:
+                quotes.append(quote)
+            pending.clear()
+
+    for line in lines:
+        if pending and len(" ".join((*pending, line))) > quote_limit:
+            flush()
+        pending.append(line)
+        if len(line) >= quote_limit or _SENTENCE_END.search(line):
+            flush()
+    flush()
+    return quotes
+
+
+def _spread(items: list[int], limit: int) -> list[int]:
+    """Sample the whole page when no clear subject cue is available."""
+    if len(items) <= limit:
+        return items
+    if limit == 1:
+        return [items[len(items) // 2]]
+    return [items[round(index * (len(items) - 1) / (limit - 1))]
+            for index in range(limit)]
+
+
 def source_candidates(document: SourceDocument) -> list[dict]:
     """提供真实 PDF 中的短摘录，编号只在一次提取请求内有效。"""
     candidates: list[dict] = []
@@ -307,21 +421,43 @@ def source_candidates(document: SourceDocument) -> list[dict]:
     per_page_limit = 2 if long_document else 6
     quote_limit = 120 if long_document else 220
     minimum_length = 40 if long_document else 20
+    topic = _topic_term(document)
     page_counts: dict[int, int] = {}
     for page in document.pages:
-        for line in page.text[:3000].splitlines():
-            quote = line.strip()[:quote_limit]
+        quotes = _page_quotes(page.text, quote_limit, minimum_length)
+        hits = [index for index, quote in enumerate(quotes) if topic and topic in quote.casefold()]
+        if quotes and len(hits) >= 0.8 * len(quotes):
+            hits = []  # A word found everywhere cannot distinguish the subject from boilerplate.
+        if hits:
+            complete = [index for index in hits if _SENTENCE_END.search(quotes[index])]
+            if len(complete) >= 3:
+                # A page may contain unrelated sidebars. A complete subject sentence is
+                # stronger evidence than a clipped heading that merely names the topic.
+                chosen = _spread(complete, per_page_limit)
+                context = [index for index in range(len(quotes) - 1)
+                           if index not in hits and index + 1 in complete
+                           and _SENTENCE_END.search(quotes[index])]
+                if context and len(chosen) < per_page_limit:
+                    chosen.append(max(context, key=lambda index: len(_compact(quotes[index]))))
+            else:
+                nearby = [index for index in range(len(quotes))
+                          if any(abs(index - hit) <= 1 for hit in hits)]
+                ranked = sorted(nearby, key=lambda index: (
+                    index not in hits, not bool(_SENTENCE_END.search(quotes[index])),
+                    -len(_compact(quotes[index])), index))
+                chosen = ranked[:per_page_limit]
+            chosen = sorted(chosen)
+        else:
+            chosen = _spread(list(range(len(quotes))), per_page_limit)
+        for index in chosen:
+            quote = quotes[index]
             key = (page.page, _compact(quote))
-            if len(_compact(quote)) < minimum_length or key in seen:
-                continue
-            if not long_document and len(re.findall(r"[\u4e00-\u9fff]", quote)) < 6:
+            if key in seen:
                 continue
             seen.add(key)
             candidates.append({"id": len(candidates) + 1, "page": page.page,
                                "quote": quote, "ocr": page.ocr})
             page_counts[page.page] = page_counts.get(page.page, 0) + 1
-            if page_counts[page.page] >= per_page_limit:
-                break
     if len(candidates) < 3:
         for page, quote in _candidates(document):
             if page_counts.get(page, 0) >= per_page_limit:
@@ -366,7 +502,10 @@ class AIAgents:
                 selection = self.client.generate(
                     KnowledgeSelection,
                     "从给定编号的原文片段中选 3 到 6 个相互关联的知识点，"
-                    "优先围绕文件名和多次出现的主题组织课程。"
+                    "优先围绕文件名和多次出现的主题，选择可直接讲解的定义、关系、公式或例题；"
+                    "只选覆盖核心所需的数量，不必凑满 6 个。"
+                    "跳过页眉、学习建议、教学方法及未来章节预告，除非它们就是文档主题。"
+                    "每个引文须直接支撑该知识点的定义或步骤；不能仅凭术语列表编造定义。"
                     "source_id 必须是输入 sources 中存在的 id，每个 id 最多使用一次。"
                     "只生成标题、类型和解释；页码与逐字引文由程序填入。"
                     + ("上次选了不存在或重复的编号，请重新选择。" if attempt else ""),
@@ -418,11 +557,17 @@ class AIAgents:
         instruction = (
             "按大纲写中文教学片段，讲稿适合口播，画面要点简短。"
             "讲稿长度按资料内容和用户偏好决定，不设目标视频时长；"
-            "解释概念的条件、具体例子、步骤及常见错误，不要重复句子凑字数。"
+            "解释概念的条件、资料中已有的例子、步骤及常见错误，不要重复句子凑字数。"
+            "不要虚构原文没有的统计数字、百分比或效果结论；举例时明确说是示例。"
+            "任何具体数字、比例或百分比必须出现在对应知识点的原文引文中；原文没有数值时用变量或文字解释，不自创算例。"
+            "术语定义须忠实保留原文中的分子、分母、范围与条件。"
+            "自拟例子要写清条件，数值与比较必须符合所讲定义；不要把依赖条件的现实现象说成必然。"
+            "不要把教学方法或后续章节预告写成当前课程知识点。"
             "每段 source_id 必须指向输入 points 中存在的编号，每个编号最多用一次；"
             "不要输出页码或原文引文，它们由程序按编号填入。"
         ) + self._style()
         segments = []
+        sanitized_any = False
         for points in self._batches(bundle.points, 6):
             material = json.dumps(
                 {"points": [
@@ -433,18 +578,30 @@ class AIAgents:
                 ensure_ascii=False,
             )
             by_id = {index: point for index, point in enumerate(points, start=1)}
+            feedback = ""
             for attempt in range(2):
                 draft = self.client.generate(
                     ScriptDraft,
-                    instruction + ("上次知识点编号无效；请修正。" if attempt else ""),
+                    instruction + feedback,
                     material,
                 )
                 ids = [segment.source_id for segment in draft.segments]
-                if (len(set(ids)) == len(ids)
-                        and all(item in by_id for item in ids)):
-                    break
+                if len(set(ids)) != len(ids) or any(item not in by_id for item in ids):
+                    feedback = "上次知识点编号无效或重复；请修正。"
+                    continue
+                fidelity_issues = _script_fidelity_issues(draft, by_id)
+                if fidelity_issues:
+                    if attempt == 1:
+                        draft = _sanitize_script_draft(draft, by_id)
+                        if not _script_fidelity_issues(draft, by_id):
+                            sanitized_any = True
+                            break
+                    feedback = ("上次讲稿有以下与来源不符之处：" + "；".join(fidelity_issues[:3])
+                                + "。请删除无来源数字，或改用对应引文中的原数值；修正术语定义。")
+                    continue
+                break
             else:
-                raise GenerationError("AI 讲稿未选择有效的知识点编号。")
+                raise GenerationError("AI 讲稿未能遵守知识点编号或来源数值约束。")
             segments.extend(
                 LessonSegment(
                     title=segment.title,
@@ -460,14 +617,17 @@ class AIAgents:
             segments=segments,
             mode=Mode.AI,
             voice_mode=voice_mode,
-            notice="AI 生成：页码引文已自动核对，知识正确性仍需人工复核。",
+            notice=("AI 生成：页码引文已自动核对，知识正确性仍需人工复核。"
+                    + (" 无来源数值或术语表述已自动删改，请重点检查这些讲解。" if sanitized_any else "")),
         )
 
     def review(self, lesson: Lesson) -> ReviewResult:
         for segments in self._batches(lesson.segments, 6):
             result = self.client.generate(
                 ReviewResult,
-                "检查讲稿是否有明显遗漏、自相矛盾、难以理解或与给定引文脱节之处。"
+                "检查讲稿是否有明显遗漏、自相矛盾、难以理解、偏离课程主题或与给定引文脱节之处。"
+                "核对画面要点和口播中的数字、百分比、因果效果；若引文和知识点无法支持，必须拒绝。"
+                "检查数值大小的文字描述是否自洽，例子的前提是否明确。"
                 "如无法确认，approved 为 false，并说明具体片段。",
                 lesson.model_copy(update={"segments": segments}).model_dump_json(),
             )

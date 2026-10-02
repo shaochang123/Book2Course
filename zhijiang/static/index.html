@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="智讲 Agent：将拥有使用权的文本型 PDF 转为可溯源的中文教学视频。">
+  <meta name="description" content="智讲 Agent：将有使用权的 PDF 转为可溯源的中文教学视频与 PPT 课件。">
   <title>智讲 Agent · 从 PDF 到一节课</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
@@ -22,14 +22,14 @@
         <div class="hero-copy">
           <span class="eyebrow">从知识材料，到可学习的讲解</span>
           <h1 id="hero-title">让一份 PDF，<br><em>讲成一节课。</em></h1>
-          <p>上传有使用权的教材或讲义 PDF，生成课程结构、逐段讲稿、来源页码与可播放的中文教学视频。扫描页可自动识别文字。</p>
-          <div class="hero-points"><span>01 · 内容溯源</span><span>02 · 分镜表达</span><span>03 · 视频合成</span></div>
+          <p>上传有使用权的教材或讲义 PDF，生成课程结构、逐段讲稿、来源页码、中文教学视频与 PPT 课件。PPT 中可展示 SVG 教学图和逐段讲解动画。</p>
+          <div class="hero-points"><span>01 · 内容溯源</span><span>02 · 分镜表达</span><span>03 · 视频与 PPT</span></div>
         </div>
         <div class="hero-visual" aria-hidden="true">
           <div class="visual-corner"></div>
           <div class="visual-doc"><span class="mini-label">SOURCE / PDF</span><div class="doc-line long"></div><div class="doc-line"></div><div class="doc-line short"></div><div class="doc-line"></div><div class="doc-line long"></div><span class="doc-footer">第 01 页 · 原文证据</span></div>
           <div class="visual-arrow">→</div>
-          <div class="visual-video"><span class="mini-label">LESSON / MP4</span><div class="play-ring">▶</div><div class="video-strip"><span></span><span></span><span></span></div><span class="video-footer">概念 · 公式 · 流程</span></div>
+          <div class="visual-video"><span class="mini-label">LESSON / MP4 + PPTX</span><div class="play-ring">▶</div><div class="video-strip"><span></span><span></span><span></span></div><span class="video-footer">概念 · 公式 · 流程</span></div>
         </div>
       </section>
 
@@ -99,7 +99,7 @@
               <li><span class="timeline-icon">01</span><div><strong>理解资料</strong><small>提取文本、页码与知识点</small></div></li>
               <li><span class="timeline-icon">02</span><div><strong>组织教学</strong><small>规划顺序、讲稿与画面要点</small></div></li>
               <li><span class="timeline-icon">03</span><div><strong>检查来源</strong><small>逐段核对 PDF 页码和引文</small></div></li>
-              <li><span class="timeline-icon">04</span><div><strong>输出视频</strong><small>配音、画面与 MP4 合成</small></div></li>
+              <li><span class="timeline-icon">04</span><div><strong>输出视频与课件</strong><small>合成 MP4，嵌入 SVG 图示与讲解动画</small></div></li>
             </ol>
             <div class="process-foot"><span>画面形式</span><strong>概念卡片 / 公式步骤 / 流程画面</strong></div>
           </aside>
@@ -110,7 +110,7 @@
         <div class="section-heading"><div><span class="eyebrow">YOUR LESSON</span><h2>生成结果</h2></div><div class="job-actions"><button id="retry-button" class="text-button" type="button" hidden>使用原 PDF 重新生成</button><button id="delete-button" class="text-button" type="button" hidden>删除本地任务与资料</button></div></div>
         <div class="job-card"><div class="job-status-row"><span id="job-badge" class="status-badge">排队中</span><span id="job-filename" class="filename"></span></div><h3 id="job-stage">等待处理</h3><div class="progress-track"><div id="job-progress" class="progress-fill"></div></div><p id="job-message">当前任务会在本机逐步处理。</p></div>
         <div id="lesson-result" hidden>
-          <div class="result-grid"><div class="video-card"><div class="card-heading"><span class="eyebrow">LESSON VIDEO</span><a id="download-video" href="#" download="zhijiang-lesson.mp4">下载 MP4 ↗</a></div><video id="lesson-video" controls preload="metadata" playsinline></video><p id="voice-note" class="result-note"></p></div><div class="overview-card"><span class="eyebrow">COURSE OUTLINE</span><h3 id="lesson-title"></h3><p id="lesson-objective"></p><div id="lesson-notice" class="notice"></div><div class="overview-meta"><span id="segment-count"></span><span>逐段来源可核对</span></div></div></div>
+          <div class="result-grid"><div class="video-card"><div class="card-heading"><span class="eyebrow">LESSON VIDEO</span><a id="download-video" href="#" download="zhijiang-lesson.mp4">下载 MP4 ↗</a></div><video id="lesson-video" controls preload="metadata" playsinline></video><p id="voice-note" class="result-note"></p><div id="presentation-export" class="presentation-export" hidden><div><strong>演示用 PPT 课件</strong><span>含可编辑文字、SVG 教学图和可播放的逐段动画；放映时点击动画播放。</span></div><a id="download-presentation" href="#" download="zhijiang-lesson.pptx">下载 PPTX ↗</a></div></div><div class="overview-card"><span class="eyebrow">COURSE OUTLINE</span><h3 id="lesson-title"></h3><p id="lesson-objective"></p><div id="lesson-notice" class="notice"></div><div class="overview-meta"><span id="segment-count"></span><span>逐段来源可核对</span></div></div></div>
           <div class="script-heading"><h3>逐段讲稿与原文依据</h3><span>点击片段查看讲解内容</span></div>
           <div id="segments" class="segments"></div>
         </div>

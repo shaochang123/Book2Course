@@ -151,6 +151,7 @@ class JobStore:
         result["remote_consent"] = bool(result["remote_consent"])
         result["has_lesson"] = result["lesson_json"] is not None
         result["has_video"] = (self.jobs_dir / job_id / "lesson.mp4").is_file()
+        result["has_presentation"] = (self.jobs_dir / job_id / "lesson.pptx").is_file()
         result.pop("lesson_json")
         result["model_settings"] = json.loads(result.pop("options_json"))
         result["voice_settings"] = json.loads(result.pop("speech_options_json"))
@@ -203,6 +204,7 @@ class JobStore:
         if cursor.rowcount != 1:
             return False
         (self.jobs_dir / job_id / "lesson.mp4").unlink(missing_ok=True)
+        (self.jobs_dir / job_id / "lesson.pptx").unlink(missing_ok=True)
         return True
 
     def delete(self, job_id: str) -> bool:

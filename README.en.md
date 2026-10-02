@@ -2,21 +2,21 @@
 
 **Language / 语言:** [简体中文](README.md) | [English](README.en.md)
 
-Zhijiang Agent turns PDFs that you have the right to use into Chinese educational videos. It extracts text directly from text-based PDFs and runs OCR locally for scanned pages. After you upload a document, the web page shows the course outline, narration for each segment, PDF page numbers, and source excerpts. It also provides a playable, downloadable MP4.
+Zhijiang Agent turns PDFs that you have the right to use into Chinese educational videos and presentation decks. It extracts text directly from text-based PDFs and runs OCR locally for scanned pages. After you upload a document, the web page shows the course outline, narration for each segment, PDF page numbers, and source excerpts. It also provides downloadable MP4 and PPTX files. The PPTX contains SVG teaching diagrams, playable explanatory clips, and speaker notes.
 
 There are two generation modes: **real AI mode** uses local Ollama or an external compatible model; **deterministic demo mode** uses fixed rules and needs no model or API key. The demo is labeled in the page and video. For each job, the web page lets you set the text model provider, API URL, model name, API key, and an instruction prompt. You can configure the speech API URL, model, voice, and key separately. Narration can use a Chinese Windows system voice, a local Chinese Kokoro AI speech model, or an external compatible speech service. Source verification checks that excerpts match the corresponding extracted or OCR text; the accuracy of explanations and OCR still needs human review.
 
 ## From book to course
 
-The sketch's “book → OCR/typesetting → pages” and “main slides → narration/animation → assembly” paths are combined here into one source-linked workflow. **Green solid arrows show the video workflow already implemented; purple dashed arrows show the planned editable PPT extension.** Citation checks locate excerpts in the extracted text. They do not guarantee complete topic coverage or correct teaching explanations, so review the result before use.
+The sketch's “book → OCR/typesetting → pages” and “main slides → narration/animation → assembly” paths are combined here into one source-linked workflow. **Green solid arrows show the implemented MP4 and PPTX paths; the diagram note marks specialized LaTeX and Manim work as planned.** Citation checks locate excerpts in the extracted text. They do not guarantee complete topic coverage or correct teaching explanations, so review the result before use.
 
 [![Workflow from PDF to lesson video](docs/workflow.en.svg)](docs/workflow.en.svg)
 
-The current visuals are temporary PNG frames drawn with Pillow and cleaned up after each job; editable PPTX export is not available. LaTeX formula typesetting, SVG teaching diagrams, and Manim animation are not yet part of the web pipeline. The planned PPT branch keeps page citations, checks for missing knowledge points, and aligns the outline, speaker script, visual style, and animation timing through human review.
+The video uses temporary Pillow frames that are cleaned up after each job. The PPTX has a cover and two slides per knowledge point: a teaching diagram and an animation. Titles and other native PowerPoint text can be edited. Each SVG is embedded as a vector picture with a PNG compatibility fallback, and each segment's MP4 can be clicked during a slideshow. Speaker notes contain narration, the source page, and the exact excerpt. Automatic diagrams and clips use constrained templates; complex continuous math transformations, LaTeX formula layout, and Manim scenes still require custom production.
 
 ### PPT production skills
 
-The following repository Codex skills support future editable PPT content and assets. Web jobs do not invoke them automatically, and they do not change the current MP4 output format. Invoke them by name in a Codex task for this project:
+The following repository Codex skills help refine PPT content and assets. Web jobs generate a PPTX with built-in templates and do not invoke these skills automatically. Invoke them by name in a Codex task for this project:
 
 | Skill | Purpose |
 | --- | --- |
@@ -25,7 +25,7 @@ The following repository Codex skills support future editable PPT content and as
 | [`$book2course-svg-diagrams`](.agents/skills/book2course-svg-diagrams/SKILL.md) | Create editable SVG flowcharts, concept diagrams, and formula step diagrams. |
 | [`$book2course-explainer-animation`](.agents/skills/book2course-explainer-animation/SKILL.md) | Design explanatory visual transformations and check visuals against narration and timing; use [Manim Community](https://docs.manim.community/en/stable/) when needed. |
 
-To produce a PPTX, use Codex's Presentations skill to assemble the outline, script, SVGs, and animation assets, then inspect slide layout and speaker notes. Manim is an optional animation authoring tool and is not a base dependency of the web service.
+For more complex teaching than the automatic deck provides, use Codex's Presentations skill to assemble the outline, script, SVGs, and animation assets, then inspect slide layout and speaker notes. Manim is an optional animation authoring tool and is not a base dependency of the web service.
 
 ## Quick start (Windows)
 
@@ -37,9 +37,9 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn zhijiang.main:app --host 127.0.0.1 --port 8765
 ```
 
-Open [http://127.0.0.1:8765/](http://127.0.0.1:8765/), upload a PDF that you have the right to use, confirm your rights, and start generating. You can try the [sample handout](examples/binary_search_original.pdf). When generation finishes, you can inspect sources, play or download the video, and delete local jobs and files. A failed job can be regenerated from its original PDF. Press `Ctrl+C` to stop the web server.
+Open [http://127.0.0.1:8765/](http://127.0.0.1:8765/), upload a PDF that you have the right to use, confirm your rights, and start generating. You can try the [sample handout](examples/binary_search_original.pdf). When generation finishes, you can inspect sources, play or download the video, download the PPTX, and delete local jobs and files. Re-upload the source PDF for an older job that has no PPTX. A failed job can be regenerated from its original PDF. Press `Ctrl+C` to stop the web server.
 
-The runtime requires Python 3.11+; a Chinese Windows system voice is needed when you select system narration. It has been verified with Python 3.13. `rapidocr` and `onnxruntime` run OCR locally, while `pypdfium2` renders scanned pages. `imageio-ffmpeg` supplies the FFmpeg binary used to assemble videos, so a separate system FFmpeg installation is unnecessary.
+The runtime requires Python 3.11+; a Chinese Windows system voice is needed when you select system narration. It has been verified with Python 3.13. `rapidocr` and `onnxruntime` run OCR locally, while `pypdfium2` renders scanned pages. `python-pptx` creates the deck. `imageio-ffmpeg` supplies the FFmpeg binary used to assemble videos and embedded clips, so a separate system FFmpeg installation is unnecessary.
 
 ## Use local Ollama
 
@@ -50,6 +50,8 @@ Copy-Item .env.local.example .env.local
 ```
 
 `.env.local` is ignored by Git. You can change the Ollama URL and model there. Real AI mode uses the local `/api/chat` endpoint to generate key points, a course plan, and narration. Extracted PDF text is not sent to an external text model in this configuration. The model first selects numbered source excerpts with page references; the program then inserts and verifies the quotations to reduce errors from rewritten source text.
+
+Concrete numbers in the script must appear in the corresponding source excerpt. If the model adds an unsupported value, the program requests one rewrite, then removes unsupported sentences or bullets and flags the result for review if needed. This check cannot prove that every explanation is correct; source material without worked examples may produce a more conceptual script. Review the result before teaching.
 
 You can also skip `.env.local` and enter the API configuration for a job directly in the web page after selecting real AI mode. The API key stays only in the server process memory while the job runs. It is not written to SQLite, the lesson JSON, or the web response. If you refresh the page or restart the service before retrying a job that uses an external model, you must enter the key again. A custom prompt controls the course plan and narration style but cannot bypass source verification.
 
@@ -111,4 +113,5 @@ The web page asks for additional consent before sending extracted text or narrat
 - Text-based and scanned PDFs are supported. Uploads are limited to 200 MB, with no fixed page count limit. Scanned pages are OCRed one at a time in the background, so processing time grows with the page count.
 - AI mode selects evidence from all pages containing text in batches and generates a course without a fixed target video duration. Actual duration depends on the source material, model output, and speech rate. Long documents require more model calls.
 - Demo mode has no page or segment count limit either. For documents of up to two pages, it still selects the first six candidate segments; for longer documents, it selects at most three per page.
-- Concept cards, formula steps, and process visuals are supported. Complex animation, continuity across chapters, and automatic proof of factual claims are not implemented yet.
+- For each segment, the PPTX has one SVG diagram slide and one animation slide with an embedded silent MP4. Click to play during a slideshow; speaker notes guide the live explanation. Deck size and render time grow with the segment count. Native PowerPoint titles and labels are editable; individual paths and text inside an SVG picture are not directly editable as separate slide shapes.
+- Concept cards, formula steps, and process visuals are supported. Automatic clips gradually reveal numbers, relationships, and steps. Complex Manim animation, continuity across chapters, and automatic proof of factual claims are not implemented yet.

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
-  <title id="title">智讲 Agent：从 PDF 到教学视频的流程与 PPT 扩展规划</title>
-  <desc id="desc">上方实线流程表示当前已实现：授权 PDF 上传，经文字提取或本机 OCR，选择带来源的知识点，生成大纲和讲稿，核验引文并审查，再配音和合成 MP4。下方紫色虚线流程表示规划中的 PPT 大纲、SVG 和 LaTeX 图示、Manim 动画与可编辑 PPTX 输出。</desc>
+  <title id="title">智讲 Agent：从 PDF 到教学视频与演示文稿</title>
+  <desc id="desc">已实现流程：上传有使用权的 PDF，直接提取文字或在本机 OCR，选取带页码的原文，设计并核验课程内容。内容分为两路：配音并合成 MP4 教学视频；生成含可编辑文字、讲者备注、嵌入式 SVG 教学图和分段讲解 MP4 的 PPTX。LaTeX 和 Manim 专项生成仍属规划能力。</desc>
   <defs>
     <marker id="arrow-current" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
       <path d="M 1 1 L 11 6 L 1 11 Z" fill="#6EE1CD"/>
@@ -12,8 +12,8 @@
 
   <rect width="1200" height="675" fill="#091723"/>
   <rect x="36" y="25" width="5" height="66" rx="2.5" fill="#6EE1CD"/>
-  <text x="55" y="56" fill="#F4FAFD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="30" font-weight="700">从书籍 PDF 到教学视频</text>
-  <text x="56" y="85" fill="#ADC2CD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16">以可核验原文为依据，设计讲解、画面与配音</text>
+  <text x="55" y="56" fill="#F4FAFD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="30" font-weight="700">从书籍 PDF 到教学视频与 PPTX</text>
+  <text x="56" y="85" fill="#ADC2CD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="16">以可核验原文为依据，设计讲解、图示、动画与配音</text>
 
   <line x1="856" y1="47" x2="899" y2="47" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
   <text x="909" y="53" fill="#D9EEE8" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17">已实现</text>
@@ -21,7 +21,7 @@
   <text x="1072" y="53" fill="#E9DEFF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17">规划中</text>
 
   <rect x="36" y="118" width="1128" height="315" rx="18" fill="#102A36" stroke="#2C5965" stroke-width="1.5"/>
-  <text x="59" y="151" fill="#77E4D1" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1">当前视频生成流程</text>
+  <text x="59" y="151" fill="#77E4D1" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1">课程生成与视频输出 · 已实现</text>
 
   <rect x="58" y="174" width="328" height="224" rx="15" fill="#183947" stroke="#58A99F" stroke-width="2"/>
   <rect x="77" y="190" width="39" height="31" rx="9" fill="#2F6C6A"/>
@@ -59,25 +59,25 @@
   <text x="833" y="345" fill="#D4E6EB" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">输出 MP4 教学视频</text>
   <text x="833" y="373" fill="#D4E6EB" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18">网页展示讲稿与来源</text>
 
-  <rect x="36" y="477" width="1128" height="145" rx="18" fill="#211D35" stroke="#765DA4" stroke-width="1.5" stroke-dasharray="8 6"/>
-  <path d="M 599 399 V 454 H 445 V 527" fill="none" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="8 6" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-planned)"/>
-  <text x="59" y="512" fill="#D3BBFF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700">PPT 扩展 · 规划中</text>
-  <text x="60" y="548" fill="#B6AACF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">沿用已核验的课程内容，</text>
-  <text x="60" y="573" fill="#B6AACF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">制作可编辑课件。</text>
+  <rect x="36" y="477" width="1128" height="145" rx="18" fill="#102A36" stroke="#2C5965" stroke-width="1.5"/>
+  <path d="M 599 399 V 454 H 445 V 527" fill="none" stroke="#6EE1CD" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-current)"/>
+  <text x="59" y="512" fill="#77E4D1" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="18" font-weight="700">PPTX 课件输出 · 已实现</text>
+  <text x="60" y="548" fill="#B8D7DE" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">沿用已核验的课程内容，</text>
+  <text x="60" y="573" fill="#B8D7DE" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">供现场演示与讲解。</text>
 
-  <rect x="320" y="529" width="250" height="69" rx="11" fill="#322946" stroke="#A78AD9" stroke-width="1.8"/>
-  <text x="337" y="558" fill="#F5EFFF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700">PPT 大纲与演讲稿</text>
-  <text x="337" y="583" fill="#D5C8E9" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">逐页安排 · 讲者备注</text>
-  <path d="M 574 563 H 597" fill="none" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrow-planned)"/>
+  <rect x="320" y="529" width="250" height="69" rx="11" fill="#183947" stroke="#58A99F" stroke-width="1.8"/>
+  <text x="337" y="558" fill="#F4FAFD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700">逐页大纲与讲稿</text>
+  <text x="337" y="583" fill="#D4E6EB" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">可编辑文字 · 讲者备注</text>
+  <path d="M 574 563 H 597" fill="none" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
 
-  <rect x="603" y="529" width="250" height="69" rx="11" fill="#322946" stroke="#A78AD9" stroke-width="1.8"/>
-  <text x="620" y="558" fill="#F5EFFF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700">视觉与动画素材</text>
-  <text x="620" y="583" fill="#D5C8E9" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">SVG · LaTeX · Manim</text>
-  <path d="M 857 563 H 880" fill="none" stroke="#C6A4FF" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrow-planned)"/>
+  <rect x="603" y="529" width="250" height="69" rx="11" fill="#183947" stroke="#58A99F" stroke-width="1.8"/>
+  <text x="620" y="558" fill="#F4FAFD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700">教学图与讲解动画</text>
+  <text x="620" y="583" fill="#D4E6EB" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">嵌入 SVG · 分段 MP4</text>
+  <path d="M 857 563 H 880" fill="none" stroke="#6EE1CD" stroke-width="3" marker-end="url(#arrow-current)"/>
 
-  <rect x="886" y="529" width="250" height="69" rx="11" fill="#322946" stroke="#A78AD9" stroke-width="1.8"/>
-  <text x="903" y="558" fill="#F5EFFF" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700">可编辑 PPTX 输出</text>
-  <text x="903" y="583" fill="#D5C8E9" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">课件与可选动画片段</text>
+  <rect x="886" y="529" width="250" height="69" rx="11" fill="#183947" stroke="#58A99F" stroke-width="1.8"/>
+  <text x="903" y="558" fill="#F4FAFD" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="19" font-weight="700">可编辑 PPTX 输出</text>
+  <text x="903" y="583" fill="#D4E6EB" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">页码来源 · 插入式视频</text>
 
-  <text x="51" y="654" fill="#A8B8C6" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">说明：紫色虚线表示规划能力；当前版本尚不生成 PPTX、LaTeX 图示或 Manim 动画。</text>
+  <text x="51" y="654" fill="#A8B8C6" font-family="Microsoft YaHei, Noto Sans CJK SC, Arial, sans-serif" font-size="15">说明：PPTX 含可编辑文字、SVG 教学图及分段视频；LaTeX / Manim 专项生成仍在规划中。</text>
 </svg>

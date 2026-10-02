@@ -14,6 +14,7 @@ from zhijiang.agents import (
 from zhijiang.config import Settings
 from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
 from zhijiang.pdf import PDFError, read_pdf
+from zhijiang.presentation import PresentationError, render_presentation
 from zhijiang.speech import AISpeech, SpeechError, SystemSpeech
 from zhijiang.storage import JobStore
 from zhijiang.video import VideoError, render_video
@@ -30,12 +31,14 @@ class JobProcessor:
         agent_factory: Callable[[Mode], object] | None = None,
         speech_factory: Callable[[VoiceMode], object] | None = None,
         video_renderer: Callable = render_video,
+        presentation_renderer: Callable = render_presentation,
     ):
         self.settings = settings
         self.store = store
         self.agent_factory = agent_factory
         self.speech_factory = speech_factory
         self.video_renderer = video_renderer
+        self.presentation_renderer = presentation_renderer
 
     def _agents(self, mode: Mode, options: GenerationOptions):
         if self.agent_factory:
@@ -88,7 +91,7 @@ class JobProcessor:
             self.store.set_progress(job_id, "编写讲稿与分镜", 53)
             lesson = agents.script(bundle, outline, voice_mode)
             if mode == Mode.AI and options.provider == "ollama":
-                lesson.notice = "本机 Ollama 生成：页码引文已自动核对，知识正确性仍需人工复核。"
+                lesson.notice = lesson.notice.replace("AI 生成：", "本机 Ollama 生成：", 1)
             if any(page.ocr for page in document.pages):
                 lesson.notice += " 扫描页文字经 OCR 识别，请核对识别结果和引用。"
             self.store.set_progress(job_id, "核验引用与讲解结构", 64)
@@ -108,8 +111,10 @@ class JobProcessor:
                 )
             self.store.set_progress(job_id, "合成教学视频", 88)
             self.video_renderer(lesson, audio_files, folder / "lesson.mp4")
+            self.store.set_progress(job_id, "制作 SVG 教学图与 PPT 动画", 94)
+            self.presentation_renderer(lesson, folder / "lesson.pptx")
             self.store.complete(job_id)
-        except (PDFError, GenerationError, SpeechError, VideoError) as exc:
+        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError) as exc:
             self.store.fail(job_id, str(exc))
         except Exception:
             logger.exception("任务 %s 发生未预期的错误", job_id)
