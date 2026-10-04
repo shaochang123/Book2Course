@@ -163,7 +163,8 @@ def test_ollama_repairs_one_runner_500_without_echoing_its_body(sample_pdf):
         assert request.url.path=='/api/generate'
         assert 'private-invalid-model-output' not in body['prompt']
         assert '标准JSON' in body['prompt'] and '提取' in body['system']
-        assert body['format']==KnowledgeBundle.model_json_schema()
+        assert body['format']=='json'
+        assert 'JSON Schema' in body['system']
         return httpx.Response(200,json={'response':bundle.model_dump_json()+']}]]}'} )
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         c=OllamaClient('http://localhost:11434','model',http_client)

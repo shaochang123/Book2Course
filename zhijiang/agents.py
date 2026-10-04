@@ -256,6 +256,7 @@ class OllamaClient:
         self.call_metrics: list[dict] = []
         self.invalid_outputs: list[dict] = []
         self.progress = progress
+        self._json_decoding_stages: dict[str, str] = {}
 
     def close(self) -> None:
         if self._owns_client:
@@ -295,15 +296,17 @@ class OllamaClient:
             {"role": "system", "content": _system_prompt(schema, instruction)},
             {"role": "user", "content": f"<source_data>\n{material}\n</source_data>"},
         ]
-        completion_fallback=False
-        for attempt in range(2):
+        observed_endpoint = self._json_decoding_stages.get(schema.__name__)
+        json_fallback = observed_endpoint is not None
+        completion_fallback = observed_endpoint == '/api/generate'
+        for attempt in range(3):
             content = None
             try:
                 payload = {
                     "model": self.model,
                     "messages": messages,
                     "stream": self.progress is not None,
-                    "format": schema.model_json_schema(),
+                    "format": 'json' if json_fallback else schema.model_json_schema(),
                     "options": {"temperature": 0, "num_ctx": 8192},
                     "keep_alive": "10m",
                 }
@@ -334,12 +337,15 @@ class OllamaClient:
                 if completion_fallback:
                     endpoint='/api/generate'
                     payload.pop('messages')
+                    # Recover from the runner's schema/parser failure with its
+                    # simpler JSON decoder; final Pydantic checks stay strict.
                     payload['system']=messages[0]['content']
                     payload['prompt']='\n'.join(item['content'] for item in messages[1:])
                 result = self._request(endpoint, payload, schema.__name__)
                 self.call_metrics.append({
                     "stage": schema.__name__, "attempt": attempt + 1,
                     "thinking": thinking,"endpoint":endpoint,
+                    'decoding': 'json' if json_fallback else 'schema',
                     **{key: result.get(key) for key in (
                         "done_reason", "eval_count", "prompt_eval_count", "total_duration")},
                 })
@@ -348,7 +354,10 @@ class OllamaClient:
                         "本机模型达到输出预算，未完成结构化结果；请选用非推理模型或更合适的模型。")
                 content = result['response'] if completion_fallback else result["message"]["content"]
                 try:
-                    return schema.model_validate_json(content)
+                    validated = schema.model_validate_json(content)
+                    if json_fallback:
+                        self._json_decoding_stages[schema.__name__] = endpoint
+                    return validated
                 except ValidationError:
                     # Accept only a complete object followed by duplicated closing
                     # tokens. Never cut off values, prose, or a second JSON object.
@@ -357,6 +366,8 @@ class OllamaClient:
                     if not tail or not re.fullmatch(r'[\s\]}\"]+',tail):raise
                     validated=schema.model_validate(value)
                     self.call_metrics[-1]['format_repair']='duplicate_terminators'
+                    if json_fallback:
+                        self._json_decoding_stages[schema.__name__] = endpoint
                     return validated
             except httpx.TimeoutException as exc:
                 raise GenerationError("本机 Ollama 推理超时；模型正在运行，但处理此批材料过慢。") from exc
@@ -366,9 +377,9 @@ class OllamaClient:
                 if attempt == 0:
                     messages.append({'role': 'user', 'content':
                         '本机服务未能返回完整结果，请重新生成最简标准JSON并完整闭合；保留原文事实与来源编号。'})
-                    completion_fallback = True
+                    json_fallback = True
                     continue
-                raise GenerationError('本机 Ollama 两次生成均中断，请检查服务日志；已完成批次可以续跑。') from exc
+                raise GenerationError('本机 Ollama 的格式恢复仍中断，请检查服务日志；已完成批次可以续跑。') from exc
             except httpx.HTTPStatusError as exc:
                 self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
                     'http_status':exc.response.status_code,'error':'upstream_http_error'})
@@ -379,6 +390,7 @@ class OllamaClient:
                     messages.append({'role':'user','content':
                         '本机服务未能返回可解析结果。请重新生成最简的标准JSON，完整闭合对象与数组，不重复结束符；保留原文事实与来源编号。'})
                     completion_fallback=exc.response.status_code==500
+                    json_fallback=completion_fallback
                     continue
                 raise GenerationError(f"本机 Ollama 返回 HTTP {exc.response.status_code}；请检查模型或服务日志。") from exc
             except httpx.HTTPError as exc:
@@ -393,11 +405,15 @@ class OllamaClient:
                     self.invalid_outputs.append({'stage':schema.__name__,'attempt':attempt+1,
                         'endpoint':endpoint,'error':detail,'content':content[:32768],
                         'truncated':len(content)>32768})
-                if attempt == 1:
-                    raise GenerationError("本机 Ollama 两次返回不符合数据契约的 JSON："+detail) from exc
-                messages.append(
-                    {"role": "user", "content": "上一轮字段无效："+detail+"。请按 JSON Schema 修正，返回完整 JSON；来源引用不得改写。"}
-                )
+                if attempt >= (2 if json_fallback else 1):
+                    raise GenerationError("本机 Ollama 返回不符合数据契约的 JSON："+detail) from exc
+                if isinstance(exc, json.JSONDecodeError):
+                    json_fallback = True
+                guidance = ''
+                if schema.__name__ == 'SourceFactsDraft' and 'literal_error' in detail:
+                    guidance = '事实只选有完整原文支持的断言；没有来源的推算或残片不输出，禁止-1或新增编号。facts不必覆盖所有sources，保留有依据的事实即可。'
+                messages.append({"role": "user", "content": "上一轮字段无效："+detail+
+                    "。请按 JSON Schema 修正，返回完整 JSON；来源引用不得改写。"+guidance})
         raise GenerationError("本机 Ollama 未能生成有效内容。")
 
     def _request(self, endpoint: str, payload: dict, stage: str) -> dict:
@@ -851,26 +867,24 @@ def _page_source_quotes(text, focus=()):
     return _spread(quotes, 16)
 
 
+def source_number_issues(explanation, source_quote):
+    """Shared excerpt binding; matching digits alone cannot prove a formula."""
+    novel = set(_NUMBER.findall(explanation)) - set(_NUMBER.findall(source_quote))
+    if novel:
+        return sorted(novel)
+    normalize = lambda value: _compact(unicodedata.normalize('NFKC', value))
+    source_text = normalize(source_quote)
+    unbound = [clause.strip() for clause in re.split(r'[，,。！？；;]',explanation)
+               if _has_specific_quantity(clause, source_quote) and normalize(clause) not in source_text]
+    return ['未逐字绑定的定量表述：'+clause for clause in unbound]
+
+
 def _selection_number_issues(selection, by_id):
     issues = {}
     for index, point in enumerate(selection.points, start=1):
-        source = {**by_id[point.source_id]}
-        if point.source_quote:
-            source['quote'] = point.source_quote
-        novel = set(_NUMBER.findall(point.explanation)) - set(_NUMBER.findall(source['quote']))
-        if novel:
-            issues[index] = sorted(novel)
-            continue
-        # Matching a bag of digits cannot establish a ratio or formula. OCR
-        # may preserve both digits while losing their fraction bar. Numeric
-        # summary clauses must retain source wording; calculated examples use
-        # the later verified scene contract. Include worded Chinese fractions.
-        normalize = lambda value: _compact(unicodedata.normalize('NFKC', value))
-        source_text = normalize(source['quote'])
-        unbound = [clause.strip() for clause in re.split(r'[，,。！？；;]',point.explanation)
-                   if _has_specific_quantity(clause, source['quote']) and normalize(clause) not in source_text]
-        if unbound:
-            issues[index] = ['未逐字绑定的定量表述：'+clause for clause in unbound]
+        source_quote = point.source_quote or by_id[point.source_id]['quote']
+        if problem := source_number_issues(point.explanation, source_quote):
+            issues[index] = problem
     return issues
 
 
@@ -924,7 +938,7 @@ class AIAgents:
                     'OCR分数或比例不清时，仅说明可读的概念及需回看原文图示核对的内容，不猜测缺失值。'
                     '只返回指定point_id的解释，每个编号恰好一次；不得修改其他条目。'+feedback, material)
             except GenerationError as exc:
-                if '两次返回不符合数据契约的 JSON' not in str(exc):
+                if '返回不符合数据契约的 JSON' not in str(exc):
                     raise
                 self.knowledge_drafts.append({'batch': batch_index, 'repair_attempt': attempt+1,
                     'required_point_ids': list(invalid), 'error': '定性修正未满足结构化数据契约'})

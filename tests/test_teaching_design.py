@@ -514,6 +514,87 @@ def test_untranslated_or_truncated_reading_cache_is_regenerated(tmp_path):
         SourceFactDraft(source_id=1,statement='观测数据描述原文记录的初始状态及其适用条-')
 
 
+def test_source_fact_bounds_keep_chinese_and_scientific_names_without_unbounded_output():
+    from zhijiang.teaching_design import SourceFactDraft
+    from pydantic import ValidationError
+    assert SourceFactDraft(source_id=1,statement='原文讨论水的化学名称H2O。').statement.endswith('H2O。')
+    assert len(SourceFactDraft(source_id=1,statement='中'*119+'。').statement) == 120
+    for statement in ('Observed state remains bounded。','中'*120+'。','中'*10+'。'):
+        with pytest.raises(ValidationError):
+            SourceFactDraft(source_id=1,statement=statement)
+
+
+def test_source_fact_punctuation_normalization_preserves_words_and_rejects_clipped_endings():
+    from zhijiang.teaching_design import SourceFactDraft
+    from pydantic import ValidationError
+    text='能先约分的可以先约分，再计算，结果相同'
+    assert SourceFactDraft(source_id=3,statement=text).statement == text+'。'
+    for clipped in ('观测数据描述原文记录的初始状态及其适用条-',
+                    '观测数据描述原文记录的初始状态及其适用条=', '乘整数'):
+        with pytest.raises(ValidationError):
+            SourceFactDraft(source_id=3,statement=clipped)
+
+
+def test_unrequested_analogy_is_rejected_without_losing_source_fact_steps():
+    from zhijiang.teaching_design import script_schema
+    from pydantic import ValidationError
+    d=diagram();d.nodes=d.nodes[:1];d.relations=[]
+    fact={'id':1,'source_id':1,'source_quote':d.nodes[0].source_quote,
+          'statement':d.nodes[0].label+'描述原文记录的初始状态及其适用条件。'}
+    schema=script_schema(d,[fact])
+    assert schema.model_validate({'steps':[{'fact_id':1}],'example':None}).steps[0].fact_id==1
+    for analogy in ('就像舞伴对照对方的动作保持配合。','三个人一起分一个披萨，每人分得三分之一。'):
+        with pytest.raises(ValidationError):
+            schema.model_validate({'steps':[{'fact_id':1}],'example':{'fact_id':1,'analogy':analogy}})
+
+
+def test_scanned_quantity_question_is_not_taught_as_fact_and_cache_keeps_readable_method(tmp_path):
+    import json
+    from zhijiang.teaching_design import source_reading,source_reading_fingerprint,scanned_fact_issues
+    spans={1:'每人取2个，3人一共取多少个?',2:'用分子乘整数的积作分子，分母不变。'}
+    question='每人取2个，3人一共取多少个。'
+    assert scanned_fact_issues(question,spans[1])
+    assert not scanned_fact_issues('用分子乘整数的积作分子，分母不变。',spans[2])
+    class Client:
+        def generate(self,*args):raise AssertionError('Valid remaining facts should be reused.')
+    client=Client();path=tmp_path/'source-reading.json'
+    facts=[{'id':i,'source_id':i,'source_quote':spans[i],'statement':text}
+           for i,text in [(1,question),(2,spans[2])]]
+    path.write_text(json.dumps({'fingerprint':source_reading_fingerprint(client,spans,ocr=True),
+        'facts':facts,'status':'draft_requires_semantic_review'}),encoding='utf8')
+    kept,cached=source_reading(client,spans,path,ocr=True)
+    assert cached and kept==facts[1:]
+    saved=json.loads(path.read_text(encoding='utf8'))
+    assert saved['rejected_facts'][0]['statement']==question and saved['facts']==kept
+
+
+@pytest.mark.parametrize('all_bad',[False,True])
+def test_ocr_fact_reading_records_unbound_calculations_without_accepting_them(tmp_path,all_bad):
+    import json
+    from zhijiang.teaching_design import source_reading
+    spans={1:'×3=(个)9 6 3 3 1',2:'用分子乘整数的积作分子，分母不变。'}
+    class Client:
+        calls=0
+        def generate(self,schema,instruction,material):
+            self.calls+=1
+            facts=[{'source_id':1,'statement':'3×1/9等于6/9个。'}]
+            if not all_bad:
+                facts.append({'source_id':2,'statement':spans[2]})
+            return schema.model_validate({'facts':facts})
+    client=Client();path=tmp_path/'reading.json'
+    if all_bad:
+        with pytest.raises(TeachingDesignError,match='OCR数值'):
+            source_reading(client,spans,path,ocr=True)
+    else:
+        facts,cached=source_reading(client,spans,path,ocr=True)
+        assert not cached and len(facts)==1 and facts[0]['source_id']==2
+        assert source_reading(client,spans,path,ocr=True)[1] and client.calls==1
+    saved=json.loads(path.read_text(encoding='utf8'))
+    assert saved['rejected_facts'][0]['source_id']==1
+    assert saved['rejected_facts'][0]['statement']=='3×1/9等于6/9个。'
+    assert saved['facts']==[] if all_bad else len(saved['facts'])==1
+
+
 def test_empty_chinese_label_catalog_is_rejected_before_schema_construction():
     from zhijiang.teaching_design import structure_schema
     spans={1:'Observed data describes the initial state.'}

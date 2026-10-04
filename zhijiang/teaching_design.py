@@ -68,8 +68,30 @@ class TeachingScriptDraft(BaseModel):
 class SourceFactDraft(BaseModel):
     source_id: int = Field(ge=1)
     statement: str = Field(min_length=12,max_length=120,
-        pattern=r'^[^\r\n]*[\u4e00-\u9fff][^\r\n]*[。！？]$',
+        pattern=r'^[^\r\n]{12,120}$',
         description='A complete Chinese statement ending in Chinese sentence punctuation; retain scientific names if needed.')
+
+    @model_validator(mode='before')
+    @classmethod
+    def final_punctuation(cls, value):
+        if isinstance(value,dict) and isinstance(value.get('statement'),str):
+            text = value['statement']
+            # Formatting only: preserve all words and reject operators or
+            # clipped hyphens rather than pretending they end a sentence.
+            if (11 <= len(text) <= 119 and re.search(r'[\u4e00-\u9fff]',text)
+                    and re.search(r'[\u4e00-\u9fffA-Za-z0-9]$',text)):
+                value = {**value, 'statement': text+'。'}
+        return value
+
+    @model_validator(mode='after')
+    def chinese_statement(self):
+        # Bound the native decoder grammar, not just Pydantic's maxLength.
+        # Chinese presence is checked separately without an unbounded branch.
+        if not re.search(r'[\u4e00-\u9fff]', self.statement):
+            raise ValueError('来源事实必须包含中文说明。')
+        if not self.statement.endswith(('。','！','？')):
+            raise ValueError('来源事实必须以中文句子标点结束。')
+        return self
 
 
 class SourceFactsDraft(BaseModel):
@@ -170,7 +192,21 @@ def bind_fact_relation(relation,nodes,facts):
     return relation
 
 
-def extract_source_facts(client,spans):
+def scanned_fact_issues(statement,source_quote):
+    """OCR exercise questions are not established numerical assertions.
+
+    Layout may have lost a denominator even when all statement digits occur in
+    the OCR text. Keep the source page/question for review, not as a spoken fact.
+    """
+    from zhijiang.agents import source_number_issues
+    problems=source_number_issues(statement,source_quote)
+    if (re.search(r'[?？]',source_quote) and
+            (statement.endswith(('?','？')) or re.search(r'多少[^，。！？?]{0,6}[。！？?]$',statement))):
+        problems.append('尚未作答的数量问题不是来源事实；OCR数值与原页版式仍需核对。')
+    return problems
+
+
+def extract_source_facts(client,spans,*,ocr=False,rejections=None):
     """Read source without seeing a candidate explanation or user style prompt.
 
     This separates comprehension from persuasive narration and avoids a reviewer
@@ -179,7 +215,7 @@ def extract_source_facts(client,spans):
     """
     if not spans:raise TeachingDesignError('没有可供理解的来源片段。')
     fact=create_model('SourceFactDraft',__base__=SourceFactDraft,
-        source_id=(Literal[tuple(spans)],Field(description='The source excerpt for this fact.')))
+        source_id=(Literal[tuple(spans)],Field(description='只选输入来源编号；没有完整原文依据的事实不输出，禁止-1或自拟编号。')))
     schema=create_model('SourceFactsDraft',__base__=SourceFactsDraft,
         facts=(list[fact],Field(min_length=1,max_length=8)))
     result=client.generate(schema,
@@ -187,40 +223,70 @@ def extract_source_facts(client,spans):
         '每条statement只翻译一个原文断言，保留原文主语、动作、宾语和条件；不要补充解释、类比、因果或评价。'
         '原文描述数据时仍写数据，描述训练目标时仍写目标，描述实验结果时保留实验范围。'
         '有帮助或关键不能改写为必要条件、完整还原或成功保证。允许保留原文中的数字与科学名称。'
-        '忽略作者、机构、参考文献、纯表头及无法理解的截断片段。source_id选择当前编号，statement为12至120字的完整中文句子，以中文句号结束；不能照抄英文或截断词尾。无需凑满条数。',
+        'OCR中分数结构缺失、多列数字穿插或无法连读的数值片段不能猜补；优先提取可读的定义、步骤和条件。'
+        '未作答的数量问题不作为statement事实；题目仍保留在原PDF页面中，不把问句改成句号来当结论。'
+        '忽略作者、机构、参考文献、纯表头及无法理解的截断片段。source_id选择当前编号，statement为12至120字的完整中文句子，以中文句号结束；不能照抄英文或截断词尾。'
+        'facts不要求覆盖每个sources条目，只选择清楚的原文断言。不得输出自行推算的结果，不得使用-1或虚构编号。无法绑定完整原文的内容不进入事实数组，不凑条数。',
         json.dumps({'sources':[{'id':key,'text':text} for key,text in spans.items()]},ensure_ascii=False))
     facts=[];seen=set()
     for item in result.facts:
         if item.source_id not in spans:raise TeachingDesignError('来源事实引用了不存在的片段。')
+        if ocr:
+            if problems := scanned_fact_issues(item.statement,spans[item.source_id]):
+                if rejections is not None:
+                    rejections.append({'source_id':item.source_id,'statement':item.statement,'issues':problems})
+                continue  # Reject this optional assertion, not the course topic.
         if item.statement in seen:continue
         seen.add(item.statement)
         facts.append({'id':len(facts)+1,'source_id':item.source_id,
                       'source_quote':spans[item.source_id],'statement':item.statement})
+    if not facts:
+        raise TeachingDesignError('原文事实未通过OCR数值引用检查，需核对原页；不能补写缺失的公式或比例。')
     return facts
 
 
-def source_reading_fingerprint(client,spans):
-    return hashlib.sha256(json.dumps({'version':'source-reading-v1','spans':spans,
+def source_reading_fingerprint(client,spans,ocr=False):
+    return hashlib.sha256(json.dumps({'version':'ocr-source-reading-v2' if ocr else 'source-reading-v1','spans':spans,
         'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model','')},sort_keys=True).encode()).hexdigest()
 
 
-def source_reading(client,spans,path=None):
+def source_reading(client,spans,path=None,*,ocr=False):
     """Cache unapproved comprehension drafts; every design still gets reviewed."""
-    fingerprint=source_reading_fingerprint(client,spans)
+    fingerprint=source_reading_fingerprint(client,spans,ocr)
     if path:
         try:
             saved=json.loads(path.read_text(encoding='utf-8'))
             facts=[TeachingSourceFact.model_validate(fact).model_dump() for fact in saved['facts']]
             # Old caches may contain untranslated or truncated model outputs.
             # Apply the current comprehension contract before reusing a draft.
-            for fact in facts:SourceFactDraft.model_validate(fact)
+            kept=[];rejections=list(saved.get('rejected_facts',[]))
+            for fact in facts:
+                fact['statement']=SourceFactDraft.model_validate(fact).statement
+                if ocr:
+                    if problems:=scanned_fact_issues(fact['statement'],spans.get(fact['source_id'],'')):
+                        rejection={'source_id':fact['source_id'],'statement':fact['statement'],'issues':problems}
+                        if rejection not in rejections:rejections.append(rejection)
+                        continue
+                kept.append(fact)
             if (saved['fingerprint']==fingerprint and facts and len({f['id'] for f in facts})==len(facts)
                     and all(f['source_quote']==spans.get(f['source_id']) for f in facts)):
-                return facts,True
+                if kept!=facts:
+                    path.write_text(json.dumps({**saved,'facts':kept,'rejected_facts':rejections,
+                        'status':'draft_requires_semantic_review' if kept else 'rejected_requires_source_review'},
+                        ensure_ascii=False,indent=2),encoding='utf-8')
+                if kept:return kept,True
+                raise TeachingDesignError('缓存事实未通过OCR数值引用检查，需核对原页。')
         except (OSError,ValueError,KeyError):pass
-    facts=extract_source_facts(client,spans)
+    rejections=[]
+    try:
+        facts=extract_source_facts(client,spans,ocr=ocr,rejections=rejections)
+    except TeachingDesignError:
+        if path:
+            path.write_text(json.dumps({'fingerprint':fingerprint,'facts':[],
+                'rejected_facts':rejections,'status':'rejected_requires_source_review'},ensure_ascii=False,indent=2),encoding='utf-8')
+        raise
     if path:
-        path.write_text(json.dumps({'fingerprint':fingerprint,'facts':facts,'status':'draft_requires_semantic_review'},
+        path.write_text(json.dumps({'fingerprint':fingerprint,'facts':facts,'rejected_facts':rejections,'status':'draft_requires_semantic_review'},
             ensure_ascii=False,indent=2),encoding='utf-8')
     return facts,False
 
@@ -490,9 +556,9 @@ def script_schema(draft,facts=None,*,require_analogy=False,source_examples=(),so
             fact_id=(Literal[tuple(item['id'] for item in eligible)],Field()))
         schema=create_model('TeachingScriptDraft',__base__=GroundedScriptDraft,
             steps=(list[step],Field(min_length=min(5,len({node.source_quote for node in draft.nodes})),max_length=min(5,len(eligible)))),
-            example=(type(None),Field(default=None,description='The source already supplies an example; do not invent another.')) if source_examples else
-                ((example,Field(description='Exactly one complete everyday analogy for a selected fact.')) if require_analogy
-                 else (example|None,Field(default=None))))
+            example=(example,Field(description='Exactly one complete everyday analogy for a selected fact.'))
+                if require_analogy and not source_examples else
+                (type(None),Field(default=None,description='Use source facts only; no additional everyday analogy was requested or the source already supplies an example.')))
         # Request a useful example once, rather than forcing an analogy per fact.
         def check_examples(self):
             count=int(self.example is not None)+sum(bool(getattr(step,'analogy','')) for step in self.steps)
@@ -844,7 +910,7 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
             diagnostic_output.write_text(json.dumps({'sources':spans,'source_facts':facts,'phase':name,'attempts':attempts},ensure_ascii=False,indent=2),encoding='utf-8')
     phase('独立理解原文事实')
     reading_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','source-reading').replace('teaching-redesign','source-rereading')) if diagnostic_output else None
-    facts,reading_cached=source_reading(client,spans,reading_path)
+    facts,reading_cached=source_reading(client,spans,reading_path,ocr=page.ocr)
     material_data['source_facts']=facts
     material=json.dumps(material_data,ensure_ascii=False)
     structure_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','source-structure').replace('teaching-redesign','source-restructure')) if diagnostic_output else None
@@ -898,14 +964,14 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
                 '为已确定且有原文依据的教学对象和关系选择一至五步中文讲解，条数由资料实际含义决定，不凑数。'
                 '只解释本图，不扩展到同页的其他内容。fact_id只选择source_facts中已存在的事实编号；程序直接使用该事实，不输出source_statement或narration，也不能改写事实。'
                 'steps只选择fact_id，不写focus/relations/analogy。程序将当前事实对应的对象与关系绑定到画面，不能为一个事实高亮另一个事实的对象。根级example单独保存一个生活类比，包含fact_id和analogy。'
-                'example.fact_id必须属于steps里已选择的事实；analogy为12至80字完整句子，以句号结束，不截断。未请求例子时example可为null。'
+                '只有用户明确请求生活例子或类比且原文未提供示例时，才生成example；其他情况example必须为null。example.fact_id必须属于steps里已选择的事实；analogy为12至80字完整句子，以句号结束，不截断。'
                 '类比只描述日常对象的操作及对应关系，不描述教材中的技术对象做了什么、感到了什么或必然成功。'
                 '避免保证、确保、一定、才不会、只要就能等承诺句，不把测试说成成功保证；只说明更容易观察或理解的对应关系。'
                 '类比不要出现这些当前来源实体名：'+ '、'.join(analogy_source_names(selected_facts))+ '。'+
                 '类比不需要出现在原文中，但不能添加技术事实或声称物理等价。程序把事实和明确标注的类比合成口播。'
                 '每步选择不同的来源观察或追踪不同的关系，不要换个类比重复同一事实。'
                 '普通不定指和明确标注的生活类比可以自然表达，不能把类比说成技术性的精确数量或规律。'
-                '可以给简短生活类比，但明确是类比，不添加来源没有的保证或因果。'
+                '已请求的生活类比必须明确标注，不添加来源没有的保证或因果；数值推演交由计算场景核验，不在类比里补写数值。'
                 '选择的事实必须覆盖每个节点和关系；同一对象的不同原文事实可以逐步解释，但不能重复同一事实。'
                 '所有对象始终可见，图示追踪信息或解释关系，不冒充真实物理运动。'
                 '\n用户偏好：'+prompt)

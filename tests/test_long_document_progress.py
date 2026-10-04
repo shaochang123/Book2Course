@@ -387,7 +387,7 @@ def test_ollama_incomplete_stream_is_not_accepted_even_when_json_is_valid():
             client.generate(ReviewResult, 'review', 'source')
 
 
-def test_native_stream_error_retries_once_with_generation_endpoint_without_echoing_body():
+def test_native_stream_error_recovers_chat_json_without_echoing_body():
     paths = []
 
     def handler(request):
@@ -397,11 +397,53 @@ def test_native_stream_error_retries_once_with_generation_endpoint_without_echoi
         body = json.loads(request.content)
         if len(paths) == 1:
             return httpx.Response(200, text=json.dumps({'error': 'private parser output'}))
-        assert body['stream'] is True and 'private parser output' not in body['prompt']
-        return httpx.Response(200, text=json.dumps({'response': '{"approved":true}', 'done': True}))
+        assert body['stream'] is True and 'private parser output' not in json.dumps(body['messages'])
+        assert body['format'] == 'json'
+        return httpx.Response(200, text=json.dumps({'message': {'content': '{"approved":true}'}, 'done': True}))
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         client = OllamaClient('http://localhost:11434', 'model', http_client, progress=lambda *args: None)
         assert client.generate(ReviewResult, 'review', 'source').approved
         assert client.call_metrics[0]['error'] == 'upstream_stream_error'
-    assert paths == ['/api/chat', '/api/generate']
+    assert paths == ['/api/chat', '/api/chat']
+
+
+def test_json_decoder_recovery_keeps_validation_and_reuses_only_observed_success():
+    requests = []
+
+    def handler(request):
+        if request.url.path == '/api/show':
+            return httpx.Response(200,json={})
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return httpx.Response(200,text=json.dumps({'error':'private parser output'}))
+        assert body['format'] == 'json' and 'JSON Schema' in body['messages'][0]['content']
+        value = '{"approved":[]}' if len(requests)==2 else '{"approved":true}'
+        return httpx.Response(200,text=json.dumps({'message':{'content':value},'done':True}))
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client = OllamaClient('http://localhost:11434','model',http_client,progress=lambda *args:None)
+        assert client.generate(ReviewResult,'review','source').approved
+        assert client.call_metrics[1]['validation_error']=='approved:bool_type'
+        assert client.generate(ReviewResult,'review','new source').approved
+    assert len(requests)==4 and isinstance(requests[0]['format'],dict)
+    assert 'private parser output' not in json.dumps(requests[1:])
+
+
+def test_json_decoder_recovery_still_rejects_repeated_invalid_fields():
+    calls = []
+
+    def handler(request):
+        if request.url.path == '/api/show':
+            return httpx.Response(200,json={})
+        calls.append(request)
+        result = {'error':'parser failed'} if len(calls)==1 else {
+            'message':{'content':'{"approved":[]}'},'done':True}
+        return httpx.Response(200,text=json.dumps(result))
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','model',http_client,progress=lambda *args:None)
+        with pytest.raises(GenerationError,match='数据契约'):
+            client.generate(ReviewResult,'review','source')
+    assert len(calls)==3
