@@ -165,7 +165,7 @@ class TeachingRelation(BaseModel):
     id: int = Field(ge=1, le=8)
     source: int = Field(ge=1, le=6)
     target: int = Field(ge=1, le=6)
-    label: str = Field(min_length=2, max_length=18)
+    label: str = Field(min_length=1, max_length=18)
     source_quote: str = Field(min_length=8, max_length=300)
     source_term: str = Field(default='',max_length=100)
     supporting_quotes: list[str] = Field(default_factory=list,max_length=2)

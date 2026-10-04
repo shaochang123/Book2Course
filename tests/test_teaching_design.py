@@ -122,6 +122,50 @@ def test_semantic_review_cannot_approve_with_missing_or_rejected_meanings():
     with pytest.raises(TeachingDesignError,match='relation_checks'):validate_meaning_review(review,d)
 
 
+@pytest.mark.parametrize('representation',['source_figure','comparison'])
+@pytest.mark.parametrize('supported',[True,False])
+def test_annotation_review_keeps_phrase_role_and_rejects_wrong_meaning(representation,supported):
+    import json
+    from zhijiang.models import SourceDocument,PageText,LessonSegment,Evidence
+    from zhijiang.teaching_design import plan_teaching_representation
+    source='一个数乘几分之几表示求这个数的几分之几是多少。'
+    document=SourceDocument(filename='definition.pdf',pages=[PageText(page=1,text=source)])
+    segment=LessonSegment(title='分数乘法含义',kind='concept',narration=source,
+        bullets=['分数乘法含义'],evidence=Evidence(page=1,quote=source))
+    reviews=[]
+    class Client:
+        def generate(self,schema,instruction,material):
+            if schema.__name__=='SourceFactsDraft':
+                return schema.model_validate({'facts':[{'source_id':1,'statement':source}]})
+            if schema.__name__=='TeachingDesignDraft':
+                chosen='source_figure' if 'representation=source_figure' in instruction else representation
+                return schema.model_validate({'representation':chosen,
+                    'rationale':'用原文数量短语标注定义，保留整个定义的条件。','question':'怎样理解分数乘法？',
+                    'nodes':[{'id':1,'label':'一个数','source_id':1,'source_term':'一个'},
+                             {'id':2,'label':'几分之几','source_id':1,'source_term':'几分之几'}],
+                    'relations':[],'steps':[]})
+            if schema.__name__=='TeachingScriptDraft':
+                return schema.model_validate({'steps':[{'fact_id':1}],'example':None})
+            candidate=json.loads(material)['design'];reviews.append(candidate)
+            assert '当前表达方式：'+candidate['representation'] in instruction
+            assert '没有连线时不假定节点之间存在' in instruction
+            assert '共现不等于关系' in instruction
+            result={'approved':supported,'issues':[],'relation_checks':[],
+                'node_checks':[{'id':key,'supported':supported,'source_meaning':source,
+                    'reason':'原文支持数量短语的指代，注释没有增加实体或关系。' if supported else '该标签的指代与原文不符，不能用文字出现替代含义检查。'} for key in [1,2]],
+                'step_checks':[{'id':1,'supported':True,'source_meaning':source,
+                    'reason':'口播使用完整原文定义，没有改变适用条件。'}]}
+            return schema.model_validate(result)
+    if supported:
+        draft,report,_=plan_teaching_representation(Client(),segment,document,'')
+        assert report['semantic_review']['approved'] and not draft.relations
+        assert draft.steps[0].source_statement==source and draft.steps[0].focus==[1,2]
+    else:
+        with pytest.raises(TeachingDesignError,match='教学含义核对未通过'):
+            plan_teaching_representation(Client(),segment,document,'')
+    assert reviews and all(not review['relations'] for review in reviews)
+
+
 def test_path_focus_completion_changes_only_display_emphasis():
     from types import SimpleNamespace
     from zhijiang.teaching_design import complete_relation_focus
@@ -568,11 +612,142 @@ def test_scanned_quantity_question_is_not_taught_as_fact_and_cache_keeps_readabl
     assert saved['rejected_facts'][0]['statement']==question and saved['facts']==kept
 
 
+def test_literal_node_name_repairs_wrong_numeric_anchor_and_rechecks_cached_structure(tmp_path):
+    from zhijiang.teaching_design import resolve_design,save_structure,load_structure
+    source='分数乘整数，用分子乘整数的积作分子，分母不变；式子包含数字2。'
+    draft=TeachingDesignDraft(representation='source_figure',rationale='保留原文页面逐步讲解运算方法。',question='怎样理解运算方法？',
+        nodes=[{'id':1,'label':'整数','source_id':1,'source_term':'2'},
+               {'id':2,'label':'分母','source_id':1,'source_term':'分母'}])
+    repairs=[];resolved=resolve_design(draft,{1:source},repairs)
+    assert draft.nodes[0].source_term=='2' and resolved.nodes[0].source_term=='整数'
+    assert repairs[0]['repair']=='literal_node_name' and repairs[0]['from_source_term']=='2'
+    assert validate_diagram(resolved,source,require_steps=False)['passed']
+    resolved.nodes[0].source_term='2'
+    with pytest.raises(TeachingDesignError,match='节点名称'):
+        validate_diagram(resolved,source,require_steps=False)
+    path=tmp_path/'structure.json';save_structure(path,'input',resolved);repairs=[]
+    cached=load_structure(path,'input',source,repairs=repairs)
+    assert cached.nodes[0].source_term=='整数' and repairs[0]['repair']=='literal_node_name'
+
+
+def test_literal_node_binding_keeps_translations_and_preserves_source_spacing():
+    from zhijiang.teaching_design import bind_literal_node_terms
+    from zhijiang.models import TeachingNode
+    nodes=[TeachingNode(id=1,label='温度',source_quote='温 度与3秒后的状态均有记录。',source_term='3'),
+           TeachingNode(id=2,label='观测数据',source_quote='Recorded observations support the training objective.',source_term='observations')]
+    bind_literal_node_terms(nodes)
+    assert nodes[0].source_term=='温 度' and nodes[1].source_term=='observations'
+
+
+def test_rejected_ocr_draft_recovers_literal_definition_without_numeric_rewrite(tmp_path):
+    import json
+    from zhijiang.teaching_design import source_reading
+    source='4 想：求12L的 是多少 在这里，一个数乘几分之几表示的是求这个数的几分之几是多少。'
+    class Client:
+        stages=[]
+        def generate(self,schema,instruction,material):
+            self.stages.append(schema.__name__)
+            if schema.__name__=='SourceFactsDraft':
+                return schema.model_validate({'facts':[{'source_id':6,'statement':'求12L的1/4是多少，一个数乘几分之几表示求这个数的几分之几是多少。'}]})
+            assert schema.__name__=='SourceFactClauseSelection'
+            candidates=json.loads(material)['source_clauses']
+            assert all('12' not in item['statement'] and '1/4' not in item['statement'] for item in candidates)
+            chosen=next(item['id'] for item in candidates if item['statement'].startswith('一个数'))
+            return schema.model_validate({'clause_ids':[chosen]})
+    client=Client();path=tmp_path/'reading.json'
+    facts,cached=source_reading(client,{6:source},path,ocr=True)
+    assert not cached and len(facts)==1 and facts[0]['source_id']==6
+    assert facts[0]['statement']=='一个数乘几分之几表示的是求这个数的几分之几是多少。'
+    saved=json.loads(path.read_text(encoding='utf8'))
+    assert len(saved['rejected_facts'])==1 and saved['repairs'][0]['method']=='literal_source_fact_clauses'
+    assert source_reading(client,{6:source},path,ocr=True)[1]
+    assert client.stages==['SourceFactsDraft','SourceFactClauseSelection']
+
+
+def test_annotation_labels_allow_quantity_phrases_and_actions_without_subject_vocabulary():
+    from zhijiang.teaching_design import fact_labels,structure_schema
+    definition='一个数乘几分之几表示的是求这个数的几分之几是多少。'
+    facts=[{'id':1,'source_id':6,'source_quote':definition,'statement':definition}]
+    labels=fact_labels(facts)
+    assert '一个数' in labels and '几分之几' in labels and all(label in definition for label in labels)
+    schema=structure_schema({6:definition},source_annotation=True,facts=facts)
+    draft=schema.model_validate({'representation':'source_figure','rationale':'逐步标注原文的数量短语及其含义。','question':'怎样理解原文定义？',
+        'nodes':[{'id':1,'label':'几分之几','source_id':6,'source_term':'几分之几'}],'relations':[],'steps':[]})
+    assert draft.nodes[0].label=='几分之几'
+    action='先增加再减少，随后继续改变。'
+    action_labels=fact_labels([{'statement':action}])
+    assert '增加' in action_labels and all(label in action for label in action_labels)
+
+
+def test_ocr_fact_format_failure_recovers_only_literal_source_and_does_not_mask_transport_error(tmp_path):
+    import json
+    from zhijiang.agents import GenerationError
+    from zhijiang.teaching_design import source_reading
+    source='分数乘分数，用分子相乘的积作分子，用分母相乘的积作分母。'
+    class Client:
+        def __init__(self,error):self.error=error;self.calls=0
+        def generate(self,schema,instruction,material):
+            self.calls+=1
+            if schema.__name__=='SourceFactsDraft':raise GenerationError(self.error)
+            clauses=json.loads(material)['source_clauses']
+            key=next(item['id'] for item in clauses if item['statement']==source)
+            return schema.model_validate({'clause_ids':[key]})
+    client=Client('本机 Ollama 返回不符合数据契约的 JSON：facts.1.statement:string_too_short')
+    path=tmp_path/'reading.json';facts,cached=source_reading(client,{1:source},path,ocr=True)
+    assert not cached and facts[0]['statement']==source and client.calls==2
+    saved=json.loads(path.read_text(encoding='utf8'))
+    assert saved['rejected_facts'][0]['kind']=='fact_format_error'
+    client=Client('本机 Ollama 推理超时')
+    with pytest.raises(GenerationError,match='超时'):
+        source_reading(client,{1:source},ocr=True)
+    assert client.calls==1
+
+
+def test_fact_container_keeps_valid_definition_when_optional_records_fail_statement_contract(tmp_path):
+    import json
+    from zhijiang.teaching_design import source_reading
+    spans={1:'怎样计算分数乘法？',2:'一个整数乘分数有时表示几个相同的分数相加，有时表示这个整数的几分之几。',
+           3:'8 ×5 2.4× 3 18×14'}
+    class Client:
+        calls=0
+        def generate(self,schema,instruction,material):
+            self.calls+=1
+            return schema.model_validate({'facts':[{'source_id':i,'statement':text} for i,text in spans.items()]})
+    client=Client();path=tmp_path/'reading.json'
+    facts,cached=source_reading(client,spans,path,ocr=True)
+    assert not cached and len(facts)==1 and facts[0]['source_id']==2 and facts[0]['statement']==spans[2]
+    rejected=json.loads(path.read_text(encoding='utf8'))['rejected_facts']
+    assert {item['source_id'] for item in rejected}=={1,3}
+    assert source_reading(client,spans,path,ocr=True)[1] and client.calls==1
+
+
+def test_single_character_predicate_is_preserved_but_conjunction_is_not_a_relation():
+    from zhijiang.teaching_design import structure_schema,resolve_design
+    from zhijiang.models import TeachingSourceFact
+    source='正方形是矩形，但其边长条件更严格。'
+    facts=[{'id':1,'source_id':1,'source_quote':source,'statement':source}]
+    schema=structure_schema({1:source},facts=facts)
+    raw={'representation':'relationship','rationale':'按原文明确的类别关系讲解概念。','question':'两种图形有什么关系？',
+         'nodes':[{'id':1,'label':'正方形','source_id':1,'source_term':'正方形'},
+                  {'id':2,'label':'矩形','source_id':1,'source_term':'矩形'}],
+         'relations':[{'id':1,'source':1,'target':2,'source_fact_id':1}],'steps':[]}
+    draft=resolve_design(schema.model_validate(raw),{1:source},facts=facts)
+    draft.source_facts=[TeachingSourceFact.model_validate(fact) for fact in facts]
+    assert draft.relations[0].label=='是' and validate_diagram(draft,source,require_steps=False)['passed']
+    source='温度和湿度分别记录在不同表格中。'
+    facts=[{'id':1,'source_id':1,'source_quote':source,'statement':source}]
+    raw['nodes']=[{'id':1,'label':'温度','source_id':1,'source_term':'温度'},
+                  {'id':2,'label':'湿度','source_id':1,'source_term':'湿度'}]
+    with pytest.raises(TeachingDesignError,match='主语'):
+        resolve_design(structure_schema({1:source},facts=facts).model_validate(raw),{1:source},facts=facts)
+
+
 @pytest.mark.parametrize('all_bad',[False,True])
 def test_ocr_fact_reading_records_unbound_calculations_without_accepting_them(tmp_path,all_bad):
     import json
     from zhijiang.teaching_design import source_reading
-    spans={1:'×3=(个)9 6 3 3 1',2:'用分子乘整数的积作分子，分母不变。'}
+    spans={1:'×3=(个)9 6 3 3 1'}
+    if not all_bad:spans[2]='用分子乘整数的积作分子，分母不变。'
     class Client:
         calls=0
         def generate(self,schema,instruction,material):

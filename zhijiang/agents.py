@@ -311,7 +311,7 @@ class OllamaClient:
                     "keep_alive": "10m",
                 }
                 scene_stage=schema.__name__ in {'VisualLayoutDraft','VisualSequenceDraft'}
-                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft'}
+                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection'}
                 thinking = self._thinking_option(semantic_stage)
                 if thinking is not None:
                     payload["think"] = thinking
@@ -325,6 +325,8 @@ class OllamaClient:
                     payload['options']['num_predict']=1536
                 elif schema.__name__ == 'SourceFactsDraft':
                     payload['options']['num_predict']=2048
+                elif schema.__name__ == 'SourceFactClauseSelection':
+                    payload['options']['num_predict']=512
                 elif schema.__name__ == 'VisualSceneDraft':
                     payload['options']['num_predict']=4096
                 elif schema.__name__ == 'ReviewResult':

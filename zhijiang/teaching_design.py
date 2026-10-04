@@ -8,7 +8,7 @@ import unicodedata
 from pathlib import Path
 from typing import Literal,Union
 
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
 from pydantic_core import PydanticCustomError
 
 from zhijiang.models import (TeachingDiagram, TeachingNode, TeachingRelation, TeachingStep, TeachingSourceFact,
@@ -30,7 +30,7 @@ class DesignRelationDraft(BaseModel):
     id: int = Field(ge=1,le=8)
     source: int = Field(ge=1,le=6)
     target: int = Field(ge=1,le=6)
-    label: str = Field(min_length=2,max_length=18,pattern=r'^[^\r\n]{0,8}[\u4e00-\u9fff][^\r\n]{0,9}$')
+    label: str = Field(min_length=1,max_length=18,pattern=r'^[^\r\n]{0,8}[\u4e00-\u9fff][^\r\n]{0,9}$')
     source_id: int = Field(ge=1)
     source_fact_id: int | None = Field(default=None,ge=1)
 
@@ -143,7 +143,7 @@ def fact_labels(facts):
     labels=set()
     for fact in facts:
         text=fact['statement']
-        tokens=[];offset=0
+        tokens=[];offset=0;fact_names=set()
         for token in jieba.posseg.cut(text):
             tokens.append((token.word,offset,offset+len(token.word),token.flag));offset+=len(token.word)
         for index,(_,start,_,flag) in enumerate(tokens):
@@ -153,9 +153,22 @@ def fact_labels(facts):
                 end=tokens[index+count-1][2];value=text[start:end]
                 end_flag=tokens[index+count-1][3]
                 if (2<=len(value)<=24 and re.search(r'[\u4e00-\u9fff]',value)
-                        and (end_flag.startswith(('n','a')) or end_flag in {'eng','vn','l','i','j'})
+                        and (end_flag.startswith(('n','a')) or end_flag in {'m','eng','vn','l','i','j'})
                         and not re.search(r'[，。！？；：、（）()\[\]{};,:.!?\s]',value)):
-                    labels.add(value)
+                    fact_names.add(value)
+        if not fact_names:
+            # Some definitions/processes contain quantity phrases or actions,
+            # not POS-tagged nouns. Offer only literal token spans for annotation;
+            # the source review still decides whether the selected label teaches
+            # this fact. No discipline glossary or invented object is involved.
+            for index,(_,start,_,_) in enumerate(tokens):
+                for count in range(1,6):
+                    if index+count>len(tokens):break
+                    value=text[start:tokens[index+count-1][2]]
+                    if (2<=len(value)<=24 and re.search(r'[\u4e00-\u9fff]',value)
+                            and not re.search(r'[，。！？；：、（）()\[\]{};,:.!?\s]',value)):
+                        fact_names.add(value)
+        labels.update(fact_names)
     return sorted(labels,key=lambda value:(len(value),value))[:384]
 
 
@@ -179,8 +192,8 @@ def bind_fact_relation(relation,nodes,facts):
         after=start+len(left);finish=statement.find(right,after)
         if finish<0:continue
         predicate=statement[after:finish].strip()
-        if (2<=len(predicate)<=18 and not re.search(r'[，。！？；：、（）]',predicate)
-                and predicate not in {'以及','或者','同时','之间','及其','和其','与其'}):
+        if (1<=len(predicate)<=18 and not re.search(r'[，。！？；：、（）]',predicate)
+                and predicate not in {'和','与','及','或','以及','或者','同时','之间','及其','和其','与其'}):
             predicates.append(predicate)
     if len(set(predicates))!=1:
         raise TeachingDesignError('独立事实没有直接支持该主语→关系→宾语顺序；请选择原文标注或比较表达。')
@@ -206,7 +219,36 @@ def scanned_fact_issues(statement,source_quote):
     return problems
 
 
-def extract_source_facts(client,spans,*,ocr=False,rejections=None):
+def select_literal_source_facts(client,spans,repairs=None):
+    """Retain readable source assertions when numeric guesses exhaust a draft."""
+    from zhijiang.agents import _readable_source_clauses
+    candidates={}
+    for source_id,quote in spans.items():
+        for clause in _readable_source_clauses({'quote':quote}):
+            statement=clause+'。'
+            try:SourceFactDraft(source_id=source_id,statement=statement)
+            except ValueError:continue
+            if scanned_fact_issues(statement,quote):continue
+            if not any(item['statement']==statement for item in candidates.values()):
+                candidates[len(candidates)+1]={'source_id':source_id,'statement':statement}
+    if not candidates:return []
+    schema=create_model('SourceFactClauseSelection',
+        clause_ids=(list[Literal[tuple(candidates)]],Field(min_length=1,max_length=min(8,len(candidates)))))
+    selection=client.generate(schema,
+        '选择可独立讲解的完整原文说明句编号，只选句意明确的定义、规则或条件。'
+        '忽略未作答的问题、残片和相邻背景，不凑条数，不补写公式。只返回clause_ids，程序逐字填入原句；后续仍须核对原文含义。',
+        json.dumps({'source_clauses':[{'id':key,**item} for key,item in candidates.items()]},ensure_ascii=False))
+    facts=[]
+    for key in dict.fromkeys(selection.clause_ids):
+        item=candidates[key];source_id=item['source_id']
+        facts.append({'id':len(facts)+1,**item,'source_quote':spans[source_id]})
+    if repairs is not None:
+        repairs.append({'method':'literal_source_fact_clauses','selected_clause_ids':selection.clause_ids,
+            'facts':facts})
+    return facts
+
+
+def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
     """Read source without seeing a candidate explanation or user style prompt.
 
     This separates comprehension from persuasive narration and avoids a reviewer
@@ -214,11 +256,17 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None):
     proof of translation; full-page semantic review remains a separate gate.
     """
     if not spans:raise TeachingDesignError('没有可供理解的来源片段。')
-    fact=create_model('SourceFactDraft',__base__=SourceFactDraft,
-        source_id=(Literal[tuple(spans)],Field(description='只选输入来源编号；没有完整原文依据的事实不输出，禁止-1或自拟编号。')))
-    schema=create_model('SourceFactsDraft',__base__=SourceFactsDraft,
+    from zhijiang.agents import GenerationError
+    # The complete container and source IDs must decode correctly. Each optional
+    # record then passes the full statement contract independently, so a short
+    # question cannot discard a valid definition in the same response.
+    fact=create_model('SourceFactRecord',
+        source_id=(Literal[tuple(spans)],Field(description='只选输入来源编号；没有完整原文依据的事实不输出，禁止-1或自拟编号。')),
+        statement=(str,Field(min_length=1,max_length=120,pattern=r'^[^\r\n]{1,120}$',
+            description='完整中文说明句，以中文句号结束；无依据或未作答的问题不输出。')))
+    schema=create_model('SourceFactsDraft',
         facts=(list[fact],Field(min_length=1,max_length=8)))
-    result=client.generate(schema,
+    instruction=(
         '仅阅读原文，提取可用于讲解的事实，用中文忠实转述。你没有候选分镜或口播，不做教学设计。'
         '每条statement只翻译一个原文断言，保留原文主语、动作、宾语和条件；不要补充解释、类比、因果或评价。'
         '原文描述数据时仍写数据，描述训练目标时仍写目标，描述实验结果时保留实验范围。'
@@ -226,10 +274,28 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None):
         'OCR中分数结构缺失、多列数字穿插或无法连读的数值片段不能猜补；优先提取可读的定义、步骤和条件。'
         '未作答的数量问题不作为statement事实；题目仍保留在原PDF页面中，不把问句改成句号来当结论。'
         '忽略作者、机构、参考文献、纯表头及无法理解的截断片段。source_id选择当前编号，statement为12至120字的完整中文句子，以中文句号结束；不能照抄英文或截断词尾。'
-        'facts不要求覆盖每个sources条目，只选择清楚的原文断言。不得输出自行推算的结果，不得使用-1或虚构编号。无法绑定完整原文的内容不进入事实数组，不凑条数。',
-        json.dumps({'sources':[{'id':key,'text':text} for key,text in spans.items()]},ensure_ascii=False))
+        'facts不要求覆盖每个sources条目，只选择清楚的原文断言。不得输出自行推算的结果，不得使用-1或虚构编号。无法绑定完整原文的内容不进入事实数组，不凑条数。')
+    try:
+        result=client.generate(schema,instruction,
+            json.dumps({'sources':[{'id':key,'text':text} for key,text in spans.items()]},ensure_ascii=False))
+    except GenerationError as exc:
+        if not (ocr and '返回不符合数据契约的 JSON' in str(exc)):
+            raise
+        # Reject the whole malformed response, not selected fields from it.
+        # Recovery can only choose current literal source clauses and still goes
+        # through the independent meaning review before becoming a scene.
+        if rejections is not None:rejections.append({'kind':'fact_format_error','error':str(exc)})
+        facts=select_literal_source_facts(client,spans,repairs)
+        if facts:return facts
+        raise
     facts=[];seen=set()
-    for item in result.facts:
+    for record in result.facts:
+        try:item=SourceFactDraft.model_validate(record.model_dump())
+        except ValidationError as exc:
+            if rejections is not None:
+                issues=[f"{'.'.join(map(str,error['loc']))}:{error['type']}" for error in exc.errors()]
+                rejections.append({'source_id':record.source_id,'statement':record.statement,'issues':issues})
+            continue
         if item.source_id not in spans:raise TeachingDesignError('来源事实引用了不存在的片段。')
         if ocr:
             if problems := scanned_fact_issues(item.statement,spans[item.source_id]):
@@ -241,12 +307,14 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None):
         facts.append({'id':len(facts)+1,'source_id':item.source_id,
                       'source_quote':spans[item.source_id],'statement':item.statement})
     if not facts:
-        raise TeachingDesignError('原文事实未通过OCR数值引用检查，需核对原页；不能补写缺失的公式或比例。')
+        if ocr:facts=select_literal_source_facts(client,spans,repairs)
+        if not facts:
+            raise TeachingDesignError('原文事实未通过OCR数值引用检查，需核对原页；不能补写缺失的公式或比例。')
     return facts
 
 
 def source_reading_fingerprint(client,spans,ocr=False):
-    return hashlib.sha256(json.dumps({'version':'ocr-source-reading-v2' if ocr else 'source-reading-v1','spans':spans,
+    return hashlib.sha256(json.dumps({'version':'ocr-source-reading-v3' if ocr else 'source-reading-v1','spans':spans,
         'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model','')},sort_keys=True).encode()).hexdigest()
 
 
@@ -277,16 +345,16 @@ def source_reading(client,spans,path=None,*,ocr=False):
                 if kept:return kept,True
                 raise TeachingDesignError('缓存事实未通过OCR数值引用检查，需核对原页。')
         except (OSError,ValueError,KeyError):pass
-    rejections=[]
+    rejections=[];repairs=[]
     try:
-        facts=extract_source_facts(client,spans,ocr=ocr,rejections=rejections)
+        facts=extract_source_facts(client,spans,ocr=ocr,rejections=rejections,repairs=repairs)
     except TeachingDesignError:
         if path:
             path.write_text(json.dumps({'fingerprint':fingerprint,'facts':[],
-                'rejected_facts':rejections,'status':'rejected_requires_source_review'},ensure_ascii=False,indent=2),encoding='utf-8')
+                'rejected_facts':rejections,'repairs':repairs,'status':'rejected_requires_source_review'},ensure_ascii=False,indent=2),encoding='utf-8')
         raise
     if path:
-        path.write_text(json.dumps({'fingerprint':fingerprint,'facts':facts,'rejected_facts':rejections,'status':'draft_requires_semantic_review'},
+        path.write_text(json.dumps({'fingerprint':fingerprint,'facts':facts,'rejected_facts':rejections,'repairs':repairs,'status':'draft_requires_semantic_review'},
             ensure_ascii=False,indent=2),encoding='utf-8')
     return facts,False
 
@@ -302,12 +370,31 @@ def save_structure(path,fingerprint,draft):
             'status':'draft_requires_semantic_review'},ensure_ascii=False,indent=2),encoding='utf-8')
 
 
-def load_structure(path,fingerprint,source_text):
+def literal_source_name(label,source_quote):
+    """Return the original spelling of an explicit displayed name, if present."""
+    if not label:return None
+    match=re.search(r'\s*'.join(re.escape(char) for char in label),source_quote)
+    return match.group() if match else None
+
+
+def bind_literal_node_terms(nodes,spans=None,repairs=None):
+    for node in nodes:
+        quote=spans.get(node.source_id,'') if spans is not None else node.source_quote
+        name=literal_source_name(node.label,quote)
+        if name and normalized(node.source_term)!=normalized(name):
+            if repairs is not None:
+                repairs.append({'field':'nodes','id':node.id,'repair':'literal_node_name',
+                    'from_source_term':node.source_term,'to_source_term':name})
+            node.source_term=name
+
+
+def load_structure(path,fingerprint,source_text,*,repairs=None):
     if not path:return None
     try:
         saved=json.loads(path.read_text(encoding='utf-8'))
         if saved['fingerprint']!=fingerprint:return None
         draft=ResolvedTeachingDesign.model_validate(saved['design'])
+        bind_literal_node_terms(draft.nodes,repairs=repairs)
         validate_diagram(draft,source_text,require_steps=False)
         return draft
     except (OSError,KeyError,ValueError):return None
@@ -475,6 +562,30 @@ def validate_meaning_review(review,draft):
         raise TeachingDesignError('教学含义核对未通过：'+'；'.join(review.issues[:3]))
 
 
+def meaning_review_instruction(draft):
+    roles={
+        'source_figure':'nodes是原页文字或图形的注释标签，可标注数量短语、动作、条件或结果；不是一组必须独立成立的实体。',
+        'comparison':'nodes是待对照的来源概念、动作、条件或结果，不要求每项都是独立实体。',
+        'process':'nodes是来源支持的阶段、动作、材料或信息；关系须支持阶段之间的真实顺序或传递。',
+        'relationship':'nodes是来源支持的概念、属性、数量或结果；关系须支持其具体主体、谓词与宾语。',
+    }
+    return (
+        '核对教学图的对象、关系和逐步口播是否忠实于source_page。source_facts来自独立原文理解，核查其翻译是否忠实，不把候选设计当依据。每条source_quote已逐字核对，但还须检查它是否真的支持该节点/关系。'
+        '当前表达方式：'+draft.representation+'。'+roles.get(draft.representation,'')+
+        'node_checks核对标签所指的来源含义及source_term对应，不给节点补写未显示的关系。短语是修饰语、加法动作或结果本身不构成拒绝理由；仅当指代不符、误译、引入来源没有的对象或含义时拒绝。'
+        '没有连线时不假定节点之间存在乘法、因果或其他关系；有连线的关系单独严格检查。'
+        '必须逐个完成node_checks、relation_checks、step_checks。source_meaning只转述原文实际表达的含义，reason比较它与候选内容，不复述候选当作依据。'
+        'source_meaning忠实转述原文含义，2至120字；原文只提及对象时可保留简短名称，不凑句子、不补推论。reason用12至120字中文解释核对理由。节点、关系、事实和类比分别判断。'
+        '每条关系核对原文实际的主体、谓词和宾语：共现不等于关系，修饰的对象不是该端点时supported=false，不能推断缺失的中间因果。'
+        '逐句核对口播：原文只说有帮助，不能升级成保证、完整覆盖、必要条件或必然结果；原文没有的前提和普遍断言必须拒绝。'
+        'step_checks核对source_statement是否保留原文事实与条件，并检查analogy是否仅辅助理解。原文的有时、可能等限定必须保留；原文未给出具体情境时，不要求候选额外推导或补写情境。'
+        'analogy是用户允许的原创教学补充，不要求原文使用同一类比，不能以“原文未提到该类比”拒绝；只有类比歪曲概念、增加技术事实或保证时拒绝。'
+        '逐项回查符号定义、时间范围、输入输出和每条关系的端点；不要混淆相邻句子的不同符号。'
+        '来源只描述输入信息或表示方法时，不得声称这些输入自动保证物理规律、结果质量或预测成功。'
+        '逐字核对source_term的中文label翻译；例如状态、变化、输入或输出不能混为一谈。'
+        '不要批准虚构因果、误译、错误概念或把示意当物理模拟。只检查当前知识点。')
+
+
 def structure_schema(spans,*,source_annotation=False,facts=None):
     """Select actual source phrases; no subject-specific object vocabulary."""
     if not spans:raise TeachingDesignError('没有可用于分镜设计的来源片段。')
@@ -636,6 +747,8 @@ def source_spans(text):
 
 
 def resolve_design(draft, spans, repairs=None,facts=None):
+    draft=draft.model_copy(deep=True)
+    bind_literal_node_terms(draft.nodes,spans,repairs)
     if facts:
         data=draft.model_dump()
         bound=[]
@@ -737,6 +850,10 @@ def validate_diagram(diagram, source_text=None, *, require_steps=True):
         if item.source_term and normalized(item.source_term) not in normalized(item.source_quote):
             raise TeachingDesignError('source_term必须从所选原文片段逐字复制，不能翻译或改写：'+item.source_term)
     anchored=[n for n in diagram.nodes if n.source_term]
+    for node in anchored:
+        name=literal_source_name(node.label,node.source_quote)
+        if name and normalized(node.source_term)!=normalized(name):
+            raise TeachingDesignError('节点名称在原文中明确出现时，source_term必须绑定该名称，不能高亮无关数字或符号：'+node.label)
     if len({normalized(n.source_term) for n in anchored})!=len(anchored):
         raise TeachingDesignError('不同对象必须有可区分的原文术语，不得用同一个笼统词代替。')
     for relation in diagram.relations:
@@ -915,7 +1032,8 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
     material=json.dumps(material_data,ensure_ascii=False)
     structure_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','source-structure').replace('teaching-redesign','source-restructure')) if diagnostic_output else None
     structure_hash=structure_fingerprint(client,material,prompt,force_diagram)
-    cached_structure=load_structure(structure_path,structure_hash,page.text)
+    cached_term_repairs=[]
+    cached_structure=load_structure(structure_path,structure_hash,page.text,repairs=cached_term_repairs)
     for attempt in range(3):
         from zhijiang.agents import GenerationError
         attempts.append({})
@@ -939,7 +1057,7 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
                 if force_diagram: raise TeachingDesignError('本次必须重新选择表达方式。')
                 phase('选择可计算几何')
                 return draft,None,failures
-            repairs=[]
+            repairs=list(cached_term_repairs) if attempts[-1].get('structure_cached') else []
             if not attempts[-1].get('structure_cached'):
                 draft=resolve_design(draft,spans,repairs,facts)
             topic_facts=preserve_topic_focus(draft,facts,segment.title)
@@ -1008,16 +1126,7 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
                 raise TeachingDesignError('逐步讲解未通过：'+script_errors[-1])
             phase('核对来源含义')
             review=client.generate(meaning_review_schema(draft),
-                '核对教学图的对象、关系和逐步口播是否忠实于source_page。source_facts来自独立原文理解，核查其翻译是否忠实，不把候选设计当依据。每条source_quote已逐字核对，但还须检查它是否真的支持该节点/关系。'
-                '必须逐个完成node_checks、relation_checks、step_checks。source_meaning只转述原文实际表达的含义，reason比较它与候选内容，不复述候选当作依据。'
-                'source_meaning忠实转述原文含义，2至120字；原文只提及对象时可保留简短名称，不凑句子、不补推论。reason用12至120字中文解释核对理由。节点、关系、事实和类比分别判断；不能因为连线错误而否认原文明确提到的独立对象。'
-                '每条关系核对原文实际的主体、谓词和宾语：共现不等于关系，修饰的对象不是该端点时supported=false，不能推断缺失的中间因果。'
-                '逐句核对口播：原文只说有帮助，不能升级成保证、完整覆盖、必要条件或必然结果；原文没有的前提和普遍断言必须拒绝。'
-                'step_checks核对source_statement是否保留原文事实与条件，并检查analogy是否仅辅助理解。analogy是用户允许的原创教学补充，不要求原文使用同一类比，不能以“原文未提到该类比”拒绝；只有类比歪曲概念、增加技术事实或保证时拒绝。'
-                '逐项回查符号定义、时间范围、输入输出和每条关系的端点；不要混淆相邻句子的不同符号。'
-                '来源只描述输入信息或表示方法时，不得声称这些输入自动保证物理规律、结果质量或预测成功。'
-                '逐字核对source_term的中文label翻译；例如状态、变化、输入或输出不能混为一谈。'
-                '不要批准虚构因果、误译、错误概念或把示意当物理模拟。只检查当前知识点。',
+                meaning_review_instruction(draft),
                 json.dumps({'source_page':page.text,'design':draft.model_dump()},ensure_ascii=False))
             attempts[-1]['semantic_review']=review.model_dump()
             if diagnostic_output:

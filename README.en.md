@@ -155,6 +155,12 @@ Qualitative diagrams explain source facts by default. Additional everyday analog
 
 Unanswered quantity questions on scanned pages remain on the original page for inspection and are not narrated as established facts. Digits present in OCR do not establish intact fraction layout. Retrying rechecks fact drafts, records rejected optional assertions, and reuses the remaining readable facts.
 
+If number checks reject every OCR fact draft, a constrained selection can choose readable source-clause IDs from the current excerpts. The program inserts those clauses verbatim and records repairs in `source-reading-XX.json/repairs`. No usable clause still produces an error, and semantic review remains required. Object candidates allow quantity and action phrases rather than requiring noun POS tags. Relations retain full source predicates, including single-character Chinese predicates; conjunctions alone do not form a relation. When a displayed name occurs explicitly in the same quotation, `source_term` binds to that literal name and records `literal_node_name`, preventing an unrelated nearby digit from being selected. Translation and meaning still require review.
+
+Source reading validates the complete JSON container, count, and source IDs before checking each record's complete Chinese statement, length, and numeric references. Invalid records are rejected and logged individually while usable facts remain. If bounded container-format repair still fails, scanned pages may also try literal clause selection. Partial content from malformed JSON is not accepted, and connection or timeout failures are not treated as content repairs.
+
+Meaning review checks nodes according to the chosen representation. Source-page annotations and comparisons may label phrases, actions, conditions, or outcomes without treating each label as an independent entity. Unlinked annotations do not imply a relationship. Links in relationship and process diagrams still require separate source checks; wrong references and omitted spoken conditions are rejected.
+
 ## Use local AI narration
 
 On a computer without an NVIDIA GPU, you can run the Chinese [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) model on the CPU. In the project directory, install the optional dependencies and download the [ONNX Community quantized model](https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX) and four Mandarin voices (about 130 MB, stored in the Git-ignored `data/models/kokoro/` directory; the download script verifies SHA-256 checksums):
