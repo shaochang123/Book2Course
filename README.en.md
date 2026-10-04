@@ -141,6 +141,12 @@ Chinese scanned excerpts retain short definitions, wrapped text, and adjacent co
 
 See [long textbook progress validation](docs/long-textbook-progress.md) for the actual grade-six scanned source, diagnosis, tests, and resumed-run status.
 
+When one knowledge point fails number checks, only its explanation is repaired. Valid points keep their titles, types, explanations, and sources; the failed topic is retained. Unapproved batch drafts are saved as `batch-XXXX.draft.json`, so retries continue their repairs before validation. These drafts are not completed knowledge checkpoints. Persistent failure identifies the affected topic and retains the draft and repair records for source review.
+
+If free rewriting repeatedly fails, the model may only select a readable clause ID from the current excerpt, and the program inserts that clause verbatim. Candidates exclude specific quantities and fractions and must belong to the point's source. When a short excerpt lacks a usable explanation, a further selection chooses a literal span from the same original page, updates only the failed point's quotation, and produces a qualitative summary. Same-page quotations must match contiguous source text, including when old caches are reused. Missing candidates or mismatched selections produce an explicit error. This constrained repair retains the topic without guessing damaged OCR; it does not recover missing formulas.
+
+Matching digits do not establish a correct fraction, ratio, or formula. Quantitative clauses in knowledge summaries must preserve the current excerpt verbatim. Other quantitative wording receives a targeted repair to explain readable concepts and request source-image review. Checks include worded Chinese fractions and common numeric claims, distinguish generic Chinese references to a number or two numbers, and preserve sourced identifiers such as `CO2`, `H2O`, and `B12`. Older batches are checked against current rules without rewriting valid points. These text rules do not prove arbitrary domain facts or complete teaching meaning.
+
 ## Use local AI narration
 
 On a computer without an NVIDIA GPU, you can run the Chinese [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) model on the CPU. In the project directory, install the optional dependencies and download the [ONNX Community quantized model](https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX) and four Mandarin voices (about 130 MB, stored in the Git-ignored `data/models/kokoro/` directory; the download script verifies SHA-256 checksums):

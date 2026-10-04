@@ -14,8 +14,8 @@
 <text x="476" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Keep excerpts and page refs</text>
 <rect x="875" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
 <text x="891" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">03 Teaching plan</text>
-<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Resume batches; source first</text>
-<text x="891" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Bind visuals/speech to facts</text>
+<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Resume batches; repair points</text>
+<text x="891" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Same-page sources → scenes</text>
 <path d="M 325 185 H 460" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 740 185 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 1015 240 V 270 H 600 V 300" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>

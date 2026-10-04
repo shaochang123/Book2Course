@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import time
+import unicodedata
 from threading import Event, Thread
 from collections import Counter
 from pathlib import Path
@@ -325,7 +326,7 @@ class OllamaClient:
                     payload['options']['num_predict']=4096
                 elif schema.__name__ == 'ReviewResult':
                     payload['options']['num_predict']=2048
-                elif schema.__name__ == 'KnowledgeSelection':
+                elif schema.__name__ in {'KnowledgeSelection', 'KnowledgeExplanationRepair', 'KnowledgeSourceClauseRepair', 'KnowledgePageQuoteRepair'}:
                     payload['options']['num_predict']=2048
                 elif schema.__name__ in {'VisualCoursePlan', 'CourseOutline'}:
                     payload['options']['num_predict']=2048
@@ -470,6 +471,15 @@ class KnowledgeSelectionPoint(BaseModel):
     kind: Literal["concept", "formula", "process"]
     explanation: str = Field(min_length=8, max_length=160)
     source_id: int = Field(ge=1)
+    source_quote: str | None = Field(default=None, min_length=8, max_length=160)
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        schema = handler.resolve_ref_schema(handler(core_schema))
+        # A same-page repair quote is program-validated metadata, not a field
+        # that initial selection can freely invent or use to bypass checks.
+        schema.get('properties', {}).pop('source_quote', None)
+        return schema
 
 
 class KnowledgeSelection(BaseModel):
@@ -482,6 +492,37 @@ def knowledge_selection_schema(source_ids):
         source_id=(Literal[tuple(source_ids)],Field(description='Existing source ID, not a page number.')))
     return create_model('KnowledgeSelection',__base__=KnowledgeSelection,
         points=(list[point],Field(min_length=3,max_length=6)))
+
+
+class KnowledgeExplanationPoint(BaseModel):
+    point_id: int = Field(ge=1)
+    explanation: str = Field(min_length=8, max_length=160, pattern=r'^[^0-9０-９]*$',
+        description='Qualitative explanation only; no numeric examples, values or worded fractions.')
+
+
+def knowledge_explanation_schema(point_ids):
+    """Repair explanations without letting a model replace topics or sources."""
+    point = create_model('KnowledgeExplanationPoint', __base__=KnowledgeExplanationPoint,
+        point_id=(Literal[tuple(point_ids)], Field(description='Existing point ID requiring repair.')))
+    return create_model('KnowledgeExplanationRepair',
+        explanations=(list[point], Field(min_length=len(point_ids), max_length=len(point_ids))))
+
+
+def knowledge_source_clause_schema(point_ids, clause_ids):
+    """Select an existing readable clause; the model cannot rewrite its text."""
+    point = create_model('KnowledgeSourceClausePoint',
+        point_id=(Literal[tuple(point_ids)], ...),
+        clause_id=(Literal[tuple(clause_ids)], ...))
+    return create_model('KnowledgeSourceClauseRepair',
+        selections=(list[point], Field(min_length=len(point_ids), max_length=len(point_ids))))
+
+
+def knowledge_page_quote_schema(point_ids, quote_ids):
+    point = create_model('KnowledgePageQuotePoint',
+        point_id=(Literal[tuple(point_ids)], ...),
+        quote_id=(Literal[tuple(quote_ids)], ...))
+    return create_model('KnowledgePageQuoteRepair',
+        quotations=(list[point], Field(min_length=len(point_ids), max_length=len(point_ids))))
 
 
 _SENTENCE_END = re.compile(r"[.!?。！？；;][\"'”’)]*$")
@@ -742,15 +783,102 @@ def source_candidates(document: SourceDocument) -> list[dict]:
     return candidates
 
 
-def _selection_issues(selection, by_id):
+def _selection_structure_issue(selection, by_id):
     titles = [_compact(point.title).casefold() for point in selection.points]
     if len(set(titles)) != len(titles) or any(point.source_id not in by_id for point in selection.points):
         return '来源编号无效或知识点标题重复'
+    if any(point.source_quote and _compact(point.source_quote) not in
+           _compact(by_id[point.source_id].get('page_text', by_id[point.source_id]['quote']))
+           for point in selection.points):
+        return '修正引文不属于当前知识点的原始页面'
     for point in selection.points:
-        source = by_id[point.source_id]
+        if point.source_quote:
+            focus = _page_quote_focus(point.title, by_id[point.source_id].get('page_text', by_id[point.source_id]['quote']))
+            if focus and not any(term in _compact(point.source_quote).casefold() for term in focus):
+                return '修正引文缺少当前主题的具体来源词语'
+    return ''
+
+
+def _has_specific_quantity(clause, source_quote):
+    identifier = r'(?<![A-Za-z0-9_])[A-Za-z][A-Za-z_]*\d+(?:[A-Za-z]+\d*)*(?![A-Za-z0-9_])'
+    source_names = set(re.findall(identifier, unicodedata.normalize('NFKC', source_quote)))
+    numerals = r'[负零〇一二两三四五六七八九十百千万亿点]+'
+    quantity = (r'\d|'+numerals+r'分之'+numerals+r'|一半|'
+                +numerals+r'(?:倍|次|维(?:度)?|度|秒|米|千克|厘米|公顷)|'
+                r'[三四五六七八九十百千万亿]+个|(?:恰好|正好|只有|仅有|总共|至少|至多)'+numerals+r'个|'
+                r'(?:是|为|等于|达到|增加到|减小到)\s*'+numerals+r'(?=$|[，。,；;！!？?\s])')
+    # Literal source identifiers are vocabulary, not new measurements.
+    prose = re.sub(identifier, lambda match: '' if match.group() in source_names
+                   else match.group(), unicodedata.normalize('NFKC', clause))
+    return re.search(quantity, prose) is not None
+
+
+def _readable_source_clauses(source):
+    """Literal sentence/clause candidates, independent of subject vocabulary."""
+    clauses = []
+    for separator in (r'[。！？?!；;]', r'[。！？?!；;，,]'):
+        for clause in re.split(separator, source['quote']):
+            clause = clause.strip()
+            if (8 <= len(clause) <= 160 and clause not in clauses
+                    and not _has_specific_quantity(clause, source['quote'])):
+                clauses.append(clause)
+    return clauses
+
+
+def _page_quote_focus(title, text):
+    """Prefer specific literal title terms over repeated page-wide words."""
+    title, text = _compact(title).casefold(), _compact(text).casefold()
+    terms = {title[start:start+length] for length in range(2,len(title)+1)
+             for start in range(len(title)-length+1) if title[start:start+length] in text}
+    if not terms:
+        return set()
+    best = max((len(term), -text.count(term)) for term in terms)
+    return {term for term in terms if (len(term), -text.count(term)) == best}
+
+
+def _page_source_quotes(text, focus=()):
+    """Bounded literal spans around OCR prose runs, including source values."""
+    quotes = []
+    for sentence in re.split(r'[。！？?!；;]|(?<!\d)\.(?!\d)', _compact(text)):
+        # After interleaved numeric rows, a prose run may contain a readable
+        # conclusion. Preserve its contiguous tail instead of inventing text.
+        starts = {0, *(match.start() for match in re.finditer(r'(?<![\u3400-\u9fff])[\u3400-\u9fff]',sentence))}
+        for start in sorted(starts):
+            quote = sentence[start:]
+            if (8 <= len(quote) <= 160 and quote not in quotes
+                    and (not focus or any(term in quote.casefold() for term in focus))):
+                quotes.append(quote)
+    return _spread(quotes, 16)
+
+
+def _selection_number_issues(selection, by_id):
+    issues = {}
+    for index, point in enumerate(selection.points, start=1):
+        source = {**by_id[point.source_id]}
+        if point.source_quote:
+            source['quote'] = point.source_quote
         novel = set(_NUMBER.findall(point.explanation)) - set(_NUMBER.findall(source['quote']))
         if novel:
-            return '解释补入了当前摘录没有的数值；OCR缺失的分数或比例不能猜测，请用定性定义与步骤说明'
+            issues[index] = sorted(novel)
+            continue
+        # Matching a bag of digits cannot establish a ratio or formula. OCR
+        # may preserve both digits while losing their fraction bar. Numeric
+        # summary clauses must retain source wording; calculated examples use
+        # the later verified scene contract. Include worded Chinese fractions.
+        normalize = lambda value: _compact(unicodedata.normalize('NFKC', value))
+        source_text = normalize(source['quote'])
+        unbound = [clause.strip() for clause in re.split(r'[，,。！？；;]',point.explanation)
+                   if _has_specific_quantity(clause, source['quote']) and normalize(clause) not in source_text]
+        if unbound:
+            issues[index] = ['未逐字绑定的定量表述：'+clause for clause in unbound]
+    return issues
+
+
+def _selection_issues(selection, by_id):
+    if issue := _selection_structure_issue(selection, by_id):
+        return issue
+    if _selection_number_issues(selection, by_id):
+        return '解释的定量表述未绑定当前摘录；OCR缺失的分数或比例不能猜测或改写，请用定性定义与步骤说明'
     return ''
 
 
@@ -769,6 +897,141 @@ class AIAgents:
         if len(groups) > 1 and len(groups[-1]) < 3:
             groups[-2].extend(groups.pop())
         return groups
+
+    def _repair_knowledge_explanations(self, selection, by_id, batch_index, total,
+                                      progress=None, save_draft=None):
+        """Keep every selected topic; repair only invalid explanation fields."""
+        result = selection.model_copy(deep=True)
+        feedback = ''
+        for attempt in range(2):
+            invalid = _selection_number_issues(result, by_id)
+            if not invalid:
+                return result
+            if progress:
+                names = '、'.join(result.points[index-1].title for index in invalid)
+                progress(batch_index-1, total, f'修正第 {batch_index} 批条目：{names}')
+            material = json.dumps({'repairs': [
+                {'point_id': index, 'title': result.points[index-1].title,
+                 'unsupported_numbers': values,
+                 'source': by_id[result.points[index-1].source_id]}
+                for index, values in invalid.items()]}, ensure_ascii=False)
+            try:
+                repair = self.client.generate(knowledge_explanation_schema(invalid),
+                    '仅修正指定知识点的 explanation，不重新选择主题或来源。point_id 是本轮待修正知识点编号。'
+                    '根据当前引文写简短的中文定义、条件或操作，保留原文限定条件。'
+                    '本轮只解释术语、对象、条件、操作或计量单位的含义，不陈述任何具体比例、倍率或数量；'
+                    '数字与具体分数（包括中文分数）留给原图与后续已核验场景，不在本轮解释中输出。'
+                    'OCR分数或比例不清时，仅说明可读的概念及需回看原文图示核对的内容，不猜测缺失值。'
+                    '只返回指定point_id的解释，每个编号恰好一次；不得修改其他条目。'+feedback, material)
+            except GenerationError as exc:
+                if '两次返回不符合数据契约的 JSON' not in str(exc):
+                    raise
+                self.knowledge_drafts.append({'batch': batch_index, 'repair_attempt': attempt+1,
+                    'required_point_ids': list(invalid), 'error': '定性修正未满足结构化数据契约'})
+                break
+            ids = [point.point_id for point in repair.explanations]
+            diagnostic = {'batch': batch_index, 'repair_attempt': attempt+1,
+                          'required_point_ids': list(invalid), 'repair': repair.model_dump()}
+            self.knowledge_drafts.append(diagnostic)
+            if len(set(ids)) != len(ids) or set(ids) != set(invalid):
+                diagnostic['error'] = '修正条目编号不完整或重复'
+                feedback = '上次条目编号不完整或重复，请只使用本轮所给编号并各返回一次。'
+                continue
+            for point in repair.explanations:
+                result.points[point.point_id-1].explanation = point.explanation
+            remaining = _selection_number_issues(result, by_id)
+            diagnostic['remaining_issues'] = remaining
+            if save_draft:
+                save_draft(result)
+            feedback = '上次仍含无来源数值，请删去数值例子，仅按当前引文解释可读内容。'
+        invalid = _selection_number_issues(result, by_id)
+        if invalid:
+            clauses = {}
+            for index in invalid:
+                for clause in _readable_source_clauses(by_id[result.points[index-1].source_id]):
+                    clauses[len(clauses)+1] = {'point_id': index, 'text': clause}
+            # No invented definition when the source has no readable clause.
+            if {item['point_id'] for item in clauses.values()} == set(invalid):
+                if progress:
+                    progress(batch_index-1, total, f'第 {batch_index} 批：从原文选择可读说明句')
+                repair = self.client.generate(knowledge_source_clause_schema(invalid, clauses),
+                    '为每个指定知识点选择一个最能解释其含义的原文说明句。只返回point_id和clause_id；'
+                    'clause_id必须属于该point_id。优先定义或操作说明，避免仅有提问的句子。'
+                    '原文分数模糊时只选择清楚的定性说明，不推算数值，不输出或改写句子。',
+                    json.dumps({'points': [{'point_id': index, 'title': result.points[index-1].title}
+                                           for index in invalid], 'clauses': clauses}, ensure_ascii=False))
+                diagnostic = {'batch': batch_index, 'repair_method': 'literal_source_clause',
+                              'required_point_ids': list(invalid), 'repair': repair.model_dump()}
+                self.knowledge_drafts.append(diagnostic)
+                ids = [point.point_id for point in repair.selections]
+                if (len(set(ids)) == len(ids) and set(ids) == set(invalid)
+                        and all(clauses.get(point.clause_id, {}).get('point_id') == point.point_id
+                                for point in repair.selections)):
+                    for point in repair.selections:
+                        result.points[point.point_id-1].explanation = clauses[point.clause_id]['text']
+                    invalid = _selection_number_issues(result, by_id)
+                    diagnostic['remaining_issues'] = invalid
+                    if save_draft:
+                        save_draft(result)
+                else:
+                    diagnostic['error'] = '原文说明句编号与知识点不匹配'
+        if invalid and all(by_id[result.points[index-1].source_id].get('page_text') for index in invalid):
+            # A sampled excerpt can cut off the explanation even when the
+            # original page retains it. Repair only the failed point's quote,
+            # with exact same-page matching before any value can be accepted.
+            page_quotes = {}
+            for index in invalid:
+                source_text = by_id[result.points[index-1].source_id]['page_text']
+                focus = _page_quote_focus(result.points[index-1].title, source_text)
+                for quote in _page_source_quotes(source_text, focus):
+                    page_quotes[len(page_quotes)+1] = {'point_id': index, 'text': quote}
+            for attempt in range(2) if {q['point_id'] for q in page_quotes.values()} == set(invalid) else []:
+                if progress:
+                    progress(batch_index-1, total, f'第 {batch_index} 批：核对完整原页中的说明句')
+                repair = self.client.generate(knowledge_page_quote_schema(invalid, page_quotes),
+                    '为指定知识点选择其原页中最能支撑主题的完整说明句。只返回point_id和quote_id。'
+                    'quote_id必须属于该point_id，优先定义或观察结论，避免残缺公式、单纯提问和无关知识。'
+                    '仅选择已给出的原句编号；原句由程序填入，不能补写、推算或改写原文。',
+                    json.dumps({'points': [{'point_id': index, 'title': result.points[index-1].title}
+                        for index in invalid], 'quotes': page_quotes}, ensure_ascii=False))
+                diagnostic = {'batch': batch_index, 'repair_method': 'literal_same_page_quote',
+                    'repair_attempt': attempt+1, 'required_point_ids': list(invalid), 'repair': repair.model_dump()}
+                self.knowledge_drafts.append(diagnostic)
+                ids = [point.point_id for point in repair.quotations]
+                if (len(set(ids)) != len(ids) or set(ids) != set(invalid)
+                        or any(page_quotes.get(point.quote_id, {}).get('point_id') != point.point_id
+                            for point in repair.quotations)):
+                    diagnostic['error'] = '引文编号不匹配或不是当前原页的连续文字'
+                    continue
+                for point in repair.quotations:
+                    quote = page_quotes[point.quote_id]['text']
+                    result.points[point.point_id-1].source_quote = quote
+                diagnostic['chosen_quotes'] = {point.point_id: page_quotes[point.quote_id]['text']
+                                              for point in repair.quotations}
+                summary = self.client.generate(knowledge_explanation_schema(invalid),
+                    '根据新选出的同页原句，写简短的定性说明。原文可能夹杂OCR误排数字，不能把数字串解释成公式。'
+                    '仅说明可辨识的对象、操作或观察结论，不输出具体数值、倍数或中文分数；数值关系需核对原图。'
+                    '每个point_id恰好一次，不改变主题或来源。',
+                    json.dumps({'repairs': [{'point_id': index, 'title': result.points[index-1].title,
+                        'source': {'quote': result.points[index-1].source_quote}}
+                        for index in invalid]}, ensure_ascii=False))
+                summary_ids = [point.point_id for point in summary.explanations]
+                diagnostic['summary'] = summary.model_dump()
+                if len(set(summary_ids)) != len(summary_ids) or set(summary_ids) != set(invalid):
+                    diagnostic['error'] = '同页解释修正编号不匹配'
+                    continue
+                for point in summary.explanations:
+                    result.points[point.point_id-1].explanation = point.explanation
+                invalid = _selection_number_issues(result, by_id)
+                diagnostic['remaining_issues'] = invalid
+                if save_draft:
+                    save_draft(result)
+                if not invalid:
+                    break
+        if invalid:
+            names = '、'.join(result.points[index-1].title for index in invalid)
+            raise GenerationError(f'知识点提取第 {batch_index}/{total} 批：{names}的来源数值修正未通过；已保留其余条目，需核对原文。')
+        return result
 
     def extract_knowledge(self, document: SourceDocument, *,
                           progress: Callable[[int, int, str], None] | None = None,
@@ -800,26 +1063,54 @@ class AIAgents:
             material = json.dumps(
                 {"filename": document.filename, "sources": batch}, ensure_ascii=False
             )
-            by_id = {item["id"]: item for item in batch}
+            page_text = {page.page: page.text for page in document.pages}
+            by_id = {item['id']: {**item, 'page_text': page_text[item['page']]} for item in batch}
             schema = knowledge_selection_schema(by_id)
             fingerprint = hashlib.sha256((cache_fingerprint + instruction + material).encode()).hexdigest()
             cache_path = cache_dir / f'batch-{batch_index:04d}.json' if cache_dir else None
+            draft_path = cache_dir / f'batch-{batch_index:04d}.draft.json' if cache_dir else None
+
+            def save_draft(draft):
+                if draft_path:
+                    temporary = draft_path.with_suffix('.tmp')
+                    temporary.write_text(json.dumps({'fingerprint': fingerprint,
+                        'approved': False, 'data': draft.model_dump()}, ensure_ascii=False), encoding='utf-8')
+                    os.replace(temporary, draft_path)
+
             selection = None
+            from_draft = False
             if cache_path:
                 try:
                     saved = json.loads(cache_path.read_text(encoding='utf-8'))
                     if isinstance(saved, dict) and saved.get('fingerprint') == fingerprint:
                         selected = schema.model_validate(saved['data'])
-                        if not _selection_issues(selected, by_id):
+                        if not _selection_structure_issue(selected, by_id):
                             selection = selected
+                            from_draft = bool(_selection_number_issues(selected, by_id))
+                            if from_draft:
+                                save_draft(selected)
+                except (OSError, ValueError, KeyError):
+                    pass
+            if selection is None and draft_path:
+                try:
+                    saved = json.loads(draft_path.read_text(encoding='utf-8'))
+                    if isinstance(saved,dict) and saved.get('fingerprint') == fingerprint:
+                        selected = schema.model_validate(saved['data'])
+                        if not _selection_structure_issue(selected, by_id):
+                            selection = selected
+                            from_draft = True
                 except (OSError, ValueError, KeyError):
                     pass
             if selection is not None:
                 self.knowledge_drafts.append({'batch': batch_index, 'cached': True,
+                    'approved': not from_draft,
                     'draft': selection.model_dump(), 'available_source_ids': list(by_id)})
             if progress:
                 progress(batch_index - 1, len(batches),
-                         f"{'复用' if selection else '分析'}第 {batch_index} 批原文（第 {batch[0]['page']}–{batch[-1]['page']} 页）")
+                         f"{'继续修正' if from_draft else '复用' if selection else '分析'}第 {batch_index} 批原文（第 {batch[0]['page']}–{batch[-1]['page']} 页）")
+            if from_draft:
+                selection = self._repair_knowledge_explanations(selection, by_id, batch_index,
+                    len(batches), progress, save_draft)
             feedback = ''
             for attempt in range(2) if selection is None else []:
                 try:
@@ -831,6 +1122,11 @@ class AIAgents:
                 issue = _selection_issues(selection, by_id)
                 if issue:
                     diagnostic['error']=issue
+                    if not _selection_structure_issue(selection, by_id):
+                        save_draft(selection)
+                        selection = self._repair_knowledge_explanations(selection, by_id, batch_index,
+                            len(batches), progress, save_draft)
+                        break
                     feedback='上次输出未通过检查：'+issue+'。请重新选择并修正解释。'
                     selection = None
                     continue
@@ -839,7 +1135,7 @@ class AIAgents:
                 raise GenerationError(f"知识点提取第 {batch_index}/{len(batches)} 批：模型未能选择有效的原文片段编号、不同知识点及来源数值。")
             part = KnowledgeBundle(points=[KnowledgePoint(title=point.title, kind=point.kind,
                 explanation=point.explanation, evidence=Evidence(
-                    page=by_id[point.source_id]['page'], quote=by_id[point.source_id]['quote'],
+                    page=by_id[point.source_id]['page'], quote=point.source_quote or by_id[point.source_id]['quote'],
                     ocr=by_id[point.source_id]['ocr'])) for point in selection.points])
             validate_knowledge(document, part)
             if cache_path:

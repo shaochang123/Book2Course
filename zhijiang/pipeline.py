@@ -140,11 +140,12 @@ class JobProcessor:
                 progress("提取知识点", 22)
                 # A failed diagram should not repeat a successful OCR/extraction.
                 # Input or model/prompt changes invalidate the analysis cache.
-                fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v4',
+                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v4',
                     'source':source_hash,'mode':mode,'options':options.model_dump()},sort_keys=True).encode()).hexdigest()
+                fingerprint=hashlib.sha256(('quantity-binding-v1:'+batch_fingerprint).encode()).hexdigest()
                 bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
                     lambda:agents.extract_knowledge(document, cache_dir=folder/'knowledge-batches',
-                        cache_fingerprint=fingerprint,
+                        cache_fingerprint=batch_fingerprint,
                         progress=lambda done,total,label:progress(
                             f'提取知识点（{done}/{total} 批）：{label}',22 + done * 15 // total))
                         if isinstance(agents,AIAgents) else agents.extract_knowledge(document))

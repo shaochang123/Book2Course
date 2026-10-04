@@ -123,6 +123,19 @@ def test_knowledge_rejects_an_ocr_missing_ratio_without_blocking_later_scene_exa
 
     class InventedRatio(SelectionClient):
         def generate(self, schema, instruction, material):
+            if schema.__name__ == 'KnowledgePageQuoteRepair':
+                self.calls.append('page-quote')
+                points = schema.model_fields['quotations'].annotation.__args__[0]
+                return schema.model_construct(quotations=[points.model_construct(point_id=item['point_id'],quote_id=999)
+                    for item in json.loads(material)['points']])
+            if schema.__name__ == 'KnowledgeExplanationRepair':
+                self.calls.append('repair')
+                # A deliberately nonconforming client must not bypass the
+                # backend's source checks even if schema validation was skipped.
+                from zhijiang.agents import KnowledgeExplanationPoint
+                return schema.model_construct(explanations=[KnowledgeExplanationPoint.model_construct(
+                    point_id=item['point_id'], explanation='仍猜测原文遗漏的比例是2/5，并据此计算。')
+                    for item in json.loads(material)['repairs']])
             result = super().generate(schema, instruction, material)
             result.points[0].explanation = '原文遗漏的比例是2/5，因此可以直接相乘计算。'
             return result
@@ -130,8 +143,212 @@ def test_knowledge_rejects_an_ocr_missing_ratio_without_blocking_later_scene_exa
     client = InventedRatio()
     with pytest.raises(GenerationError, match='来源数值'):
         AIAgents(client).extract_knowledge(document, cache_dir=tmp_path)
-    assert client.calls == [1, 1]
-    assert not list(tmp_path.glob('batch-*.json'))
+    assert client.calls == [1, 'repair', 'repair', 'page-quote', 'page-quote']
+    assert not [path for path in tmp_path.glob('batch-*.json') if not path.name.endswith('.draft.json')]
+    assert (tmp_path/'batch-0001.draft.json').is_file()
+
+
+def test_repairs_only_invalid_explanations_and_preserves_every_topic_and_valid_field(tmp_path):
+    document = long_source()
+
+    class RepairClient(SelectionClient):
+        initial = None
+
+        def generate(self, schema, instruction, material):
+            if schema.__name__ == 'KnowledgeExplanationRepair':
+                self.calls.append('repair')
+                repairs = json.loads(material)['repairs']
+                assert [item['point_id'] for item in repairs] == [2]
+                assert repairs[0]['unsupported_numbers'] == ['9.99']
+                return schema.model_validate({'explanations': [dict(point_id=2,
+                    explanation='这段文字讨论概念和适用条件，具体数量需要回看原文核对。')]})
+            result = super().generate(schema, instruction, material)
+            if self.initial is None:
+                result.points[1].source_id = result.points[0].source_id
+                result.points[1].explanation = '根据原文，具体参数必然等于9.99。'
+                self.initial = result.model_dump()
+            return result
+
+    client = RepairClient()
+    bundle = AIAgents(client).extract_knowledge(document, cache_dir=tmp_path)
+    assert client.calls == [1, 'repair', 17]
+    assert len(bundle.points) == 6
+    saved = json.loads((tmp_path/'batch-0001.json').read_text(encoding='utf-8'))['data']
+    assert saved['points'][0] == client.initial['points'][0]
+    assert saved['points'][2] == client.initial['points'][2]
+    for key in ('title','kind','source_id'):
+        assert saved['points'][1][key] == client.initial['points'][1][key]
+    assert '9.99' not in saved['points'][1]['explanation']
+
+
+def test_failed_explanation_repair_resumes_draft_without_regenerating_valid_points(tmp_path):
+    document = long_source()
+
+    class RepairClient(SelectionClient):
+        fail_repairs = True
+
+        def generate(self, schema, instruction, material):
+            if schema.__name__ == 'KnowledgeExplanationRepair':
+                self.calls.append('repair')
+                if self.fail_repairs:
+                    raise GenerationError('repair service unavailable')
+                return schema.model_validate({'explanations': [dict(point_id=item['point_id'],
+                    explanation='概念依据当前引文讲解，不清晰的数量需要核对原始图示。')
+                    for item in json.loads(material)['repairs']]})
+            result = super().generate(schema, instruction, material)
+            if self.calls == [1]:
+                result.points[0].explanation = '该材料使用了未经来源提供的参数9.99。'
+            return result
+
+    client = RepairClient()
+    with pytest.raises(GenerationError,match='unavailable'):
+        AIAgents(client).extract_knowledge(document, cache_dir=tmp_path,cache_fingerprint='same')
+    assert client.calls == [1, 'repair']
+    draft = tmp_path/'batch-0001.draft.json'
+    assert json.loads(draft.read_text(encoding='utf-8'))['approved'] is False
+    client.fail_repairs = False
+    client.calls.clear()
+    bundle = AIAgents(client).extract_knowledge(document, cache_dir=tmp_path,cache_fingerprint='same')
+    assert len(bundle.points) == 6 and client.calls == ['repair',17]
+
+
+def test_summary_rejects_chinese_fraction_and_new_formula_using_only_source_digits():
+    from zhijiang.agents import KnowledgeSelection, _selection_number_issues
+    sources = {1: {'quote': '音符表示不同的时值，OCR将部分分数识别成24与16。'},
+               2: {'quote': '引桥的长度是正桥的257 578，桥全长1670m。'},
+               3: {'quote': '两个数的比表示两个数相除。15比10记作15:10。'}}
+    selection = KnowledgeSelection.model_validate({'points': [
+        dict(title='时值关系',kind='concept',source_id=1,explanation='四分音符是全音符的四分之一。'),
+        dict(title='长度关系',kind='formula',source_id=2,explanation='引桥与正桥的比例为578，可设引桥为578x。'),
+        dict(title='比的定义',kind='concept',source_id=3,explanation='两个数的比表示两个数相除。15比10记作15:10。'),
+    ]})
+    assert set(_selection_number_issues(selection,sources)) == {1,2}
+
+
+def test_stubborn_fraction_repair_selects_literal_readable_source_without_rewriting_topics():
+    from zhijiang.agents import KnowledgeSelection, _selection_number_issues
+    source = {'quote': '不同音符表示不同的时值（即音的长短），部分时值为24 16。'}
+    sources = {1: source, 2: {'quote': '物体运动的方向需要结合参考对象描述。'}}
+    selection = KnowledgeSelection.model_validate({'points': [
+        dict(title='音符时值',kind='concept',source_id=1,explanation='四分音符的时值是全音符的四分之一。'),
+        dict(title='参考对象',kind='concept',source_id=2,explanation='运动方向依赖所选参考对象。'),
+        dict(title='运动描述',kind='process',source_id=2,explanation='描述运动时应说明参考对象。'),
+    ]})
+
+    class Client:
+        def generate(self, schema, instruction, material):
+            data = json.loads(material)
+            if schema.__name__ == 'KnowledgeExplanationRepair':
+                return schema.model_validate({'explanations': [dict(point_id=1,
+                    explanation='四分音符的时值是全音符的四分之一。')]})
+            assert schema.__name__ == 'KnowledgeSourceClauseRepair'
+            candidates = data['clauses']
+            assert all('24' not in item['text'] for item in candidates.values())
+            return schema.model_validate({'selections': [dict(point_id=1,clause_id=int(next(iter(candidates))))]})
+
+    agent = AIAgents(Client())
+    result = agent._repair_knowledge_explanations(selection,sources,6,15)
+    assert result.points[0].explanation == '不同音符表示不同的时值（即音的长短）'
+    assert result.points[1:] == selection.points[1:]
+    assert result.points[0].source_id == 1 and result.points[0].title == selection.points[0].title
+    assert not _selection_number_issues(result,sources)
+    assert agent.knowledge_drafts[-1]['repair_method'] == 'literal_source_clause'
+
+
+def test_literal_repair_rejects_a_clause_belonging_to_another_topic():
+    from zhijiang.agents import KnowledgeSelection
+    sources = {1: {'quote': '不同音符表示不同的时值（即音的长短）。'},
+               2: {'quote': '运动方向依赖所选定的参考对象。'}}
+    selection = KnowledgeSelection.model_validate({'points': [
+        dict(title='音符时值',kind='concept',source_id=1,explanation='全音符时值是一半。'),
+        dict(title='参考对象',kind='concept',source_id=2,explanation='参考对象数量是三。'),
+        dict(title='运动描述',kind='process',source_id=2,explanation='描述运动时应说明参考对象。'),
+    ]})
+
+    class Client:
+        def generate(self, schema, instruction, material):
+            data = json.loads(material)
+            if schema.__name__ == 'KnowledgeExplanationRepair':
+                return schema.model_validate({'explanations': [dict(point_id=item['point_id'],
+                    explanation=selection.points[item['point_id']-1].explanation)
+                    for item in data['repairs']]})
+            candidates = data['clauses']
+            first = {item['point_id']: int(key) for key,item in candidates.items()}
+            return schema.model_validate({'selections': [dict(point_id=1,clause_id=first[2]),
+                                                         dict(point_id=2,clause_id=first[1])]})
+
+    with pytest.raises(GenerationError,match='来源数值'):
+        AIAgents(Client())._repair_knowledge_explanations(selection,sources,6,15)
+
+
+def test_repair_recovers_a_literal_conclusion_outside_the_sampled_excerpt_on_same_page():
+    from zhijiang.agents import KnowledgeSelection, _selection_structure_issue
+    sources = {1: {'quote': '1 2 4 8 16 从第二个数开始，规律?',
+                   'page_text': '1 2 4 8 16 从第二个数开始，规律? 后面观察：分数越来越接\n近于1。'},
+               2: {'quote': '运动方向依赖所选定的参考对象。'}}
+    selection = KnowledgeSelection.model_validate({'points': [
+        dict(title='分数累加',kind='process',source_id=1,explanation='相邻项是前一项的二倍。'),
+        dict(title='参考对象',kind='concept',source_id=2,explanation='运动方向依赖所选参考对象。'),
+        dict(title='运动描述',kind='process',source_id=2,explanation='描述运动时应说明参考对象。'),
+    ]})
+
+    class Client:
+        def generate(self, schema, instruction, material):
+            if schema.__name__ == 'KnowledgeExplanationRepair':
+                if json.loads(material)['repairs'][0]['source']['quote']=='分数越来越接近于1':
+                    return schema.model_validate({'explanations': [dict(point_id=1,explanation='通过逐项累加，观察分数总和逐渐接近某个固定值。')]})
+                return schema.model_validate({'explanations': [dict(point_id=1,explanation='相邻项是前一项的二倍。')]})
+            assert schema.__name__ == 'KnowledgePageQuoteRepair'
+            quotes = json.loads(material)['quotes']
+            quote_id = next(int(key) for key,item in quotes.items() if item['text']=='分数越来越接近于1')
+            return schema.model_validate({'quotations': [dict(point_id=1,quote_id=quote_id)]})
+
+    agent = AIAgents(Client())
+    result = agent._repair_knowledge_explanations(selection,sources,14,15)
+    assert result.points[0].source_quote == '分数越来越接近于1'
+    assert result.points[0].explanation == '通过逐项累加，观察分数总和逐渐接近某个固定值。'
+    assert result.points[0].source_id == selection.points[0].source_id
+    assert result.points[1:] == selection.points[1:]
+    assert not _selection_structure_issue(result,sources)
+    assert agent.knowledge_drafts[-1]['repair_method'] == 'literal_same_page_quote'
+    result.points[0].source_quote = '这是来自其他页面的断言。'
+    assert _selection_structure_issue(result,sources)
+
+
+def test_same_page_quote_candidates_keep_the_specific_topic_instead_of_adjacent_background():
+    from zhijiang.agents import _page_quote_focus, _page_source_quotes
+    page = '观察奇数求和规律，正方形面积是这些数的和。你能发现什么规律？分数越来越接近于1。'
+    focus = _page_quote_focus('分数累加的收敛规律',page)
+    assert focus == {'分数'}
+    quotes = _page_source_quotes(page,focus)
+    assert quotes and all('分数' in quote for quote in quotes)
+    assert not any('正方形' in quote for quote in quotes)
+
+
+def test_quantitative_summary_checks_keep_sourced_chemical_and_scientific_names():
+    from zhijiang.agents import KnowledgeSelection, _selection_number_issues
+    sources = {1: {'quote': 'CO2 and H2O are named compounds considered in this source.'},
+               2: {'quote': 'Vitamin B12 is the named vitamin examined in the study.'},
+               3: {'quote': 'A velocity of 15cm/s was measured under stated conditions.'}}
+    selection = KnowledgeSelection.model_validate({'points': [
+        dict(title='材料对象',kind='concept',source_id=1,explanation='原文讨论CO2和H2O这两种化合物。'),
+        dict(title='维生素对象',kind='concept',source_id=2,explanation='文中研究的是Vitamin B12这种维生素。'),
+        dict(title='测量结果',kind='process',source_id=3,explanation='所测速度一定等于15cm/s，不依赖测量条件。'),
+    ]})
+    assert set(_selection_number_issues(selection,sources)) == {3}
+
+
+def test_generic_chinese_articles_and_definition_terms_are_not_specific_quantities():
+    from zhijiang.agents import KnowledgeSelection, _selection_number_issues
+    sources = {1: {'quote': '一个数乘几分之几表示的是求这个数的几分之几是多少。'},
+               2: {'quote': '两个数的比表示两个数相除。'},
+               3: {'quote': '这里讨论数和分数之间的关系。'}}
+    selection = KnowledgeSelection.model_validate({'points': [
+        dict(title='分数乘法意义',kind='concept',source_id=1,explanation='当一个数乘以分数时，其结果表示这个数的几分之几。'),
+        dict(title='比的定义',kind='concept',source_id=2,explanation='两个数的比表示这两个数相除。'),
+        dict(title='无依据的精确个数',kind='concept',source_id=3,explanation='其中恰好只有一个数满足条件。'),
+    ]})
+    assert set(_selection_number_issues(selection,sources)) == {3}
 
 
 def test_ollama_stream_reports_counts_and_validates_only_completed_output():
