@@ -161,6 +161,8 @@ Source reading validates the complete JSON container, count, and source IDs befo
 
 Meaning review checks nodes according to the chosen representation. Source-page annotations and comparisons may label phrases, actions, conditions, or outcomes without treating each label as an independent entity. Unlinked annotations do not imply a relationship. Links in relationship and process diagrams still require separate source checks; wrong references and omitted spoken conditions are rejected.
 
+Review output records each item's source meaning and reason before its support verdict and the overall conclusion. The current question comes from the storyboard, not a neighboring exercise on the same page. Complete course ordering is saved to `course-order.json` and can be reused after a scene failure. Changes to the source, knowledge points, prompt, model, or API address invalidate this cache; missing or repeated IDs cannot be reused.
+
 ## Use local AI narration
 
 On a computer without an NVIDIA GPU, you can run the Chinese [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh) model on the CPU. In the project directory, install the optional dependencies and download the [ONNX Community quantized model](https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX) and four Mandarin voices (about 130 MB, stored in the Git-ignored `data/models/kokoro/` directory; the download script verifies SHA-256 checksums):

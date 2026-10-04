@@ -116,6 +116,10 @@ def test_semantic_review_cannot_approve_with_missing_or_rejected_meanings():
     for name,ids in [('node_checks',[1,2,3]),('relation_checks',[1,2]),('step_checks',[1,2,3])]:
         value[name]=[{'id':key,'supported':True,'source_meaning':'原文描述控制与记录之间的具体关系。','reason':'候选保留原文关系与适用条件，没有添加保证。'} for key in ids]
     review=meaning_review_schema(d).model_validate(value)
+    schema=meaning_review_schema(d).model_json_schema()
+    assert list(schema['properties'])==['node_checks','relation_checks','step_checks','approved','issues']
+    node_check=schema['$defs']['MeaningCheck_node_checks']['properties']
+    assert list(node_check).index('source_meaning')<list(node_check).index('reason')<list(node_check).index('supported')
     validate_meaning_review(review,d)
     review.relation_checks[0].supported=False
     review.relation_checks[0].reason='原文只描述共现，候选却添加了因果关系。'

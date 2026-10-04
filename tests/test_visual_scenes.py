@@ -223,6 +223,48 @@ def test_source_coverage_repair_keeps_only_authoritative_ids(sample_pdf):
     assert general_source_attribution(ligature_source)['author']=='MIT OpenCourseWare, 18.01SC'
 
 
+@pytest.mark.parametrize('change',['none','invalid_order','source','knowledge','prompt','model','endpoint'])
+def test_course_order_survives_scene_failure_and_invalidates_changed_inputs(sample_pdf,tmp_path,monkeypatch,change):
+    import json
+    from zhijiang.agents import DemoAgents
+    from zhijiang.pdf import read_pdf
+    from zhijiang.models import VoiceMode
+    from zhijiang.visual_planning import plan_general_lesson,VisualCoursePlan
+    doc=read_pdf(sample_pdf,'sample.pdf');bundle=DemoAgents().extract_knowledge(doc)
+    class Client:
+        model='local-model';base_url='http://localhost:11434';calls=0
+        def generate(self,schema,instruction,material):
+            assert schema is VisualCoursePlan
+            self.calls+=1
+            return VisualCoursePlan(title='完整课程顺序',objective='按所有来源知识点组织完整课程，随后单独核对分镜。',
+                point_ids=list(reversed(range(1,len(bundle.points)+1))))
+    scene_calls=[]
+    def scenes(client,lesson,*args,**kwargs):
+        scene_calls.append([segment.title for segment in lesson.segments])
+        if len(scene_calls)==1:raise VisualSceneError('实际场景核对失败')
+    monkeypatch.setattr('zhijiang.visual_planning.plan_visual_scenes',scenes)
+    client=Client();output=tmp_path/'visual-planning.json';prompt=''
+    with pytest.raises(VisualSceneError,match='场景核对失败'):
+        plan_general_lesson(client,bundle,doc,prompt,VoiceMode.SYSTEM,lambda *_:None,draft_output=output)
+    assert client.calls==1 and (tmp_path/'course-order.json').is_file()
+    if change=='invalid_order':
+        path=tmp_path/'course-order.json';saved=json.loads(path.read_text(encoding='utf8'))
+        saved['outline']['point_ids']=[1]*len(bundle.points)
+        path.write_text(json.dumps(saved),encoding='utf8')
+    elif change=='source':doc.pages[0].text+=' Additional source context.'
+    elif change=='knowledge':bundle.points[0].explanation+=' 保留新来源条件。'
+    elif change=='prompt':prompt='按概念依赖组织'
+    elif change=='model':client.model='another-local-model'
+    elif change=='endpoint':client.base_url='http://localhost:1234'
+    progress=[]
+    lesson=plan_general_lesson(client,bundle,doc,prompt,VoiceMode.SYSTEM,
+        lambda stage,*_:progress.append(stage),draft_output=output)
+    assert client.calls==(1 if change=='none' else 2)
+    assert ('复用完整课程顺序' in progress)==(change=='none')
+    assert lesson.animation_report['source_point_ids']==list(reversed(range(1,len(bundle.points)+1)))
+    assert scene_calls[0]==scene_calls[1] and len(lesson.segments)==len(bundle.points)
+
+
 def test_authored_cross_subject_processes_and_conservation():
     from scripts.build_general_examples import fixtures
     scenes=fixtures()

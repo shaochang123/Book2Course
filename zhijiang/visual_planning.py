@@ -10,6 +10,7 @@ import math
 import re
 import json
 import hashlib
+import os
 import unicodedata
 from functools import lru_cache
 from pydantic import BaseModel, Field, model_validator, create_model, ConfigDict
@@ -116,18 +117,40 @@ def plan_general_lesson(client,bundle,document,prompt,voice_mode,progress,draft_
         {'id':i+1,'title':point.title,'kind':point.kind}
         for i,point in enumerate(bundle.points)],ensure_ascii=False)
     expected=set(range(1,len(bundle.points)+1))
-    for attempt in range(3):
-        outline=client.generate(VisualCoursePlan,
-            '规划完整教学课程，标题和目标用中文。point_ids 必须使用每个输入id恰好一次，以教学顺序排列。'+
-            ('上次遗漏或重复编号，请检查完整编号集合。' if attempt else '')+
-            '\n用户的教学偏好：'+prompt+
-            '\n必须覆盖的知识点编号：'+str(sorted(expected))+'；教学偏好中的步骤数指每个片段，不得删掉来源知识点。',material)
-        if set(outline.point_ids)==expected and len(outline.point_ids)==len(expected): break
-    else:
-        # Coverage is a structural property with authoritative source IDs. Keep
-        # valid proposed order and append omitted source points, never invent IDs.
-        outline.point_ids=list(dict.fromkeys(i for i in outline.point_ids if i in expected))
-        outline.point_ids.extend(i for i in sorted(expected) if i not in outline.point_ids)
+    order_path=draft_output.with_name('course-order.json') if draft_output else None
+    order_hash=hashlib.sha256(json.dumps({'version':'course-order-v1',
+        'source':hashlib.sha256(pdf_path.read_bytes()).hexdigest() if pdf_path else document.model_dump_json(),
+        'knowledge':bundle.model_dump(mode='json'),'prompt':prompt,
+        'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model','')},sort_keys=True).encode()).hexdigest()
+    outline=None
+    if order_path:
+        try:
+            saved=json.loads(order_path.read_text(encoding='utf-8'))
+            if saved['fingerprint']==order_hash:
+                candidate=VisualCoursePlan.model_validate(saved['outline'])
+                if set(candidate.point_ids)==expected and len(candidate.point_ids)==len(expected):
+                    outline=candidate
+                    progress('复用完整课程顺序',52)
+        except (OSError,ValueError,KeyError):pass
+    if outline is None:
+        for attempt in range(3):
+            outline=client.generate(VisualCoursePlan,
+                '规划完整教学课程，标题和目标用中文。point_ids 必须使用每个输入id恰好一次，以教学顺序排列。'+
+                ('上次遗漏或重复编号，请检查完整编号集合。' if attempt else '')+
+                '\n用户的教学偏好：'+prompt+
+                '\n必须覆盖的知识点编号：'+str(sorted(expected))+'；教学偏好中的步骤数指每个片段，不得删掉来源知识点。',material)
+            if set(outline.point_ids)==expected and len(outline.point_ids)==len(expected): break
+        else:
+            # Coverage is a structural property with authoritative source IDs.
+            # Retain valid ordering and append omitted points, never invent IDs.
+            outline.point_ids=list(dict.fromkeys(i for i in outline.point_ids if i in expected))
+            outline.point_ids.extend(i for i in sorted(expected) if i not in outline.point_ids)
+        if order_path:
+            order_path.parent.mkdir(parents=True,exist_ok=True)
+            temporary=order_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps({'fingerprint':order_hash,'outline':outline.model_dump(),
+                'status':'structurally_valid_course_order'},ensure_ascii=False,indent=2),encoding='utf-8')
+            os.replace(temporary,order_path)
     lesson=Lesson(title=outline.title,objective=outline.objective,mode=Mode.AI,voice_mode=voice_mode,
         notice='AI 生成：教学场景按表达类型核查来源、关系或几何与声明的数值；教学含义、领域事实和示意简化仍需复核。',
         segments=[LessonSegment(title=bundle.points[i-1].title,kind=bundle.points[i-1].kind,

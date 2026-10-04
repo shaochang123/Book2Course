@@ -161,6 +161,8 @@ ollama serve
 
 含义审查按表达方式核对节点：原页标注和比较图可标注短语、动作、条件或结果，不要求每项都是独立实体；不为没有连线的标注推断关系。关系和过程图的连线仍须分别核对原文依据，错误指代和口播中遗漏的条件会被拒绝。
 
+审稿输出先记录每项的原文含义与理由，再给出支持判断及整体结论；当前问题来自分镜，不能误用同页另一道练习替代。完整课程顺序保存到 `course-order.json`，分镜失败后重试可复用；来源、知识点、提示词、模型或 API 地址变化会使该缓存失效，遗漏或重复编号不能复用。
+
 ## 使用本机 AI 配音
 
 本机无 NVIDIA 显卡时，可通过 CPU 运行支持中文的 [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)。在项目目录安装可选依赖并下载 [ONNX Community 的量化模型](https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX)及 4 种中文音色（约 130 MB，保存在忽略提交的 `data/models/kokoro/`，下载脚本会校验 SHA-256）：

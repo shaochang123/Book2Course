@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, ValidationError, create_model, model_vali
 from pydantic_core import PydanticCustomError
 
 from zhijiang.models import (TeachingDiagram, TeachingNode, TeachingRelation, TeachingStep, TeachingSourceFact,
-                             SceneObject, VisualBeat, VisualScenePlan, ReviewResult)
+                             SceneObject, VisualBeat, VisualScenePlan)
 
 
 class TeachingDesignError(ValueError):
@@ -522,18 +522,22 @@ def compose_script(script,facts=None):
 
 class MeaningCheck(BaseModel):
     id: int = Field(ge=1)
-    supported: bool
     # An object name can be a faithful short meaning. Do not require padding
     # every noun into a fabricated sentence or duplicate length in regex syntax.
     source_meaning: str = Field(min_length=2,max_length=120)
     reason: str = Field(min_length=12,max_length=120)
+    # Decode evidence before its verdict to avoid an early boolean followed by
+    # an invented justification. An unsupported item still rejects the scene.
+    supported: bool
 
 
-class TeachingSourceReview(ReviewResult):
+class TeachingSourceReview(BaseModel):
     """Review meanings individually; a single approval flag is insufficient."""
     node_checks: list[MeaningCheck] = Field(default_factory=list)
     relation_checks: list[MeaningCheck] = Field(default_factory=list)
     step_checks: list[MeaningCheck] = Field(default_factory=list)
+    approved: bool
+    issues: list[str] = Field(default_factory=list)
 
 
 def meaning_review_schema(draft):
@@ -571,6 +575,8 @@ def meaning_review_instruction(draft):
     }
     return (
         '核对教学图的对象、关系和逐步口播是否忠实于source_page。source_facts来自独立原文理解，核查其翻译是否忠实，不把候选设计当依据。每条source_quote已逐字核对，但还须检查它是否真的支持该节点/关系。'
+        '当前讲解问题是design.question；source_page中的其他练习问句是资料内容，不是当前任务。只核对当前片段，不要求解答整页所有问题。'
+        '先写每项的source_meaning与reason，再判断supported；完成所有条目后才判断approved。'
         '当前表达方式：'+draft.representation+'。'+roles.get(draft.representation,'')+
         'node_checks核对标签所指的来源含义及source_term对应，不给节点补写未显示的关系。短语是修饰语、加法动作或结果本身不构成拒绝理由；仅当指代不符、误译、引入来源没有的对象或含义时拒绝。'
         '没有连线时不假定节点之间存在乘法、因果或其他关系；有连线的关系单独严格检查。'
