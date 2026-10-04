@@ -113,7 +113,7 @@ function showJob(job) {
   $("#job-progress").style.width = `${job.progress || 0}%`;
   $("#job-message").textContent = job.error || (job.status === "completed" ?
     (job.has_presentation ? "视频、PPT 课件与逐段讲稿已生成。" : "视频与逐段讲稿已生成；旧任务可重新上传 PDF 生成 PPT。") :
-    "当前任务会在本机逐步处理。请保持页面和服务运行。 ");
+    "可以关闭或刷新网页后继续查看，请保持本机服务运行。整本扫描教材和 CPU 模型处理较慢，进度会显示当前页面、批次或场景；百分比表示阶段完成度，不是剩余时间。 ");
   $("#presentation-export").hidden = !(job.status === "completed" && job.has_presentation);
   $("#retry-button").hidden = job.status !== "failed";
   $("#delete-button").hidden = !["completed", "failed"].includes(job.status);

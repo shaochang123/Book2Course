@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
+import time
+from threading import Event, Thread
 from collections import Counter
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Callable, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError, create_model
@@ -27,6 +31,10 @@ from zhijiang.models import (
 
 class GenerationError(RuntimeError):
     """课程生成未能得到可用且可核验的内容。"""
+
+
+class _OllamaStreamError(GenerationError):
+    """A native stream reported an error after HTTP headers were sent."""
 
 
 def _compact(text: str) -> str:
@@ -236,7 +244,8 @@ class OpenAICompatibleClient:
 class OllamaClient:
     """本机 Ollama 原生接口，使用其 JSON Schema 约束模型输出。"""
 
-    def __init__(self, base_url: str, model: str, http_client: httpx.Client | None = None):
+    def __init__(self, base_url: str, model: str, http_client: httpx.Client | None = None,
+                 progress: Callable[[str, int, int], None] | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         # CPU-only local inference can take several minutes for structured output.
@@ -245,6 +254,7 @@ class OllamaClient:
         self._model_info: dict | None = None
         self.call_metrics: list[dict] = []
         self.invalid_outputs: list[dict] = []
+        self.progress = progress
 
     def close(self) -> None:
         if self._owns_client:
@@ -291,7 +301,7 @@ class OllamaClient:
                 payload = {
                     "model": self.model,
                     "messages": messages,
-                    "stream": False,
+                    "stream": self.progress is not None,
                     "format": schema.model_json_schema(),
                     "options": {"temperature": 0, "num_ctx": 8192},
                     "keep_alive": "10m",
@@ -315,19 +325,17 @@ class OllamaClient:
                     payload['options']['num_predict']=4096
                 elif schema.__name__ == 'ReviewResult':
                     payload['options']['num_predict']=2048
+                elif schema.__name__ == 'KnowledgeSelection':
+                    payload['options']['num_predict']=2048
+                elif schema.__name__ in {'VisualCoursePlan', 'CourseOutline'}:
+                    payload['options']['num_predict']=2048
                 endpoint='/api/chat'
                 if completion_fallback:
                     endpoint='/api/generate'
                     payload.pop('messages')
                     payload['system']=messages[0]['content']
                     payload['prompt']='\n'.join(item['content'] for item in messages[1:])
-                response = self.http_client.post(
-                    f"{self.base_url}{endpoint}",
-                    json=payload,
-                    timeout=900,
-                )
-                response.raise_for_status()
-                result = response.json()
+                result = self._request(endpoint, payload, schema.__name__)
                 self.call_metrics.append({
                     "stage": schema.__name__, "attempt": attempt + 1,
                     "thinking": thinking,"endpoint":endpoint,
@@ -351,6 +359,15 @@ class OllamaClient:
                     return validated
             except httpx.TimeoutException as exc:
                 raise GenerationError("本机 Ollama 推理超时；模型正在运行，但处理此批材料过慢。") from exc
+            except _OllamaStreamError as exc:
+                self.call_metrics.append({'stage': schema.__name__, 'attempt': attempt + 1,
+                    'endpoint': endpoint, 'error': 'upstream_stream_error'})
+                if attempt == 0:
+                    messages.append({'role': 'user', 'content':
+                        '本机服务未能返回完整结果，请重新生成最简标准JSON并完整闭合；保留原文事实与来源编号。'})
+                    completion_fallback = True
+                    continue
+                raise GenerationError('本机 Ollama 两次生成均中断，请检查服务日志；已完成批次可以续跑。') from exc
             except httpx.HTTPStatusError as exc:
                 self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
                     'http_status':exc.response.status_code,'error':'upstream_http_error'})
@@ -382,6 +399,59 @@ class OllamaClient:
                 )
         raise GenerationError("本机 Ollama 未能生成有效内容。")
 
+    def _request(self, endpoint: str, payload: dict, stage: str) -> dict:
+        if self.progress is None:
+            response = self.http_client.post(f"{self.base_url}{endpoint}", json=payload, timeout=900)
+            response.raise_for_status()
+            return response.json()
+        started = time.monotonic()
+        last_update = started
+        chunks = []
+        count = 0
+        self.progress(stage, 0, 0)
+        stopped = Event()
+
+        def heartbeat():
+            # Prompt evaluation can be slow before the first content chunk.
+            while not stopped.wait(5):
+                self.progress(stage, int(time.monotonic() - started), count)
+
+        reporter = Thread(target=heartbeat, name='ollama-progress', daemon=True)
+        reporter.start()
+        try:
+            with self.http_client.stream('POST', f"{self.base_url}{endpoint}", json=payload,
+                                         timeout=900) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line.strip():
+                        continue
+                    result = json.loads(line)
+                    if result.get('error'):
+                        raise _OllamaStreamError('本机 Ollama 在生成过程中报错。')
+                    piece = (result.get('response', '') if endpoint == '/api/generate'
+                             else result.get('message', {}).get('content', ''))
+                    if not isinstance(piece, str):
+                        raise ValueError('invalid stream content')
+                    chunks.append(piece)
+                    count += len(piece)
+                    now = time.monotonic()
+                    if now - started >= 900:
+                        raise GenerationError('本机 Ollama 推理超时；此批材料处理已超过十五分钟。')
+                    if now - last_update >= 5 or result.get('done') is True:
+                        self.progress(stage, int(now - started), count)
+                        last_update = now
+                    if result.get('done') is True:
+                        content = ''.join(chunks)
+                        if endpoint == '/api/generate':
+                            result['response'] = content
+                        else:
+                            result['message'] = {'content': content}
+                        return result
+        finally:
+            stopped.set()
+            reporter.join()
+        raise GenerationError('本机 Ollama 输出中断，未收到完成标记；已完成的批次可以续跑。')
+
 
 class ScriptDraftSegment(BaseModel):
     source_id: int = Field(ge=1)
@@ -398,7 +468,7 @@ class ScriptDraft(BaseModel):
 class KnowledgeSelectionPoint(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     kind: Literal["concept", "formula", "process"]
-    explanation: str = Field(min_length=8, max_length=500)
+    explanation: str = Field(min_length=8, max_length=160)
     source_id: int = Field(ge=1)
 
 
@@ -487,12 +557,18 @@ def _topic_term(document: SourceDocument) -> str:
     return max(choices, key=lambda word: (counts[word], len(word)), default="")
 
 
-def _page_quotes(text: str, quote_limit: int, minimum_length: int) -> list[str]:
+def _page_quotes(text: str, quote_limit: int, minimum_length: int, *, ocr: bool = False) -> list[str]:
     """Keep complete lines, joining PDF line wraps when most lines are fragments."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    cjk = len(re.findall(r'[\u3400-\u9fff]', text)) > len(_compact(text)) / 4
     substantive = [line for line in lines if len(_compact(line)) >= minimum_length]
-    wrapped = bool(substantive) and sum(not _SENTENCE_END.search(line)
-                                        for line in substantive) > len(substantive) / 2
+    wrapped = (cjk and (ocr or not substantive)) or (bool(substantive) and sum(
+        not _SENTENCE_END.search(line) for line in substantive) > len(substantive) / 2)
+    if cjk and wrapped:
+        # A Chinese definition can be shorter than forty characters and wrap
+        # across several scan lines. A sentence boundary is stronger than a
+        # physical line boundary; do not discard its subject or conclusion.
+        minimum_length = 8
     if not wrapped:
         return [line[:quote_limit] for line in substantive]
 
@@ -513,7 +589,49 @@ def _page_quotes(text: str, quote_limit: int, minimum_length: int) -> list[str]:
         if len(line) >= quote_limit or _SENTENCE_END.search(line):
             flush()
     flush()
+    if cjk:
+        # Keep a judgement question's instructions attached to its assertions.
+        # These are propositions to assess, not established source facts.
+        grouped = []
+        exercise = ''
+        for quote in quotes:
+            if re.search(r'判断(?:对错|正误)|[Jj]udge.*(?:true|false)', quote):
+                exercise = quote
+                continue
+            if exercise:
+                numbered = re.search(r'[（(]\s*\d+\s*[)）]', quote)
+                if numbered and len(exercise + ' ' + quote) <= quote_limit:
+                    exercise += ' ' + quote
+                    continue
+                grouped.append(exercise)
+                exercise = ''
+            grouped.append(quote)
+        if exercise:
+            grouped.append(exercise)
+        contextual = []
+        flat = _compact(text)
+        for index, quote in enumerate(grouped):
+            if (re.search(r'叫做|称为|表示|等于|不变|适用|相同|用.{0,20}作', quote)
+                    and not re.search(r'判断(?:对错|正误)', quote)):
+                # Retain neighboring sentences when OCR interleaves a question
+                # with the definition. Only exact contiguous source spans count.
+                neighbors = ' '.join(grouped[max(0,index-1):index+2])
+                if len(neighbors) <= quote_limit and _compact(neighbors) in flat:
+                    quote = neighbors
+            contextual.append(quote)
+        return contextual
     return quotes
+
+
+def _frontmatter(text: str) -> bool:
+    """Recognize publishing metadata and explicit navigation headings."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    headings = {'编者的话', '致读者', '前言', '目录', 'contents', 'table of contents', 'preface'}
+    if any(_compact(line).casefold() in headings for line in lines[:5]):
+        return True
+    compact = _compact(text)
+    imprint = re.findall(r'ISBN|著作权|版权所有|责任编辑|定价|印刷|出版发行|Copyright|All rights reserved', compact, re.I)
+    return len(set(imprint)) >= 3 and bool(re.search(r'ISBN|出版发行|All rights reserved', compact, re.I))
 
 
 def _spread(items: list[int], limit: int) -> list[int]:
@@ -540,11 +658,19 @@ def source_candidates(document: SourceDocument) -> list[dict]:
     topic = _topic_term(document)
     page_counts: dict[int, int] = {}
     bibliography=False
+    navigation=False
     teaching_pages=[]
     for page in document.pages:
         # A bibliography is provenance, not a new lesson on each cited paper.
         # Preserve every original page; only exclude this tail from point selection.
         text=page.text
+        if _frontmatter(text):
+            navigation = bool(re.search(r'(?mi)^\s*(?:目录|contents|table of contents)\s*$', text))
+            continue
+        if navigation and not re.search(r'[。！？.!?]', text) and all(
+                len(_compact(line)) < 20 for line in text.splitlines()):
+            continue
+        navigation=False
         heading=re.search(r'(?m)^\s*(?:References|Bibliography|参考文献|参考资料)\s*$',text,re.I)
         if bibliography:
             new_chapter=re.search(r'(?mi)^\s*(?:Chapter\s+\d+|Unit\s+\d+|第.{1,12}[章节单元])',text)
@@ -555,7 +681,7 @@ def source_candidates(document: SourceDocument) -> list[dict]:
         if heading:
             text=text[:heading.start()];bibliography=True
         if text.strip():teaching_pages.append(page.model_copy(update={'text':text}))
-        quotes = _page_quotes(text, quote_limit, minimum_length)
+        quotes = _page_quotes(text, quote_limit, minimum_length, ocr=page.ocr)
         # Column labels alone do not state a fact. Keep table bodies in the
         # source document, but do not turn a multi-column header into a point.
         quotes = [quote for quote in quotes
@@ -583,7 +709,14 @@ def source_candidates(document: SourceDocument) -> list[dict]:
                 chosen = ranked[:per_page_limit]
             chosen = sorted(chosen)
         else:
-            chosen = _spread(list(range(len(quotes))), per_page_limit)
+            definitions = [index for index, quote in enumerate(quotes)
+                           if re.search(r'叫做|称为|表示|等于|不变|适用|相同|用.{0,20}作|is called|is defined', quote, re.I)
+                           and not re.search(r'判断(?:对错|正误)', quote)]
+            chosen = _spread(definitions, per_page_limit)
+            if len(chosen) < per_page_limit:
+                others = [index for index in range(len(quotes)) if index not in chosen]
+                chosen.extend(_spread(others, per_page_limit - len(chosen)))
+            chosen.sort()
         for index in chosen:
             quote = quotes[index]
             key = (page.page, _compact(quote))
@@ -591,7 +724,8 @@ def source_candidates(document: SourceDocument) -> list[dict]:
                 continue
             seen.add(key)
             candidates.append({"id": len(candidates) + 1, "page": page.page,
-                               "quote": quote, "ocr": page.ocr})
+                               "quote": quote, "ocr": page.ocr,
+                               "role": "exercise" if re.search(r'判断(?:对错|正误)', quote) else "source"})
             page_counts[page.page] = page_counts.get(page.page, 0) + 1
     if len(candidates) < 3:
         for page, quote in (_candidates(document.model_copy(update={'pages':teaching_pages})) if teaching_pages else []):
@@ -606,6 +740,18 @@ def source_candidates(document: SourceDocument) -> list[dict]:
                 seen.add(key)
                 page_counts[page] = page_counts.get(page, 0) + 1
     return candidates
+
+
+def _selection_issues(selection, by_id):
+    titles = [_compact(point.title).casefold() for point in selection.points]
+    if len(set(titles)) != len(titles) or any(point.source_id not in by_id for point in selection.points):
+        return '来源编号无效或知识点标题重复'
+    for point in selection.points:
+        source = by_id[point.source_id]
+        novel = set(_NUMBER.findall(point.explanation)) - set(_NUMBER.findall(source['quote']))
+        if novel:
+            return '解释补入了当前摘录没有的数值；OCR缺失的分数或比例不能猜测，请用定性定义与步骤说明'
+    return ''
 
 
 class AIAgents:
@@ -624,53 +770,86 @@ class AIAgents:
             groups[-2].extend(groups.pop())
         return groups
 
-    def extract_knowledge(self, document: SourceDocument) -> KnowledgeBundle:
+    def extract_knowledge(self, document: SourceDocument, *,
+                          progress: Callable[[int, int, str], None] | None = None,
+                          cache_dir: Path | None = None,
+                          cache_fingerprint: str = '') -> KnowledgeBundle:
         candidates = source_candidates(document)
         if len(candidates) < 3:
             raise GenerationError("可核验的原文片段不足，无法组成一节课。")
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / 'sources.json').write_text(json.dumps(candidates, ensure_ascii=False), encoding='utf-8')
         points = []
-        for batch in self._batches(candidates, 16):
+        batches = self._batches(candidates, 16)
+        instruction = (
+            "从给定编号的原文片段中选 3 到 6 个相互关联的知识点，"
+            "优先围绕文件名和多次出现的主题，选择可直接讲解的定义、关系、公式或例题；"
+            "只选覆盖核心所需的数量，不必凑满 6 个。"
+            "跳过页眉、学习建议、教学方法及未来章节预告，除非它们就是文档主题。"
+            "不要把参考文献条目、作者单位、致谢或表格残片变成教学知识点；概念标题和解释用中文。"
+            "判断对错和选择题中的选项不一定正确，必须保留题目语境；不得把待判断的命题直接当作定理。"
+            "每个引文须直接支撑该知识点的定义或步骤；不能仅凭术语列表编造定义。"
+            "source_id 必须是输入 sources 中存在的 id，不是页码。"
+            "同一摘录可以支持不同概念，但不能重复相同知识点；标题必须互不相同。"
+            "只生成标题、类型和简短解释（不超过160字）；页码与逐字引文由程序填入。"
+            "解释以定性定义、条件和操作为主，不补写OCR缺失的分数、比例或数字。"
+            "不自拟数值算例：原创教学算例由后续场景单独标记与计算核验，不属于原文知识摘要。"
+        )
+        for batch_index, batch in enumerate(batches, start=1):
             material = json.dumps(
                 {"filename": document.filename, "sources": batch}, ensure_ascii=False
             )
             by_id = {item["id"]: item for item in batch}
-            for attempt in range(2):
-                selection = self.client.generate(
-                    knowledge_selection_schema(by_id),
-                    "从给定编号的原文片段中选 3 到 6 个相互关联的知识点，"
-                    "优先围绕文件名和多次出现的主题，选择可直接讲解的定义、关系、公式或例题；"
-                    "只选覆盖核心所需的数量，不必凑满 6 个。"
-                    "跳过页眉、学习建议、教学方法及未来章节预告，除非它们就是文档主题。"
-                    "不要把参考文献条目、作者单位、致谢或表格残片变成教学知识点；概念标题和解释用中文。"
-                    "每个引文须直接支撑该知识点的定义或步骤；不能仅凭术语列表编造定义。"
-                    "source_id 必须是输入 sources 中存在的 id，不是页码。"
-                    "同一摘录可以支持不同概念，但不能重复相同知识点；标题必须互不相同。"
-                    "只生成标题、类型和解释；页码与逐字引文由程序填入。"
-                    + ("上次选了不存在的编号或重复标题，请重新选择。" if attempt else ""),
-                    material,
-                )
-                ids = [point.source_id for point in selection.points]
-                diagnostic={'draft':selection.model_dump(),'available_source_ids':list(by_id)}
+            schema = knowledge_selection_schema(by_id)
+            fingerprint = hashlib.sha256((cache_fingerprint + instruction + material).encode()).hexdigest()
+            cache_path = cache_dir / f'batch-{batch_index:04d}.json' if cache_dir else None
+            selection = None
+            if cache_path:
+                try:
+                    saved = json.loads(cache_path.read_text(encoding='utf-8'))
+                    if isinstance(saved, dict) and saved.get('fingerprint') == fingerprint:
+                        selected = schema.model_validate(saved['data'])
+                        if not _selection_issues(selected, by_id):
+                            selection = selected
+                except (OSError, ValueError, KeyError):
+                    pass
+            if selection is not None:
+                self.knowledge_drafts.append({'batch': batch_index, 'cached': True,
+                    'draft': selection.model_dump(), 'available_source_ids': list(by_id)})
+            if progress:
+                progress(batch_index - 1, len(batches),
+                         f"{'复用' if selection else '分析'}第 {batch_index} 批原文（第 {batch[0]['page']}–{batch[-1]['page']} 页）")
+            feedback = ''
+            for attempt in range(2) if selection is None else []:
+                try:
+                    selection = self.client.generate(schema, instruction + feedback, material)
+                except GenerationError as exc:
+                    raise GenerationError(f"知识点提取第 {batch_index}/{len(batches)} 批失败：{exc}") from exc
+                diagnostic={'batch':batch_index, 'draft':selection.model_dump(),'available_source_ids':list(by_id)}
                 self.knowledge_drafts.append(diagnostic)
-                titles=[_compact(point.title).casefold() for point in selection.points]
-                if len(set(titles)) != len(titles) or any(item not in by_id for item in ids):
-                    diagnostic['error']='duplicate_titles_or_unknown_source_ids'
+                issue = _selection_issues(selection, by_id)
+                if issue:
+                    diagnostic['error']=issue
+                    feedback='上次输出未通过检查：'+issue+'。请重新选择并修正解释。'
+                    selection = None
                     continue
-                points.extend(
-                    KnowledgePoint(
-                        title=point.title,
-                        kind=point.kind,
-                        explanation=point.explanation,
-                        evidence=Evidence(
-                            page=by_id[point.source_id]["page"],
-                            quote=by_id[point.source_id]["quote"],
-                            ocr=by_id[point.source_id]["ocr"],
-                        ),
-                    ) for point in selection.points
-                )
                 break
-            else:
-                raise GenerationError("模型未能选择有效的原文片段编号及不同知识点。")
+            if selection is None:
+                raise GenerationError(f"知识点提取第 {batch_index}/{len(batches)} 批：模型未能选择有效的原文片段编号、不同知识点及来源数值。")
+            part = KnowledgeBundle(points=[KnowledgePoint(title=point.title, kind=point.kind,
+                explanation=point.explanation, evidence=Evidence(
+                    page=by_id[point.source_id]['page'], quote=by_id[point.source_id]['quote'],
+                    ocr=by_id[point.source_id]['ocr'])) for point in selection.points])
+            validate_knowledge(document, part)
+            if cache_path:
+                temporary = cache_path.with_suffix('.tmp')
+                temporary.write_text(json.dumps({'fingerprint': fingerprint,
+                    'data': selection.model_dump()}, ensure_ascii=False), encoding='utf-8')
+                os.replace(temporary, cache_path)
+            points.extend(part.points)
+            if progress:
+                progress(batch_index, len(batches), f'已保存第 {batch_index} 批知识点')
         bundle = KnowledgeBundle(points=points)
         validate_knowledge(document, bundle)
         return bundle

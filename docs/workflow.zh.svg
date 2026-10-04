@@ -10,11 +10,11 @@
 <text x="61" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">选择模型、语音与动画模式</text>
 <rect x="460" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
 <text x="476" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">02 内容识别</text>
-<text x="476" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">提取文字 / 本机 OCR</text>
+<text x="476" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">本机 OCR · 页级进度与缓存</text>
 <text x="476" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">保留原文与 PDF 页码</text>
 <rect x="875" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
 <text x="891" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">03 教学规划</text>
-<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">独立理解原文，再规划分镜</text>
+<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">知识分批续跑 → 原文与分镜</text>
 <text x="891" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">图、口播绑定事实；标注类比</text>
 <path d="M 325 185 H 460" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 740 185 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>

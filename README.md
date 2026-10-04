@@ -131,6 +131,16 @@ ollama serve
 
 已生成的[示例视频](demo/zhijiang_ollama_demo.mp4)与[讲稿及来源](demo/zhijiang_ollama_lesson.json)可直接查看。示例视频的讲稿由本机模型生成，声音来自 Windows 系统语音。
 
+## 整本扫描教材的进度与续跑
+
+扫描页逐页显示解析/OCR 进度并保存 `parsed-pages/page-XXXXX.json`，包括已处理的空白页。知识点按原文批次显示进度，核验通过后立即保存 `knowledge-batches/batch-XXXX.json`。失败后使用原 PDF 重试可复用已完成页面和批次；更改原 PDF 或对应分析设置会使相关缓存失效。以前完成的整份解析缓存也可复用，无需重新 OCR。
+
+本机 Ollama 使用流式响应显示当前调用耗时与已收到字符数；读取材料、尚未返回正文时也更新耗时。完整响应和完成标记都收到后才核验、保存结果，不把部分 JSON 当成成功。CPU 上处理整本教材仍可能耗时较长；网页百分比表示阶段进度，不是预计剩余时间。可以关闭或刷新网页，通过任务链接继续查看，但本机服务须保持运行。
+
+中文扫描摘录保留短定义、换行与相邻语境，排除明确版权/编者说明/目录页；判断题保留题目说明。知识摘要拒绝补入当前引文没有的数值，不能猜测 OCR 缺失的分数与比例。原创教学算例在后续场景中另行标记与核验。文字匹配及数字检查仍不能证明 OCR、题目解答或全章覆盖正确。
+
+实际六年级扫描教材的诊断、测试与续跑状态见[长教材进度验证](docs/long-textbook-progress.md)。
+
 ## 使用本机 AI 配音
 
 本机无 NVIDIA 显卡时，可通过 CPU 运行支持中文的 [Kokoro-82M v1.1-zh](https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh)。在项目目录安装可选依赖并下载 [ONNX Community 的量化模型](https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX)及 4 种中文音色（约 130 MB，保存在忽略提交的 `data/models/kokoro/`，下载脚本会校验 SHA-256）：

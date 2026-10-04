@@ -7,8 +7,8 @@ COPY = {
     "zh": {
         "title": "从 PDF 到跨学科教学课件", "subtitle": "来源可追溯 · 场景可扩展 · 配音与画面共用时间线",
         "input": ["01 资料输入", "上传有使用权的 PDF", "选择模型、语音与动画模式"],
-        "extract": ["02 内容识别", "提取文字 / 本机 OCR", "保留原文与 PDF 页码"],
-        "plan": ["03 教学规划", "独立理解原文，再规划分镜", "图、口播绑定事实；标注类比"],
+        "extract": ["02 内容识别", "本机 OCR · 页级进度与缓存", "保留原文与 PDF 页码"],
+        "plan": ["03 教学规划", "知识分批续跑 → 原文与分镜", "图、口播绑定事实；标注类比"],
         "decision": ["选择场景执行路径", "按模式与环境分流"],
         "basic": ["基础图示", "概念 / 公式 / 流程模板", "说明使用基础模式的原因"],
         "verify": ["数学计算核验 · SymPy", "矩阵、向量、投影与面积", "绑定口播，拒绝错误结果"],
@@ -23,8 +23,8 @@ COPY = {
     "en": {
         "title": "From PDF to lessons across subjects", "subtitle": "Source references · Extensible scenes · Shared speech and animation timing",
         "input": ["01 Source input", "Upload a permitted PDF", "Model, voice and mode"],
-        "extract": ["02 Content recognition", "Text extraction / local OCR", "Keep excerpts and page refs"],
-        "plan": ["03 Teaching plan", "Read source before planning", "Bind visuals/speech to facts"],
+        "extract": ["02 Content recognition", "Local OCR; page checkpoints", "Keep excerpts and page refs"],
+        "plan": ["03 Teaching plan", "Resume batches; source first", "Bind visuals/speech to facts"],
         "decision": ["Choose scene executor", "Mode and environment"],
         "basic": ["Basic diagrams", "Concept / formula / process", "Explain the selected fallback"],
         "verify": ["Math checks · SymPy", "Products / area / projections", "Bind speech; reject bad math"],

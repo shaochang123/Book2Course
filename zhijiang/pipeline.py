@@ -95,16 +95,30 @@ class JobProcessor:
         folder = self.store.jobs_dir / job_id
         agents = None
         speech = None
+        active_stage = ['解析 PDF', 8]
+
+        def progress(stage, value):
+            active_stage[:] = [stage, value]
+            self.store.set_progress(job_id, stage, value)
+
+        def model_progress(stage, elapsed, characters):
+            self.store.set_progress(job_id,
+                f'{active_stage[0]} · 本机模型生成中（{elapsed}秒，{characters}字）', active_stage[1])
+
         try:
-            self.store.set_progress(job_id, "解析 PDF", 8)
+            progress("解析 PDF", 8)
             source_bytes=(folder/'source.pdf').read_bytes()
             source_hash=hashlib.sha256(source_bytes).hexdigest()
             document=checkpoint(folder/'parsed-source.json','pdf-v1:'+source_hash,SourceDocument,
-                lambda:read_pdf(source_bytes,job['filename']))
+                lambda:read_pdf(source_bytes,job['filename'], cache_dir=folder/'parsed-pages',
+                    progress=lambda done,total,label:progress(
+                        f'解析 PDF（{done}/{total} 页）：{label}', 8 + done * 13 // total)))
             mode = Mode(job["mode"])
             voice_mode = VoiceMode(job["voice_mode"])
             options = self.store.get_options(job_id)
             agents = self._agents(mode, options)
+            if isinstance(agents, AIAgents) and isinstance(agents.client, OllamaClient):
+                agents.client.progress = model_progress
             use_math = mode == Mode.AI and options.animation_mode in {"auto","math"} and supports_math(document)
             use_visual = mode == Mode.AI and options.animation_mode in {"auto","visual"} and not use_math
             fallback_reason = "当前任务选择基础图示。"
@@ -119,27 +133,31 @@ class JobProcessor:
                     use_visual = False
                     fallback_reason = "数学动画环境未就绪，自动模式使用基础图示：" + capability["reason"]
             if use_math:
-                self.store.set_progress(job_id, "规划数学对象与推理分镜", 25)
+                progress("规划数学对象与推理分镜", 25)
                 lesson = plan_math_lesson(agents.client, document, options.prompt, voice_mode,
-                    lambda stage, value: self.store.set_progress(job_id, stage, value))
+                    progress)
             else:
-                self.store.set_progress(job_id, "提取知识点", 22)
+                progress("提取知识点", 22)
                 # A failed diagram should not repeat a successful OCR/extraction.
                 # Input or model/prompt changes invalidate the analysis cache.
-                fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v3',
+                fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v4',
                     'source':source_hash,'mode':mode,'options':options.model_dump()},sort_keys=True).encode()).hexdigest()
                 bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
-                    lambda:agents.extract_knowledge(document))
+                    lambda:agents.extract_knowledge(document, cache_dir=folder/'knowledge-batches',
+                        cache_fingerprint=fingerprint,
+                        progress=lambda done,total,label:progress(
+                            f'提取知识点（{done}/{total} 批）：{label}',22 + done * 15 // total))
+                        if isinstance(agents,AIAgents) else agents.extract_knowledge(document))
                 for point in bundle.points: validate_evidence(document,point.evidence)
-                self.store.set_progress(job_id, "设计课程结构", 38)
+                progress("设计课程结构", 38)
                 if use_visual:
                     source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document)
                     lesson=plan_general_lesson(agents.client,bundle,document,options.prompt,voice_mode,
-                        lambda stage,value: self.store.set_progress(job_id,stage,value),draft_output=folder/'visual-planning.json',
+                        progress,draft_output=folder/'visual-planning.json',
                         source_assets=source_assets,pdf_path=folder/'source.pdf')
                 else:
                     outline = agents.plan(bundle)
-                    self.store.set_progress(job_id, "编写讲稿与分镜", 53)
+                    progress("编写讲稿与分镜", 53)
                     lesson = agents.script(bundle, outline, voice_mode)
                     lesson.animation_report = {"renderer": "Pillow basic", "scene_count": 0,
                         "reason": fallback_reason}
@@ -147,7 +165,7 @@ class JobProcessor:
                 lesson.notice = lesson.notice.replace("AI 生成：", "本机 Ollama 生成：", 1)
             if any(page.ocr for page in document.pages):
                 lesson.notice += " 扫描页文字经 OCR 识别，请核对识别结果和引用。"
-            self.store.set_progress(job_id, "核验引用与讲解结构", 64)
+            progress("核验引用与讲解结构", 64)
             validate_lesson(document, lesson)
             if not use_math and not use_visual:
                 agents.review(lesson)

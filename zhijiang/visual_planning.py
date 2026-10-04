@@ -110,7 +110,11 @@ def plan_general_lesson(client,bundle,document,prompt,voice_mode,progress,draft_
                         source_assets=None,pdf_path=None):
     """Use stable source IDs; mutable model-generated titles are not identifiers."""
     material='知识点：'+json.dumps([
-        {'id':i+1,**point.model_dump()} for i,point in enumerate(bundle.points)],ensure_ascii=False)
+        # Course ordering needs topic identities, not a second copy of every
+        # scanned excerpt. Full evidence remains attached to each segment and
+        # is read independently during scene design.
+        {'id':i+1,'title':point.title,'kind':point.kind}
+        for i,point in enumerate(bundle.points)],ensure_ascii=False)
     expected=set(range(1,len(bundle.points)+1))
     for attempt in range(3):
         outline=client.generate(VisualCoursePlan,
