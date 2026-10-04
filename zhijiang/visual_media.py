@@ -16,6 +16,8 @@ from zhijiang.visual_planning import object_geometry, verify_visual_scene
 
 
 def visual_summary_svg(scene) -> str:
+    if scene.diagram:
+        return teaching_summary_svg(scene)
     state = verify_visual_scene(scene)['states'][-1]
     def xy(p):
         return [60+1080*(p[0]-scene.x_range[0])/(scene.x_range[1]-scene.x_range[0]),
@@ -58,6 +60,46 @@ def visual_summary_svg(scene) -> str:
     return ''.join(parts)
 
 
+def teaching_summary_svg(scene):
+    import base64
+    from zhijiang.teaching_layout import layout_diagram,wrap_label
+    diagram=scene.diagram;nodes,edges=layout_diagram(diagram)
+    def xy(p):return (600+p[0]*82,330-p[1]*82)
+    parts=['<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="675" viewBox="0 0 1200 675">',
+        '<title>'+html.escape(scene.question)+'</title><desc>'+html.escape(diagram.rationale)+'</desc>',
+        '<rect width="1200" height="675" fill="#081623"/>',
+        '<text x="600" y="40" text-anchor="middle" font-size="25" fill="#F4F7F9">'+html.escape(scene.question)+'</text>']
+    if diagram.source_asset:
+        from PIL import Image
+        with Image.open(diagram.source_asset) as image:ratio=image.width/image.height
+        height=min(400,262/ratio);width=height*ratio
+        raw=base64.b64encode(Path(diagram.source_asset).read_bytes()).decode('ascii')
+        parts.append(f'<image x="{210.5-width/2}" y="{309.5-height/2}" width="{width}" height="{height}" xlink:href="data:image/png;base64,{raw}"/>')
+    for relation in diagram.relations:
+        g=edges[relation.id];a,b=xy(g['start']),xy(g['end']);label=xy(g['label'])
+        angle=math.atan2(b[1]-a[1],b[0]-a[0]);tip=[b]+[[b[0]-10*math.cos(angle+d),b[1]-10*math.sin(angle+d)] for d in [-.42,.42]]
+        parts.append(f'<path d="M {a[0]} {a[1]} L {b[0]} {b[1]}" stroke="{g["color"]}" stroke-width="3"/>')
+        if relation.directed:
+            parts.append('<polygon points="'+' '.join(f'{p[0]},{p[1]}' for p in tip)+f'" fill="{g["color"]}" stroke="{g["color"]}" stroke-width="1"/>')
+        label_width=len(relation.label)*17+12
+        parts.append(f'<rect x="{label[0]-label_width/2}" y="{label[1]-16}" width="{label_width}" height="22" fill="#081623"/>')
+        parts.append(f'<text x="{label[0]}" y="{label[1]}" text-anchor="middle" font-size="17" fill="#E5EEF3">{html.escape(relation.label)}</text>')
+    for node in diagram.nodes:
+        g=nodes[node.id];x,y=xy(g['position']);w,h=g['width']*82,g['height']*82
+        parts.append(f'<rect x="{x-w/2}" y="{y-h/2}" width="{w}" height="{h}" rx="12" fill="#142F43" stroke="{g["color"]}" stroke-width="2"/>')
+        lines=wrap_label(node.label).splitlines()
+        for i,line in enumerate(lines):
+            parts.append(f'<text x="{x}" y="{y+8+(i-(len(lines)-1)/2)*27}" text-anchor="middle" font-size="23" fill="{g["color"]}">{html.escape(line)}</text>')
+    # Keep the static teaching summary readable. The full labeled analogy is
+    # retained in the movie and speaker notes, rather than crowding the footer.
+    summary=diagram.steps[-1].source_statement or diagram.steps[-1].narration
+    for i,line in enumerate(wrap_label(summary,54).splitlines()):
+        parts.append(f'<text x="45" y="{555+i*27}" font-size="20" fill="#E5EEF3">{html.escape(line)}</text>')
+    guide='原文关系图' if diagram.relations else '原文图示讲解'
+    parts.append(f'<text x="45" y="650" font-size="18" fill="#A7C0CC">PDF 第 {scene.evidence.page} 页 · {guide} · 动效表示解释顺序，非物理模拟</text></svg>')
+    return ''.join(parts)
+
+
 def render_visual_scene(scene, speech, folder: Path, *, reuse_audio=False) -> dict:
     scene.verification=verify_visual_scene(scene)
     folder=folder.resolve(); folder.mkdir(parents=True,exist_ok=True)
@@ -89,7 +131,9 @@ def render_visual_scene(scene, speech, folder: Path, *, reuse_audio=False) -> di
             timing.append({'step':i+1,'start':cursor,'duration':seconds+.8,'speech_seconds':seconds,'text':words})
             cursor+=seconds+.8
     config=folder/'scene.json'; config.write_text(json.dumps({'plan':scene.model_dump(),'timing':timing,'geometry_output':str(folder/'geometry.json')},ensure_ascii=False,indent=2),encoding='utf-8')
-    source=folder/'scene.py'; source.write_text('from zhijiang.visual_renderer import GeneralTeachingScene\n\nclass Book2CourseScene(GeneralTeachingScene):\n    pass\n',encoding='utf-8')
+    renderer='teaching_renderer' if scene.diagram else 'visual_renderer'
+    scene_class='DiagramTeachingScene' if scene.diagram else 'GeneralTeachingScene'
+    source=folder/'scene.py'; source.write_text(f'from zhijiang.{renderer} import {scene_class}\n\nclass Book2CourseScene({scene_class}):\n    pass\n',encoding='utf-8')
     _run([sys.executable,'-m','manim',str(source),'Book2CourseScene','--renderer','cairo','--resolution','1280,720','--fps','30','--disable_caching','--media_dir',str(folder/'media'),'-o','raw.mp4','--verbosity','WARNING'],
          env=dict(os.environ,BOOK2COURSE_SCENE=str(config),PYTHONUTF8='1'),log=folder/'render.log')
     videos=list((folder/'media').rglob('raw.mp4'))

@@ -12,12 +12,28 @@
 
 ### 数据链路
 
+网页先通过 `teaching_design.py` 分析知识点及完整来源页，选择 `geometry`、`process`、`relationship`、`comparison` 或 `source_figure`。后四类使用 `visual_scene.diagram`：模型定义节点、关系、原文依据、教学问题与逐步讲解；程序检查逐字摘录、编号、关系端点、覆盖与状态推进，再共享布局生成图片和关系追踪动画。复杂实体图使用程序从本地 PDF 提取的原始页面，模型不能指定文件路径；可以高亮搜索到的真实原文区域。几何候选多次失败后重新规划表达方式，不伪造变化参数来绕过检查。
+
+以下参数步骤链适用于 `geometry`。关系图允许解释结构和比较而不改变物体坐标，但必须说明真实关系、保留两端对象可见并聚焦至少一个相关端点，推进讲解状态；重复同一组要点不能通过。此检查证明结构和来源摘录匹配，不证明模型对原理的全部理解。
+
+模型通过 `source_id` 选择程序编号的原文片段；节点和关系中的 `source_quote` 由程序填入，避免要求小模型重新抄写原文。教学设计的原始候选及拒绝原因保存在 `teaching-design-XX.json`。这套接口与参数场景共用课程、语音、PPT 和下载链路。
+
+定性设计先独立理解完整来源句子的主语、动作、宾语和条件，调用不接触候选分镜或用户风格。再规划对象与关系，最后用 `source_fact_id` 选择来源事实；程序将当前事实与对应的图形焦点、连线绑定，类比通过独立 `example` 字段选择同一事实，程序填入 `source_statement`，不让口播模型重新改写事实。按实际内容规划 1–5 步，不凑固定条数。`source_term` 的输出契约使用当前原文中的候选短语，不允许拼接或翻译原文术语；可定位的索引误选可以修正并记录。非比较关系的原文及相邻上下文必须包含两端术语，不能把无关的定义拼成因果，过程图与关系图中的节点须参与关系；比较图和原页标注允许不连线，原页标注允许一个对象的多个不同事实。原始与补充摘录分别保留。口播的 `source_statement` 与 `analogy` 分开记录；程序将二者合成实际口播并明确标出生活类比，类比不必出现在原文中，但不得增加技术事实或保证。定性口播不自行断言维数、时间窗口或预测数值。过程关系有方向，其他关系默认关联线。Ollama 读取模型实际支持的推理控制，不依据名称假设开关；非推理模型可完成相同的结构化契约，耗尽输出预算会明确报错。完整来源页和候选送入逐项语义审稿，分别记录对象、关系与每步事实/类比的原文含义、支持判断及理由；遗漏条目或任一拒绝项都不能通过。通过审稿的分镜按资料、模型与提示词缓存，重试时重新检查来源与执行契约；语义审稿与确定性来源检查分别记录，不能将模型审批当成专业事实证明。
+
 1. 从 PDF 提取带编号的原文依据，模型规划知识点及顺序。来源编号保持稳定，标题可以改写。
 2. 为每个片段分两次调用规划对象布局与操作计算。布局阶段确定 3–5 步的 `step_count`，操作阶段的输出契约要求相同步数，避免重复追加；合并为 `visual_scene`：问题、对象、参数、步骤、计算、来源和示意简化。
 3. 核验受限表达式、对象引用、坐标、五个插值状态和声明的数值关系。纯淡入要点的场景被拒绝。
 4. 新模型分镜将数值口播绑定到已核验参数与计算。自由口播只描述对象、操作和原因，未绑定的字面数字及常见中文数值断言被拒绝；程序补入当前参数和结果，再调用语音 API。新分镜每段规划 3–5 步，每步定性口播 12–100 字符，输出约束也限制文本长度，避免本机模型在单个字符串内用尽输出预算；旧场景契约继续兼容。实际音频长度决定变化与停顿。这个约束不能证明全部定性解释或领域含义。
 5. Manim 在连续参数状态中重新计算曲线与对象位置；公式数值随当前状态更新，逐帧执行声明的关系和已注册领域规则。
 6. 记录实际图形坐标检查与参数采样。终态生成 SVG 摘要；相同带配音 MP4 用于完整视频和 PPTX。备注保留来源、逐步口播、参数与简化条件。
+
+定性图中文节点名称从独立事实中选择。连线只选择事实编号与端点；程序按同一事实的主语→谓词→宾语顺序提取完整谓词，保留否定和限定词，不允许模型另造标签。复杂或被动从句不能直接压缩时使用比较或原页标注。每片段最多一个 12–80 字符、以句号结束的生活类比。
+
+请求生活例子时，比较和原页讲解优先选择原文明确提供的示例；示例作为独立来源事实绑定口播与焦点，不另编类比。原文理解要求完整中文句子，旧缓存中照抄英文或截断的草稿会重新生成；空术语候选以教学设计错误报告，避免构造空枚举。SVG 与 PNG 使用相同画布尺寸，兼容图不能裁掉字幕或来源。
+
+`preserve_source_sequence` 检查当前注释所选事实及其紧邻的明确后续操作，记录 `source_sequence` 并要求口播保留事实和原顺序。它使用原文的过程词，不推断额外因果；对完整章节的教学覆盖仍须另行检查。
+
+`preserve_topic_focus` 将知识点标题与来源事实共同包含的具体词语绑定到必讲事实，记录 `topic_facts`。同页背景不能替代当前主题；词语由当前事实提取，不使用学科词表。缓存复用仍检查这项要求。它不能证明同义表达、全章覆盖或教学质量。
 
 ### 场景契约
 
@@ -64,6 +80,24 @@ my_domain_rule = "my_course_rules:check_scene"
 报告分别记录计算与几何、来源、关键帧、完整媒体播放、人工听感和 PowerPoint 放映。缺少相应检查时不能标为全部通过。
 
 ## English
+
+### Choose the representation before geometry
+
+Web jobs use `teaching_design.py` to analyze each topic and its full source page, selecting `geometry`, `process`, `relationship`, `comparison`, or `source_figure`. The last four use `visual_scene.diagram`: model-designed nodes, relations, literal source excerpts, a question, and explanatory steps. Trusted code checks excerpts, IDs, relation endpoints, coverage, and progression, then uses shared layouts for SVG images and narrated relation tracing. Local PDF page extraction preserves complex original artwork; model output cannot choose file paths. Searchable source regions can be highlighted. Repeated geometry failures trigger representation redesign rather than invented parameter changes.
+
+The existing numeric scene path remains for computable geometry. Qualitative diagrams explain real relations and comparisons without claiming physical movement; both endpoints remain visible while at least one is emphasized, and steps cannot repeat an identical state. These checks establish structure and excerpt matching, not complete semantic understanding.
+
+Models select numbered excerpts through `source_id`; the program fills literal `source_quote` fields on nodes and relations, avoiding unreliable copying by small models. Candidate designs and rejection reasons remain in `teaching-design-XX.json`. Both contracts share course, speech, PPT, and download infrastructure.
+
+Qualitative node names select phrases from independent source facts. Links select a fact and endpoint IDs; trusted code extracts the complete predicate in subject–predicate–object order, retaining negation and qualifiers. The model cannot invent edge labels. Complex or passive clauses use comparisons or source-page annotations when they cannot be faithfully shortened. Each segment includes at most one complete everyday analogy of 12–80 characters, ending with sentence punctuation.
+
+When everyday examples are requested, comparisons and source-page guidance prefer explicit source examples. Each example binds speech and focus to an independent source fact without another invented analogy. Readings require complete Chinese statements; older untranslated or truncated drafts are regenerated. Empty term catalogs report a teaching-design error rather than constructing an empty enum. SVG and PNG use the same canvas dimensions, preserving captions and source labels.
+
+`preserve_source_sequence` checks selected annotations and explicitly subsequent neighboring operations. It records `source_sequence` and requires speech to retain those facts in source order. Temporal source cues do not infer additional causation; full chapter coverage still requires separate review.
+
+`preserve_topic_focus` binds a specific phrase shared by the topic and its source facts to required spoken facts, recorded as `topic_facts`. Background on the same page cannot replace the topic. Phrases come from the current facts, without a subject glossary, and reused caches undergo the same check. This does not establish synonym coverage, chapter completeness, or teaching quality.
+
+An isolated call first reads source sentence subjects, actions, objects, and conditions without candidate storyboards or style prompts. Later calls design objects/relations and choose source facts through `source_fact_id`; trusted code inserts `source_statement` without narration-model rewriting. Qualitative diagrams use 1–5 steps based on the material, without filling a fixed count. `source_term` selects actual phrases from the current source, preventing concatenated or translated anchors. Determinate index mistakes can be repaired and logged. Non-comparison relation evidence and adjacent context must contain both endpoint terms, and isolated nodes are rejected in process/relationship diagrams. Comparisons and source-page annotations can omit relations; source annotations can explain several distinct facts about one object. Primary and supporting excerpts remain separate; neighboring definitions do not establish causation. `source_statement` and `analogy` are stored separately, and the program labels analogies in the composed speech. Original analogies need not appear in the source, but cannot add technical facts or guarantees. Qualitative narration does not assert dimensions, time windows, or predicted values. Processes use directed links; other relations default to association lines. Ollama reads advertised thinking controls rather than inferring switches from names. Non-thinking models use the same structured contracts; output-budget exhaustion is reported explicitly. Itemized semantic reviews use the full source page and record source meanings, decisions, and reasons for every object, relation, and spoken step. Missing or rejected items fail validation. Accepted storyboards are cached by source, model, and prompt and rechecked on retries. Reviews remain separate from deterministic source checks; approval is not proof of domain facts.
 
 ### Subject-independent generation
 

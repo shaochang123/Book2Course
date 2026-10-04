@@ -30,7 +30,7 @@ TITLES = {"linearity": "线性：两条计算路径为什么相同？", "basis":
 
 
 def math_capabilities() -> dict:
-    missing = [name for name in ("manim", "sympy") if importlib.util.find_spec(name) is None]
+    missing = [name for name in ("manim", "sympy", "jieba", "pymupdf") if importlib.util.find_spec(name) is None]
     missing += [name for name in ("latex", "dvisvgm") if not shutil.which(name)]
     return {"ready": not missing, "missing": missing, "topics": ["二维线性变换"],
             "renderer": "Manim Cairo", "reason": "缺少：" + "、".join(missing) if missing else ""}

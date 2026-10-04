@@ -27,6 +27,8 @@ dependencies = [
 math-animation = [
   "manim==0.21.0",
   "sympy>=1.14,<2",
+  "jieba>=0.42.1,<1",
+  "pymupdf>=1.24,<2",
 ]
 test = [
   "pytest>=8,<10",

@@ -201,9 +201,16 @@ def test_source_coverage_repair_keeps_only_authoritative_ids(sample_pdf):
     doc=read_pdf(sample_pdf,'sample.pdf');bundle=DemoAgents().extract_knowledge(doc)
     class Client:
         def generate(self,schema,instruction,material):
+            if schema.__name__=='SourceFactsDraft':
+                import json
+                source_id=json.loads(material)['sources'][0]['id']
+                return schema.model_validate({'facts':[{'source_id':source_id,'statement':'原文说明当前知识点的对象、关系及对应条件。'}]})
             if schema is VisualCoursePlan:
                 return VisualCoursePlan(title='完整来源课程',objective='保留所有真实来源依据，按连续过程组织教学。',point_ids=[2,2,999])
             if schema is ReviewResult: return ReviewResult(approved=True)
+            if schema.__name__=='TeachingDesignDraft':
+                from zhijiang.teaching_design import TeachingDesignDraft
+                return TeachingDesignDraft(representation='geometry',rationale='来源给出了可计算的参数变化关系。',question='观察参数变化与图形位置的对应关系？')
             return scene_for('通用过程','t',{'t':1},{'t':2})
     lesson=plan_general_lesson(Client(),bundle,doc,'',VoiceMode.SYSTEM,lambda *_:None)
     assert lesson.animation_report['source_point_ids']==[2]+[i for i in range(1,len(bundle.points)+1) if i!=2]
@@ -251,7 +258,14 @@ def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkey
     class Client:
         count=3
         def generate(self,schema,instruction,material):
+            if schema.__name__=='SourceFactsDraft':
+                import json
+                source_id=json.loads(material)['sources'][0]['id']
+                return schema.model_validate({'facts':[{'source_id':source_id,'statement':'原文说明当前知识点的对象、关系及对应条件。'}]})
             if schema is ReviewResult: return ReviewResult(approved=True)
+            if schema.__name__=='TeachingDesignDraft':
+                from zhijiang.teaching_design import TeachingDesignDraft
+                return TeachingDesignDraft(representation='geometry',rationale='来源给出了可计算的参数变化关系。',question='观察参数变化与图形位置的对应关系？')
             if schema is VisualCoursePlan:
                 return VisualCoursePlan(title='新的跨学科课程',objective='依照可核查来源设计连续过程。',point_ids=list(range(1,self.count+1)))
             return scene_for('新领域','t',{'t':-2},{'t':2})

@@ -264,7 +264,7 @@ def test_long_ai_course_is_batched_without_segment_cap():
     class BatchClient:
         def generate(self, schema, instruction, material):
             data = json.loads(material)
-            if schema is KnowledgeSelection:
+            if issubclass(schema, KnowledgeSelection):
                 return KnowledgeSelection(points=[
                     KnowledgeSelectionPoint(title=f"知识点 {item['id']}", kind="concept",
                                             explanation="说明输入条件和比较步骤。", source_id=item["id"])

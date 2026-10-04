@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 
 from PIL import Image, ImageDraw
 from pptx import Presentation
@@ -72,16 +73,34 @@ def verify(folder: Path):
         'human_review':{'source_meaning':'not performed by this script','layout':'not performed by decoding',
                         'listening':'not performed by decoding','powerpoint_slideshow':'not performed by OOXML inspection'}}
     contact=Image.new('RGB',(960,240*len(assets)),'#081623')
+    from zhijiang.presentation import _font
+    contact_font=_font(16)
     hashes=set()
     for i,(segment,asset) in enumerate(zip(lesson.segments,assets)):
         scene=segment.visual_scene; assert scene
+        if scene.diagram:
+            from zhijiang.teaching_design import validate_diagram
+            page=next(p for p in document.pages if p.page==scene.evidence.page)
+            validate_diagram(scene.diagram,page.text)
         validate_evidence(document,scene.evidence); computed=verify_visual_scene(scene)
         assert computed==asset['verification']
         path=folder/'visual'/f'scene-{i+1:02d}'
+        svg_root=ET.parse(path/'summary.svg').getroot()
+        canvas=(round(float(svg_root.attrib['width'])),round(float(svg_root.attrib['height'])))
+        with Image.open(path/'summary.png') as summary:
+            assert summary.size==canvas, 'Office fallback crops the SVG canvas'
         assert len(asset['rendered_geometry'])==len(scene.beats)
         for j,rendered in enumerate(asset['rendered_geometry']):
             state=computed['states'][j]
             assert rendered['passed'] and all(c['passed'] and c['maximum_coordinate_error']<=1e-6 for c in rendered['checks'])
+            if scene.diagram:
+                from zhijiang.teaching_layout import layout_diagram
+                nodes,edges=layout_diagram(scene.diagram)
+                canonical=lambda v:json.loads(json.dumps(v))
+                assert rendered['focus']==state['focus'] and rendered['relations']==state['relations']
+                assert rendered['nodes']==canonical(nodes) and rendered['connections']==canonical(edges)
+                assert abs(rendered['rendered_seconds']-(asset['timing'][j]['start']+asset['timing'][j]['duration']))<0.1
+                continue
             assert rendered['geometry']=={o.id:object_geometry(o,state['parameters']) for o in scene.objects}
             samples=rendered['samples']; assert samples
             before=scene.parameters if j==0 else computed['states'][j-1]['parameters']
@@ -96,11 +115,12 @@ def verify(folder: Path):
         assert abs(media['video_seconds']-asset['seconds'])<0.12
         times=[.6,asset['timing'][len(scene.beats)//2]['start']+1,asset['seconds']-1]
         for col,t in enumerate(times): contact.paste(frame_at(path/'clip.mp4',t).resize((320,180)),(col*320,i*240))
-        ImageDraw.Draw(contact).text((12,i*240+195),f'{i+1}. {scene.domain}',fill='white')
+        ImageDraw.Draw(contact).text((12,i*240+195),f'{i+1}. {scene.domain}',fill='white',font=contact_font)
         pixels=check_moving_marker_pixels(scene,asset,path/'clip.mp4')
         report['scenes'].append({'domain':scene.domain,'source_page':scene.evidence.page,'checks':computed,'media':media,
+                                 'summary_canvas':list(canvas),'office_fallback_preserves_canvas':True,
                                  'intermediate_marker_pixels':pixels,
-                                 'continuous_samples':sum(len(r['samples']) for r in asset['rendered_geometry'])})
+                                 'continuous_samples':sum(len(r.get('samples',[])) for r in asset['rendered_geometry'])})
     report['full_video']=media_check(folder/'lesson.mp4')
     deck=Presentation(folder/'lesson.pptx'); assert len(deck.slides)==1+2*len(assets)
     for index, asset in enumerate(assets):

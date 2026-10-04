@@ -154,12 +154,58 @@ class VisualBeat(BaseModel):
     calculations: list[SceneCalculation] = Field(default_factory=list, max_length=4)
 
 
+class TeachingNode(BaseModel):
+    id: int = Field(ge=1, le=6)
+    label: str = Field(min_length=2, max_length=24)
+    source_quote: str = Field(min_length=8, max_length=300)
+    source_term: str = Field(default='',max_length=64)
+
+
+class TeachingRelation(BaseModel):
+    id: int = Field(ge=1, le=8)
+    source: int = Field(ge=1, le=6)
+    target: int = Field(ge=1, le=6)
+    label: str = Field(min_length=2, max_length=18)
+    source_quote: str = Field(min_length=8, max_length=300)
+    source_term: str = Field(default='',max_length=100)
+    supporting_quotes: list[str] = Field(default_factory=list,max_length=2)
+    directed: bool = True
+    source_fact_id: int | None = Field(default=None,ge=1)
+
+
+class TeachingSourceFact(BaseModel):
+    id: int = Field(ge=1)
+    source_id: int = Field(ge=1)
+    source_quote: str = Field(min_length=8,max_length=300)
+    statement: str = Field(min_length=12,max_length=120)
+
+
+class TeachingStep(BaseModel):
+    narration: str = Field(min_length=12, max_length=220)
+    source_statement: str = Field(default='',max_length=120)
+    source_fact_id: int | None = Field(default=None,ge=1)
+    analogy: str = Field(default='',max_length=80)
+    focus: list[int] = Field(min_length=1, max_length=6)
+    relations: list[int] = Field(default_factory=list, max_length=8)
+
+
+class TeachingDiagram(BaseModel):
+    representation: Literal['process', 'relationship', 'comparison', 'source_figure']
+    rationale: str = Field(min_length=8, max_length=180)
+    nodes: list[TeachingNode] = Field(min_length=1, max_length=6)
+    relations: list[TeachingRelation] = Field(default_factory=list, max_length=8)
+    steps: list[TeachingStep] = Field(min_length=1, max_length=5)
+    source_facts: list[TeachingSourceFact] = Field(default_factory=list,max_length=8)
+    source_asset: str | None = None
+    source_regions: dict[str, list[float]] = Field(default_factory=dict)
+
+
 class VisualScenePlan(BaseModel):
     domain: str = Field(min_length=2, max_length=40)
     question: str = Field(min_length=4, max_length=120)
     parameters: dict[str, float] = Field(default_factory=dict)
     objects: list[SceneObject] = Field(min_length=2, max_length=24)
-    beats: list[VisualBeat] = Field(min_length=3, max_length=12)
+    beats: list[VisualBeat] = Field(min_length=1, max_length=12)
     checks: list[SceneCheck] = Field(default_factory=list, max_length=16)
     domain_data: dict[str, str] = Field(default_factory=dict)
     domain_validators: list[str] = Field(default_factory=list, max_length=12)
@@ -171,6 +217,7 @@ class VisualScenePlan(BaseModel):
     simplifications: list[str] = Field(default_factory=list, max_length=5)
     narration_binding: Literal["computed"] | None = None
     verification: dict = Field(default_factory=dict)
+    diagram: TeachingDiagram | None = None
 
 
 class LessonSegment(BaseModel):

@@ -14,8 +14,8 @@
 <text x="476" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">保留原文与 PDF 页码</text>
 <rect x="875" y="130" width="280" height="110" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
 <text x="891" y="159" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">03 教学规划</text>
-<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">模型规划问题、参数与分镜</text>
-<text x="891" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">核对引文，标注补充算例</text>
+<text x="891" y="184" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">独立理解原文，再规划分镜</text>
+<text x="891" y="209" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">图、口播绑定事实；标注类比</text>
 <path d="M 325 185 H 460" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 740 185 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 1015 240 V 270 H 600 V 300" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
@@ -37,10 +37,10 @@
 <text x="891" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">矩阵、向量、投影与面积</text>
 <text x="891" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">绑定口播，拒绝错误结果</text>
 <rect x="460" y="485" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
-<text x="476" y="514" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">跨学科通用场景</text>
-<text x="476" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">曲线 / 粒子 / 图形 / 关系</text>
-<text x="476" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">参数驱动步骤，领域规则可扩展</text>
-<text x="476" y="589" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">表达式、几何与声明关系检查</text>
+<text x="476" y="514" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">按内容选择教学表达</text>
+<text x="476" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">过程 / 关系 / 比较 / 原图</text>
+<text x="476" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">定量内容：参数与几何推演</text>
+<text x="476" y="589" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">逐字来源 / 关系 / 计算检查</text>
 <path d="M 185 620 V 660 H 540 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 1015 620 V 660 H 660 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 600 620 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>

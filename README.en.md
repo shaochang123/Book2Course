@@ -43,7 +43,7 @@ Select real AI mode and choose an animation mode:
 
 | Mode | Behavior |
 | --- | --- |
-| `auto` (default for new AI jobs) | Use specialized reasoning for 2-D linear transformations and general parameterized scenes for other subjects. Missing dependencies produce an explained basic fallback. |
+| `auto` (default for new AI jobs) | Use specialized reasoning for 2-D linear transformations; other content selects source-backed general diagrams or parameterized scenes. Missing dependencies produce an explained basic fallback. |
 | `visual` | Require general teaching scenes without a subject restriction; invalid storyboards or declared numeric relations fail explicitly. |
 | `math` | Require source-backed 2-D linear transformation material and a complete math environment. Unsupported content, invalid parameters, and failed computation checks produce explicit errors. |
 | `basic` | Use the existing concept, formula, and process templates; embedded basic clips remain silent. |
@@ -51,6 +51,26 @@ Select real AI mode and choose an animation mode:
 The specialized executor covers linearity and translation counterexamples, basis images and matrix columns, grids and unit squares, orthogonal projections and eigendirections, and rotation/stretch composition order. Set teaching parameters in the prompt, such as `A=[[2,1],[0,1]]` and `v=[1,2]`. Supplemental examples are labeled. Math jobs focus on this supported thread and do not imply that 3-D or function-space material in the source has been animated.
 
 The general `visual_scene` contract has no subject-name whitelist. The model can use curves, points, circles, lines, arrows, polygons, and labels with stable identities, parameters, and successive changes for calculus, probability, physics, chemistry, biology, or other fields. The same data produces SVG summaries, narrated animations, and speaker notes. Restricted expressions generate LaTeX formulas; numeric results and geometry update together as parameters change.
+
+General jobs first select a teaching representation for each topic: computable geometry, a process diagram, a relationship diagram, a comparison, or guided source imagery. For qualitative material, the model designs nodes, relations, questions, and explanatory steps; shared program layouts produce SVG images and narrated relation-tracing animations. Each node and relation has a checked source excerpt. Complex original artwork can use locally extracted PDF pages, preserving embedded images and vector drawings. Repeated geometry failures trigger representation redesign rather than forcing every topic into coordinate movement. Selection reasons and verification scope remain in scene data and PPT notes.
+
+Teaching design first reads source facts in a call isolated from candidate storyboards and style prompts, retaining sentence subjects, actions, and conditions. It then plans objects/relations. Narration selects `source_fact_id`; trusted code inserts `source_statement` and binds the same fact to visual focus and links. A separate `example` field attaches one analogy to a selected fact. The model cannot rewrite the spoken fact or swap visual focus. Qualitative diagrams use 1–5 steps according to the material, avoiding invented facts to fill a fixed count. Original everyday analogies (`analogy`) are recorded separately and explicitly labeled in speech. Comparisons and source-page annotations may omit links, avoiding invented causation; page annotations can explain different sourced facts about a single object. The program numbers source excerpts, builds selectable terms from original phrases, and checks both relation endpoints with adjacent source context. Models cannot translate source anchors or infer causation from unrelated excerpts. Different concepts can share one excerpt; duplicate topic titles are still rejected. Determinate source-index errors are repaired and logged. Bibliography entries are excluded from topic selection. Processes use directed information flow; relationships and comparisons use association lines to avoid implying causation. Qualitative relation tracing is not a simulation of a 3-D hand, physics, or biological mechanisms. Itemized reviews record the original meaning and the reason for each object, relation, and spoken step, rejecting invented causation, guarantees, or necessary conditions. Quantity checks distinguish technical measurements from indefinite articles and explicitly labeled analogies; they do not replace meaning checks. Approval by the same model does not prove all domain facts.
+
+The optional installation includes PyMuPDF for source-page extraction and real text-region locations, plus Jieba for Chinese phrase candidates without a fixed subject glossary. Ollama calls read the model’s advertised [thinking controls](https://docs.ollama.com/capabilities/thinking), rather than forcing settings from its name. Hybrid models enable thinking during design and review; thinking-only models follow the server default, and non-thinking models receive no switch. Output-budget exhaustion produces a specific error; call durations and token counts are saved in local diagnostics. Local CPU inference may take longer, and the page shows the active planning stage.
+
+Chinese object names, original terms, and source IDs in qualitative diagrams form one constrained choice from independent source facts. Links select the same fact through `source_fact_id`; the program extracts the complete predicate between its endpoints, retaining negation and qualifiers. Models cannot write a separate edge label or exchange subjects and objects. Complex or passive clauses that cannot be faithfully shortened use comparisons or source-page annotations. Each segment may include at most one complete everyday analogy (12–80 characters), avoiding a forced example at every step. Analogies cannot assert technical behavior absent from the source. The program rejects guarantee phrases and derives entity names from the current source to prevent analogies from returning to technical claims. Display questions and representation descriptions derive from the checked topic and selected view; original model questions and reasons stay in diagnostics, preventing extra technical claims in headings.
+
+See the [real-source generation repair validation](docs/content-design-validation.md) for reproduced failures, runtime conditions, and actual acceptance of the user PDF.
+
+The nine-page RealDex paper produced a 13-slide PPTX, six SVGs, and a 3-minute-34-second narrated video through local text and speech models. Web playback and downloads were checked. All six clips use source-page guidance; label clarity, flattened mathematical notation, and mechanism animation remain unaccepted teaching-quality items, recorded in that report.
+
+When everyday examples are requested, comparisons and source-page guidance prefer explicit examples already in the source, binding them to the same fact without inventing another analogy. Source readings must contain complete Chinese sentences; untranslated or truncated older caches are regenerated. PNG compatibility images retain the SVG canvas dimensions, avoiding cropped captions and sources.
+
+Itemized reviews allow concise source object names and explain support separately, avoiding invented padding. Invalid model content remains in the local job’s `model-format-errors.json`, outside web error messages. It does not record request headers, credentials, or reasoning fields.
+
+Comparisons and source-page guidance check explicit neighboring operations. When an initial operation is followed by a stated next operation, the diagram retains those source facts and their order, avoiding a skipped intermediate step. This uses source sequencing cues, without a subject-specific process template.
+
+Guided-source and comparison explanations also bind the topic’s most specific sourced phrase to a required spoken fact. Other facts on the same page cannot replace the current topic. This local text check does not establish synonym coverage, chapter completeness, or teaching quality.
 
 Cross-subject regression fixtures cover approaching secants, probability areas, projectile motion, atom rearrangement, and schematic enzyme catalysis, using the same executor for narrated PPTX and video. These developer-authored storyboards test expression, computation, and rendering; real PDF/model planning is evaluated separately. See the [general scene validation report](docs/general-scene-validation.md) for actual results and scientific simplifications.
 
@@ -80,7 +100,7 @@ The runtime requires Python 3.11+; a Chinese Windows system voice is needed when
 
 ## Use local Ollama
 
-Install and start [Ollama](https://ollama.com/), then check your models with `ollama list`. The default template uses `qwen3:4b`. If that model is not available locally, run `ollama pull qwen3:4b`. Copy the configuration template and restart the web server:
+Install and start [Ollama](https://ollama.com/), then check your models with `ollama list`. The default template uses non-thinking [`qwen3:4b-instruct`](https://ollama.com/library/qwen3%3A4b-instruct). If it is not available locally, run `ollama pull qwen3:4b-instruct`. Enter the actual model name in the web page when using another model. Copy the configuration template and restart the web server:
 
 ```powershell
 Copy-Item .env.local.example .env.local
@@ -88,7 +108,20 @@ Copy-Item .env.local.example .env.local
 
 `.env.local` is ignored by Git. You can change the Ollama URL and model there. Real AI mode uses the local `/api/chat` endpoint to generate key points, a course plan, and narration. Extracted PDF text is not sent to an external text model in this configuration. The model first selects numbered source excerpts with page references; the program then inserts and verifies the quotations to reduce errors from rewritten source text. Structured calls use an 8192-token context; general storyboards split object layout from operations/calculations, with separate repair stages. CPU inference and complex storyboards can take longer; small models may require revisions or fail checks. Choose a stronger model API in the page when needed.
 
+Local validation uses Ollama 0.35.1. On low-memory computers, set the llama.cpp backend’s [prompt-cache limit](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) before starting Ollama. This computer uses 512 MiB. Exit the existing Ollama service, then run:
+
+```powershell
+$env:LLAMA_ARG_CACHE_RAM = "512"
+ollama serve
+```
+
+Support depends on the backend version and takes effect after restarting the service. Model-interface 5xx errors get at most one format retry. A chat-parser HTTP 500 uses Ollama’s native [generation endpoint](https://docs.ollama.com/api/generate) with the same schema. Only duplicated closing tokens after a complete valid object can be removed; source and semantic checks still apply. Persistent failures preserve progress and report an error.
+
 For a failed job, change the generation mode, text/speech APIs, voice, prompt, or animation mode, then select “使用原 PDF 重新生成” (regenerate from the original PDF). Retry uses the current settings without another upload. Changing an external service requires explicit transmission consent and its credential; the old destination's job credential is not forwarded to the new one.
+
+Open `/?job=JOB_ID` locally to restore a job's progress and outputs; use the 32-character identifier returned by the API.
+
+Failed retries retain completed PDF parsing, knowledge extraction, and storyboards that passed itemized review. Source-matched structure drafts are stored in `source-structure-XX.json` so failed speech planning can resume; these drafts remain unapproved and still require semantic review. Independent comprehension drafts are stored in `source-reading-XX.json`; reused drafts still undergo itemized review and are not treated as approved. Reused scenes are rechecked against sources and execution rules before fresh speech and rendering; rejected candidates are not cached. Changed PDFs, model endpoints, models, or prompts invalidate the corresponding analysis cache; credentials are excluded. Knowledge IDs are constrained to the current source batch. Extraction retains local definitions and conditions and excludes multi-column count headers. Candidate designs and rejection reasons remain in `knowledge-planning.json` and `teaching-design-XX.json`; `model-calls.json` records local call durations, token counts, and termination reasons for diagnosis.
 
 In basic mode, concrete numbers must appear in the source excerpt; unsupported values trigger a rewrite, then removal and a review notice if needed. Specialized and general scenes accept labeled teaching parameters and calculated results without this source-number filter. Principles and supplemental examples are separate. Numeric checks do not prove free-form narration, domain facts, or teaching explanations.
 

@@ -2,7 +2,9 @@ const $ = (selector) => document.querySelector(selector);
 const form = $("#upload-form");
 const fileInput = $("#pdf-file");
 const dropzone = $("#dropzone");
-let currentJobId = localStorage.getItem("zhijiang-job-id");
+const representationNames = {geometry: "可计算几何", process: "过程图", relationship: "关系图", comparison: "对比图", source_figure: "原文图示讲解"};
+const linkedJobId = new URLSearchParams(window.location.search).get("job") || "";
+let currentJobId = /^[0-9a-f]{32}$/.test(linkedJobId) ? linkedJobId : localStorage.getItem("zhijiang-job-id");
 let pollTimer = null;
 let config = null;
 let shownSettingsJobId = null;
@@ -137,6 +139,11 @@ function addSegment(segment, index) {
   const scene = segment.math_scene || segment.visual_scene;
   if (!scene) body.append(narration);
   if (scene) {
+    if (scene.diagram) {
+      const strategy = document.createElement("p");
+      strategy.textContent = `教学表达：${representationNames[scene.diagram.representation] || scene.diagram.representation}。${scene.diagram.rationale}`;
+      body.append(strategy);
+    }
     const steps = document.createElement("ol");
     scene.beats.forEach((beat) => {
       const item = document.createElement("li");
@@ -167,7 +174,7 @@ async function showLesson(jobId) {
   const report = lesson.animation_report || {};
   $("#math-report").hidden = !report.renderer;
   $("#math-report").textContent = report.scene_count ? (report.scene_type === "general" ?
-    `${report.scene_count} 个通用教学场景 · ${report.renderer} · 含同步配音。几何、表达式与声明的数值关系已检查；领域事实、示意简化和教学解释需复核。` :
+    `${report.scene_count} 个通用教学场景 · ${report.renderer} · 含同步配音。表达类型：${[...new Set(report.representations || ["geometry"])].map(name => representationNames[name] || name).join("、")}。来源摘录、关系引用或几何计算按类型检查；教学含义和专业事实需复核。` :
     `${report.scene_count} 个数学推演场景 · ${report.renderer} · 含同步配音。矩阵、向量与几何计算已核验；讲解质量和引用含义仍需人工核对。`) : report.reason || "基础图示";
   $("#download-math-scenes").hidden = !report.scene_count;
   $("#download-math-scenes").href = `/api/jobs/${jobId}/scenes`;

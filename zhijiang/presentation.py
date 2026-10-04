@@ -572,9 +572,15 @@ def _notes(slide, segment: LessonSegment, *, animation: bool,
             scene=segment.visual_scene
             frame.text += ("\n\n通用场景参数："+json.dumps(scene.parameters,ensure_ascii=False)+
                 "\n示意与简化条件："+"；".join(scene.simplifications)+
-                "\n核验范围：表达式、几何与声明的数值关系；领域事实和教学解释需要复核。\n"+
+                ("\n核验范围：原文摘录、关系引用与讲解状态；领域事实和教学解释需要复核。\n" if scene.diagram
+                 else "\n核验范围：表达式、几何与声明的数值关系；领域事实和教学解释需要复核。\n")+
                 "\n".join(f"{i+1}. {words}" for i, words in enumerate(
                     spoken_steps or [b.narration for b in scene.beats])))
+            if scene.diagram:
+                frame.text += '\n\n教学表达：'+scene.diagram.representation+'\n选择依据：'+scene.diagram.rationale
+                frame.text += '\n节点与关系的原文依据：\n'+'\n'.join(
+                    item.label+'：'+' '.join([item.source_quote,*getattr(item,'supporting_quotes',[])])
+                    for item in [*scene.diagram.nodes,*scene.diagram.relations])
 
 
 def _set_title(slide, segment: LessonSegment, number: int, total: int,

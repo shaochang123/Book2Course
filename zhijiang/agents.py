@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal, TypeVar
 
 import httpx
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, create_model
 
 from zhijiang.models import (
     CourseOutline,
@@ -242,17 +242,51 @@ class OllamaClient:
         # CPU-only local inference can take several minutes for structured output.
         self.http_client = http_client or httpx.Client(timeout=900, trust_env=False)
         self._owns_client = http_client is None
+        self._model_info: dict | None = None
+        self.call_metrics: list[dict] = []
+        self.invalid_outputs: list[dict] = []
 
     def close(self) -> None:
         if self._owns_client:
             self.http_client.close()
+
+    def _thinking_option(self, semantic_stage: bool) -> bool | str | None:
+        """Use server-advertised controls, never infer capabilities from a name."""
+        if self._model_info is None:
+            try:
+                response = self.http_client.post(
+                    f"{self.base_url}/api/show", json={"model": self.model}, timeout=30)
+                response.raise_for_status()
+                info = response.json()
+                self._model_info = info if isinstance(info, dict) else {}
+            except (httpx.HTTPError, ValueError):
+                # Older/custom servers may omit metadata. Omit the control and
+                # let the server use its own default instead of inventing one.
+                self._model_info = {}
+        thinking = self._model_info.get("thinking", {})
+        if not isinstance(thinking, dict):
+            return None
+        values = thinking.get("values", [])
+        if not isinstance(values, list):
+            return None
+        desired = semantic_stage
+        if any(type(value) is bool and value is desired for value in values):
+            return desired
+        default = thinking.get("default")
+        if any(type(value) is type(default) and value == default for value in values):
+            return default
+        if len(values) == 1 and type(values[0]) in (bool, str):
+            return values[0]
+        return None
 
     def generate(self, schema: type[T], instruction: str, material: str) -> T:
         messages = [
             {"role": "system", "content": _system_prompt(schema, instruction)},
             {"role": "user", "content": f"<source_data>\n{material}\n</source_data>"},
         ]
+        completion_fallback=False
         for attempt in range(2):
+            content = None
             try:
                 payload = {
                     "model": self.model,
@@ -263,30 +297,84 @@ class OllamaClient:
                     "keep_alive": "10m",
                 }
                 scene_stage=schema.__name__ in {'VisualLayoutDraft','VisualSequenceDraft'}
-                if self.model.lower().startswith("qwen3"):
-                    payload["think"] = False
+                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft'}
+                thinking = self._thinking_option(semantic_stage)
+                if thinking is not None:
+                    payload["think"] = thinking
                 if scene_stage:
                     payload['options']['num_predict']=3072
+                elif schema.__name__ == 'TeachingDesignDraft':
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'TeachingSourceReview':
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'TeachingScriptDraft':
+                    payload['options']['num_predict']=1536
+                elif schema.__name__ == 'SourceFactsDraft':
+                    payload['options']['num_predict']=2048
                 elif schema.__name__ == 'VisualSceneDraft':
                     payload['options']['num_predict']=4096
                 elif schema.__name__ == 'ReviewResult':
                     payload['options']['num_predict']=2048
+                endpoint='/api/chat'
+                if completion_fallback:
+                    endpoint='/api/generate'
+                    payload.pop('messages')
+                    payload['system']=messages[0]['content']
+                    payload['prompt']='\n'.join(item['content'] for item in messages[1:])
                 response = self.http_client.post(
-                    f"{self.base_url}/api/chat",
+                    f"{self.base_url}{endpoint}",
                     json=payload,
                     timeout=900,
                 )
                 response.raise_for_status()
-                content = response.json()["message"]["content"]
-                return schema.model_validate_json(content)
+                result = response.json()
+                self.call_metrics.append({
+                    "stage": schema.__name__, "attempt": attempt + 1,
+                    "thinking": thinking,"endpoint":endpoint,
+                    **{key: result.get(key) for key in (
+                        "done_reason", "eval_count", "prompt_eval_count", "total_duration")},
+                })
+                if result.get("done_reason") == "length":
+                    raise GenerationError(
+                        "本机模型达到输出预算，未完成结构化结果；请选用非推理模型或更合适的模型。")
+                content = result['response'] if completion_fallback else result["message"]["content"]
+                try:
+                    return schema.model_validate_json(content)
+                except ValidationError:
+                    # Accept only a complete object followed by duplicated closing
+                    # tokens. Never cut off values, prose, or a second JSON object.
+                    value,end=json.JSONDecoder().raw_decode(content.lstrip())
+                    tail=content.lstrip()[end:]
+                    if not tail or not re.fullmatch(r'[\s\]}\"]+',tail):raise
+                    validated=schema.model_validate(value)
+                    self.call_metrics[-1]['format_repair']='duplicate_terminators'
+                    return validated
             except httpx.TimeoutException as exc:
                 raise GenerationError("本机 Ollama 推理超时；模型正在运行，但处理此批材料过慢。") from exc
             except httpx.HTTPStatusError as exc:
+                self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
+                    'http_status':exc.response.status_code,'error':'upstream_http_error'})
+                if 500 <= exc.response.status_code < 600 and attempt==0:
+                    # Native runners can reject a malformed model completion
+                    # before returning content. One bounded format repair also
+                    # covers a transient runner failure; never retry auth errors.
+                    messages.append({'role':'user','content':
+                        '本机服务未能返回可解析结果。请重新生成最简的标准JSON，完整闭合对象与数组，不重复结束符；保留原文事实与来源编号。'})
+                    completion_fallback=exc.response.status_code==500
+                    continue
                 raise GenerationError(f"本机 Ollama 返回 HTTP {exc.response.status_code}；请检查模型或服务日志。") from exc
             except httpx.HTTPError as exc:
                 raise GenerationError("本机 Ollama 不可用；请检查服务与模型名称。") from exc
             except (KeyError, TypeError, ValueError, ValidationError) as exc:
                 detail=_validation_summary(exc)
+                if self.call_metrics:
+                    self.call_metrics[-1]['validation_error']=detail
+                if isinstance(content,str):
+                    # Keep only returned content locally; omit HTTP bodies,
+                    # reasoning fields, request headers, and credentials.
+                    self.invalid_outputs.append({'stage':schema.__name__,'attempt':attempt+1,
+                        'endpoint':endpoint,'error':detail,'content':content[:32768],
+                        'truncated':len(content)>32768})
                 if attempt == 1:
                     raise GenerationError("本机 Ollama 两次返回不符合数据契约的 JSON："+detail) from exc
                 messages.append(
@@ -316,6 +404,14 @@ class KnowledgeSelectionPoint(BaseModel):
 
 class KnowledgeSelection(BaseModel):
     points: list[KnowledgeSelectionPoint] = Field(min_length=3, max_length=6)
+
+
+def knowledge_selection_schema(source_ids):
+    """Constrain references during decoding to the current batch's real IDs."""
+    point=create_model('KnowledgeSelectionPoint',__base__=KnowledgeSelectionPoint,
+        source_id=(Literal[tuple(source_ids)],Field(description='Existing source ID, not a page number.')))
+    return create_model('KnowledgeSelection',__base__=KnowledgeSelection,
+        points=(list[point],Field(min_length=3,max_length=6)))
 
 
 _SENTENCE_END = re.compile(r"[.!?。！？；;][\"'”’)]*$")
@@ -436,12 +532,34 @@ def source_candidates(document: SourceDocument) -> list[dict]:
     seen: set[tuple[int, str]] = set()
     long_document = len(document.pages) > 6
     per_page_limit = 2 if long_document else 6
-    quote_limit = 120 if long_document else 220
+    # A 120-character slice often cuts an English definition before its
+    # condition or conclusion. Keep more local context without expanding
+    # the number of excerpts in a model batch.
+    quote_limit = 300  # Evidence.quote contract; never truncate after selection.
     minimum_length = 40 if long_document else 20
     topic = _topic_term(document)
     page_counts: dict[int, int] = {}
+    bibliography=False
+    teaching_pages=[]
     for page in document.pages:
-        quotes = _page_quotes(page.text, quote_limit, minimum_length)
+        # A bibliography is provenance, not a new lesson on each cited paper.
+        # Preserve every original page; only exclude this tail from point selection.
+        text=page.text
+        heading=re.search(r'(?m)^\s*(?:References|Bibliography|参考文献|参考资料)\s*$',text,re.I)
+        if bibliography:
+            new_chapter=re.search(r'(?mi)^\s*(?:Chapter\s+\d+|Unit\s+\d+|第.{1,12}[章节单元])',text)
+            reference_entries=re.findall(r'(?m)^\s*(?:\[[^\]\n]{1,70}\]|\S.{0,90}(?:19|20)\d{2}[).])',text)
+            if not new_chapter and (heading or reference_entries):
+                continue
+            bibliography=False
+        if heading:
+            text=text[:heading.start()];bibliography=True
+        if text.strip():teaching_pages.append(page.model_copy(update={'text':text}))
+        quotes = _page_quotes(text, quote_limit, minimum_length)
+        # Column labels alone do not state a fact. Keep table bodies in the
+        # source document, but do not turn a multi-column header into a point.
+        quotes = [quote for quote in quotes
+                  if len(re.findall(r'#\s*[^\W_]+', quote)) < 3]
         hits = [index for index, quote in enumerate(quotes) if topic and topic in quote.casefold()]
         if quotes and len(hits) >= 0.8 * len(quotes):
             hits = []  # A word found everywhere cannot distinguish the subject from boilerplate.
@@ -476,7 +594,7 @@ def source_candidates(document: SourceDocument) -> list[dict]:
                                "quote": quote, "ocr": page.ocr})
             page_counts[page.page] = page_counts.get(page.page, 0) + 1
     if len(candidates) < 3:
-        for page, quote in _candidates(document):
+        for page, quote in (_candidates(document.model_copy(update={'pages':teaching_pages})) if teaching_pages else []):
             if page_counts.get(page, 0) >= per_page_limit:
                 continue
             quote = quote[:quote_limit]
@@ -494,6 +612,7 @@ class AIAgents:
     def __init__(self, client: OpenAICompatibleClient | OllamaClient, prompt: str = ""):
         self.client = client
         self.prompt = prompt.strip()
+        self.knowledge_drafts: list[dict] = []
 
     def _style(self) -> str:
         return f"\n用户对讲解风格和输出效果的要求：{self.prompt}" if self.prompt else ""
@@ -517,19 +636,25 @@ class AIAgents:
             by_id = {item["id"]: item for item in batch}
             for attempt in range(2):
                 selection = self.client.generate(
-                    KnowledgeSelection,
+                    knowledge_selection_schema(by_id),
                     "从给定编号的原文片段中选 3 到 6 个相互关联的知识点，"
                     "优先围绕文件名和多次出现的主题，选择可直接讲解的定义、关系、公式或例题；"
                     "只选覆盖核心所需的数量，不必凑满 6 个。"
                     "跳过页眉、学习建议、教学方法及未来章节预告，除非它们就是文档主题。"
+                    "不要把参考文献条目、作者单位、致谢或表格残片变成教学知识点；概念标题和解释用中文。"
                     "每个引文须直接支撑该知识点的定义或步骤；不能仅凭术语列表编造定义。"
-                    "source_id 必须是输入 sources 中存在的 id，每个 id 最多使用一次。"
+                    "source_id 必须是输入 sources 中存在的 id，不是页码。"
+                    "同一摘录可以支持不同概念，但不能重复相同知识点；标题必须互不相同。"
                     "只生成标题、类型和解释；页码与逐字引文由程序填入。"
-                    + ("上次选了不存在或重复的编号，请重新选择。" if attempt else ""),
+                    + ("上次选了不存在的编号或重复标题，请重新选择。" if attempt else ""),
                     material,
                 )
                 ids = [point.source_id for point in selection.points]
-                if len(set(ids)) != len(ids) or any(item not in by_id for item in ids):
+                diagnostic={'draft':selection.model_dump(),'available_source_ids':list(by_id)}
+                self.knowledge_drafts.append(diagnostic)
+                titles=[_compact(point.title).casefold() for point in selection.points]
+                if len(set(titles)) != len(titles) or any(item not in by_id for item in ids):
+                    diagnostic['error']='duplicate_titles_or_unknown_source_ids'
                     continue
                 points.extend(
                     KnowledgePoint(
@@ -545,7 +670,7 @@ class AIAgents:
                 )
                 break
             else:
-                raise GenerationError("模型未能选择有效且不重复的原文片段编号。")
+                raise GenerationError("模型未能选择有效的原文片段编号及不同知识点。")
         bundle = KnowledgeBundle(points=points)
         validate_knowledge(document, bundle)
         return bundle

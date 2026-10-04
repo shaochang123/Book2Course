@@ -111,8 +111,9 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             "math_animation": math_capabilities(),
             "visual_animation": {**math_capabilities(), "subject_restriction": None,
                 "topics": None, "primitives": list(PRIMITIVES),
+                "representations": ['geometry','process','relationship','comparison','source_figure'],
                 "numeric_checks": sorted(CHECKERS), "domain_validators": sorted(DOMAIN_VALIDATORS),
-                "verification_scope": "几何、表达式与声明的数值关系；领域事实需复核"},
+                "verification_scope": "按表达类型核对来源摘录、关系引用或几何与数值关系；教学含义和领域事实需复核"},
         }
 
     @application.post("/api/jobs", status_code=202)

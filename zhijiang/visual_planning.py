@@ -9,6 +9,7 @@ import ast
 import math
 import re
 import json
+import hashlib
 import unicodedata
 from functools import lru_cache
 from pydantic import BaseModel, Field, model_validator, create_model, ConfigDict
@@ -54,12 +55,14 @@ class VisualSceneDraft(VisualScenePlan):
     # These fields are supplied/verified by the program, not drafted by the model.
     evidence: Evidence = Field(default_factory=lambda:Evidence(page=1,quote='由程序填入已核验的来源。'))
     objects: list[SceneObjectDraft] = Field(min_length=2,max_length=24)
+    beats: list[VisualBeat] = Field(min_length=3,max_length=12)
     checks: list[SceneCheckDraft] = Field(default_factory=list,max_length=16)
+    diagram: None = None
 
     @classmethod
     def __get_pydantic_json_schema__(cls,core_schema,handler):
         schema=handler.resolve_ref_schema(handler(core_schema))
-        for key in ['evidence','verification','narration_binding']:
+        for key in ['evidence','verification','narration_binding','diagram']:
             schema.get('properties',{}).pop(key,None)
         schema['required']=[key for key in schema.get('required',[]) if key not in {'evidence','verification'}]
         return schema
@@ -103,7 +106,8 @@ def sequence_schema(layout):
                                     max_length=getattr(layout,'step_count',3))))
 
 
-def plan_general_lesson(client,bundle,document,prompt,voice_mode,progress,draft_output=None):
+def plan_general_lesson(client,bundle,document,prompt,voice_mode,progress,draft_output=None,
+                        source_assets=None,pdf_path=None):
     """Use stable source IDs; mutable model-generated titles are not identifiers."""
     material='知识点：'+json.dumps([
         {'id':i+1,**point.model_dump()} for i,point in enumerate(bundle.points)],ensure_ascii=False)
@@ -121,11 +125,12 @@ def plan_general_lesson(client,bundle,document,prompt,voice_mode,progress,draft_
         outline.point_ids=list(dict.fromkeys(i for i in outline.point_ids if i in expected))
         outline.point_ids.extend(i for i in sorted(expected) if i not in outline.point_ids)
     lesson=Lesson(title=outline.title,objective=outline.objective,mode=Mode.AI,voice_mode=voice_mode,
-        notice='AI 生成：教学场景已检查几何、表达式与声明的数值关系；来源含义、领域事实和示意简化仍需复核。',
+        notice='AI 生成：教学场景按表达类型核查来源、关系或几何与声明的数值；教学含义、领域事实和示意简化仍需复核。',
         segments=[LessonSegment(title=bundle.points[i-1].title,kind=bundle.points[i-1].kind,
             narration=bundle.points[i-1].explanation+' 请结合来源观察逐步演示过程。',
             bullets=[bundle.points[i-1].title],evidence=bundle.points[i-1].evidence) for i in outline.point_ids])
-    plan_visual_scenes(client,lesson,document,prompt,progress,draft_output=draft_output)
+    plan_visual_scenes(client,lesson,document,prompt,progress,draft_output=draft_output,
+        pedagogical_design=True,source_assets=source_assets,pdf_path=pdf_path)
     lesson.animation_report['source_point_ids']=outline.point_ids
     return lesson
 
@@ -297,6 +302,15 @@ def states(scene: VisualScenePlan):
 
 
 def verify_visual_scene(scene: VisualScenePlan) -> dict:
+    if scene.diagram:
+        from zhijiang.teaching_design import validate_diagram
+        report=validate_diagram(scene.diagram,scene.domain_data.get('source_page_text'))
+        if len(scene.beats)!=len(scene.diagram.steps) or any(
+                b.narration!=s.narration for b,s in zip(scene.beats,scene.diagram.steps)):
+            raise VisualSceneError('教学步骤与实际口播不一致。')
+        report['states']=[{'step':i+1,'parameters':{},'calculations':[],
+                           'focus':s.focus,'relations':s.relations} for i,s in enumerate(scene.diagram.steps)]
+        return report
     if scene.narration_binding == 'computed':
         # Model prose describes operations. The trusted speech layer supplies
         # actual parameter/calculation values, so stale numbers can't survive
@@ -403,7 +417,9 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
             "declared_domain_checks": len(scene.checks), "scope": "表达式、声明的数值关系与几何状态；领域事实及示意简化仍需来源和人工核对"}
 
 
-def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, draft_output=None) -> None:
+def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, draft_output=None,
+                       pedagogical_design=False,source_assets=None,pdf_path=None) -> None:
+    from zhijiang.teaching_design import plan_teaching_representation,compile_teaching_scene
     instruction = (
         "为当前教学片段生成可执行的跨学科 visual_scene 数据。学科名称不限。"
         "不是淡入静态图：至少3步，以参数变化驱动同一对象的位置、半径、曲线或关系过程，解释为什么变化。"
@@ -422,11 +438,9 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
         "口播对应当前图形操作，不能把参数插值说成未经证明的真实物理路径。"
         "只输出必要字段，不输出evidence、verification或tolerance；来源、核验及严格数值容差由程序控制。一个点只能有一个position，不能同时装两个位置。"
         '函数必须使用curve，且expression与domain非空；line/arrow必须有start和end，不能只给expression。'
-        'position/start/end绝不允许自由变量x。直线的函数图像也用curve，例如expression="2*a*(x-a)+a**2"，domain=[0,3]，不填start/end。'
-        '语法示例：固定点 {"id":"p","kind":"dot","position":["a","a**2"]}；'
-        '随h移动的点 {"id":"q","kind":"dot","position":["a+h","(a+h)**2"]}；'
-        '曲线 {"id":"f","kind":"curve","expression":"x**2","domain":[0,2]}；'
-        '直线 {"id":"l","kind":"line","start":["0","0"],"end":["a","a**2"]}。'
+        'position/start/end绝不允许自由变量x。直线的函数图像也用curve，expression根据当前资料中的公式定义，domain按来源变量范围选择，不填start/end。'
+        '语法示例仅说明字段：点 {"id":"marker","kind":"dot","position":["horizontal","vertical"]}，'
+        '其中horizontal与vertical必须在parameters声明。具体参数、函数和路径须来自当前来源或明确标注的计算示例，不能套用其他教材的分镜。'
     )
     instruction += '\n可用checks名称：'+', '.join(sorted(CHECKERS))+\
         '；已安装domain_validators名称：'+(', '.join(sorted(DOMAIN_VALIDATORS)) or '无，保持空数组')+'。'
@@ -446,7 +460,50 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
         '\n可用checks名称：'+', '.join(sorted(CHECKERS))+
         '；已安装domain_validators名称：'+(', '.join(sorted(DOMAIN_VALIDATORS)) or '无，保持空数组')+'。')
     drafts=[]; reviews=[]
+    source_digest=hashlib.sha256(pdf_path.read_bytes()).hexdigest() if pdf_path else document.model_dump_json()
     for index, segment in enumerate(lesson.segments):
+        cache_path=draft_output.with_name(f'planned-scene-{index+1:02d}.json') if pedagogical_design and draft_output else None
+        fingerprint=hashlib.sha256(json.dumps({'version':'teaching-design-v9','source':source_digest,
+            'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model',''),
+            'prompt':prompt,'topic':segment.title,'evidence':segment.evidence.model_dump()},sort_keys=True).encode()).hexdigest()
+        if cache_path:
+            cached=load_planned_scene(cache_path,fingerprint,document,segment)
+            if cached and cached[0].diagram:
+                from zhijiang.teaching_design import cached_source_examples_covered,cached_source_sequence_covered,cached_topic_focus_covered,normalized
+                try:
+                    reading=json.loads(cache_path.with_name(f'source-reading-{index+1:02d}.json').read_text(encoding='utf-8'))
+                    source_page=next(page.text for page in document.pages if page.page==segment.evidence.page)
+                    facts=reading['facts']
+                    if (not all(normalized(fact['source_quote']) in normalized(source_page) for fact in facts)
+                            or not cached_source_examples_covered(cached[0],facts,prompt)
+                            or not cached_source_sequence_covered(cached[0],facts)
+                            or not cached_topic_focus_covered(cached[0],facts,segment.title)):
+                        cached=None
+                except (OSError,ValueError,KeyError):cached=None
+            if cached:
+                scene,review=cached
+                segment.visual_scene=scene;segment.narration=' '.join(b.narration for b in scene.beats)
+                drafts.append({'segment_index':index,'cached':True,'scene':scene.model_dump()})
+                reviews.append({**review,'segment_index':index,'cached':True})
+                progress(f'复用已核验分镜（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments))
+                continue
+        if pedagogical_design:
+            progress(f'分析教学表达（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments))
+            diagnostic=draft_output.with_name(f'teaching-design-{index+1:02d}.json') if draft_output else None
+            design,report,design_errors=plan_teaching_representation(client,segment,document,prompt,diagnostic_output=diagnostic,
+                on_phase=lambda name:progress(f'{name}（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments)))
+            drafts.append({'segment_index':index,'teaching_design':design.model_dump(),'rejected_designs':design_errors})
+            if draft_output:
+                draft_output.write_text(json.dumps(drafts,ensure_ascii=False,indent=2),encoding='utf-8')
+            if design.representation!='geometry':
+                page=next(p for p in document.pages if p.page==segment.evidence.page)
+                scene=compile_teaching_scene(design,segment,report,source_assets=source_assets,pdf_path=pdf_path,source_text=page.text)
+                scene.verification=verify_visual_scene(scene)
+                segment.visual_scene=scene
+                segment.narration=' '.join(b.narration for b in scene.beats)
+                reviews.append({'segment_index':index,'representation':design.representation,**report})
+                save_planned_scene(cache_path,fingerprint,scene,reviews[-1])
+                continue
         progress(f"规划通用教学场景（{index+1}/{len(lesson.segments)}）：{segment.title}", 54+index*10//len(lesson.segments))
         feedback = ""; previous_draft=""; last_error="";layout=None
         for _ in range(5):
@@ -522,18 +579,62 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
                     draft_output.write_text(json.dumps(drafts,ensure_ascii=False,indent=2),encoding='utf-8')
                 progress(f"修正通用分镜（{index+1}/{len(lesson.segments)}）：{exc}",54+index*10//len(lesson.segments))
         else:
-            raise VisualSceneError("通用教学场景无法通过检查："+last_error+"。请调整教学要求或选择能力更强的模型。")
+            if not pedagogical_design:
+                raise VisualSceneError("通用教学场景无法通过检查："+last_error+"。请调整教学要求或选择能力更强的模型。")
+            # Failed geometry is a representation failure, not permission to
+            # animate invented coordinates or abort every other course segment.
+            progress(f'重新设计教学表达：{segment.title}',54+index*10//len(lesson.segments))
+            design,report,errors=plan_teaching_representation(client,segment,document,prompt,force_diagram=True,
+                diagnostic_output=draft_output.with_name(f'teaching-redesign-{index+1:02d}.json') if draft_output else None)
+            page=next(p for p in document.pages if p.page==segment.evidence.page)
+            scene=compile_teaching_scene(design,segment,report,source_assets=source_assets,pdf_path=pdf_path,source_text=page.text)
+            scene.verification=verify_visual_scene(scene)
+            drafts.append({'segment_index':index,'teaching_design':design.model_dump(),'geometry_failure':last_error,'rejected_designs':errors})
+            reviews.append({'segment_index':index,'representation':design.representation,**report})
+            if draft_output:
+                draft_output.write_text(json.dumps(drafts,ensure_ascii=False,indent=2),encoding='utf-8')
         segment.visual_scene = scene
         segment.narration = " ".join(beat.narration for beat in scene.beats)
+        save_planned_scene(cache_path,fingerprint,scene,reviews[-1])
     lesson.animation_report = {"renderer": "Manim scene graph", "scene_count": len(lesson.segments),
         "scene_type": "general", "domains": sorted({s.visual_scene.domain for s in lesson.segments}),
-        "verification_scope": "几何、表达式、已声明的数值关系；领域事实和教学解释仍需复核",
+        "verification_scope": "按表达类型核对来源摘录、关系引用或几何与数值关系；领域事实和教学解释仍需复核",
         "coverage": "学科不限，使用通用图形与参数步骤；专门机制和复杂三维可扩展执行器与领域检查",
         "storyboard_reviews":reviews}
+    lesson.animation_report['representations']=[s.visual_scene.diagram.representation if s.visual_scene.diagram else 'geometry' for s in lesson.segments]
+    lesson.animation_report['coverage']='按内容选择过程、关系、比较、原文图示或可计算几何；学科名称不限，复杂机制仍需专门执行器'
     lesson.animation_report['narration_binding']='computed numeric values; qualitative model prose still requires source review'
     attribution=general_source_attribution(document)
     if attribution:
         lesson.animation_report['source_attribution']=attribution
+
+
+def save_planned_scene(path, fingerprint, scene, review):
+    if path:
+        path.write_text(json.dumps({'fingerprint':fingerprint,'scene':scene.model_dump(),
+            'review':review},ensure_ascii=False),encoding='utf-8')
+
+
+def load_planned_scene(path, fingerprint, document, segment):
+    """Reuse completed planning, rechecking against the actual source and rules."""
+    from zhijiang.teaching_design import validate_diagram,TeachingDesignError,TeachingSourceReview,validate_meaning_review
+    try:
+        saved=json.loads(path.read_text(encoding='utf-8'))
+        if saved.get('fingerprint')!=fingerprint:return None
+        review=saved['review']
+        if review.get('semantic_review',review).get('approved') is not True:return None
+        scene=VisualScenePlan.model_validate(saved['scene'])
+        if scene.evidence!=segment.evidence:return None
+        validate_evidence(document,scene.evidence)
+        if scene.diagram:
+            validate_meaning_review(TeachingSourceReview.model_validate(review['semantic_review']),scene.diagram)
+            page=next(p for p in document.pages if p.page==scene.evidence.page)
+            validate_diagram(scene.diagram,page.text)
+            scene.domain_data['source_page_text']=page.text
+        scene.verification=verify_visual_scene(scene)
+        return scene,review
+    except (OSError,ValueError,KeyError,GenerationError,TeachingDesignError):
+        return None
 
 
 def general_source_attribution(document):

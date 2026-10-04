@@ -191,15 +191,27 @@ def render_summary_png(svg: Path, output: Path) -> None:
     from xml.etree import ElementTree as ET
     from PIL import Image, ImageDraw
     from zhijiang.presentation import _font
-    image = Image.new("RGB", (1200, 500), "#10283A")
-    draw = ImageDraw.Draw(image, "RGBA")
     root = ET.parse(svg).getroot()
+    size=(round(float(root.attrib.get('width','1200'))),round(float(root.attrib.get('height','500'))))
+    image = Image.new("RGB", size, "#10283A")
+    draw = ImageDraw.Draw(image, "RGBA")
     for node in root.iter():
         tag = node.tag.split("}")[-1]
         attributes = node.attrib
         if tag == "rect" and "fill" in attributes:
             x,y=float(attributes.get("x",0)),float(attributes.get("y",0))
-            draw.rectangle((x,y,x+float(attributes['width']),y+float(attributes['height'])),fill=attributes['fill'])
+            draw.rounded_rectangle((x,y,x+float(attributes['width']),y+float(attributes['height'])),
+                radius=float(attributes.get('rx',0)),fill=attributes['fill'],outline=attributes.get('stroke'),
+                width=int(attributes.get('stroke-width','1')))
+        elif tag == 'image':
+            import base64,io
+            href=attributes.get('{http://www.w3.org/1999/xlink}href',attributes.get('href',''))
+            if not href.startswith('data:image/png;base64,'):
+                raise ValueError('Summary images must embed locally extracted PNG data')
+            with Image.open(io.BytesIO(base64.b64decode(href.split(',',1)[1],validate=True))) as asset:
+                size=(round(float(attributes['width'])),round(float(attributes['height'])))
+                image.paste(asset.convert('RGB').resize(size),
+                    (round(float(attributes['x'])),round(float(attributes['y']))))
         elif tag == "circle":
             x,y,r=float(attributes['cx']),float(attributes['cy']),float(attributes['r'])
             color=attributes['fill'].lstrip('#')
@@ -207,7 +219,8 @@ def render_summary_png(svg: Path, output: Path) -> None:
             draw.ellipse((x-r,y-r,x+r,y+r),fill=rgba,outline=attributes.get('stroke',attributes['fill']),width=int(attributes.get('stroke-width','1')))
         elif tag == "text":
             draw.text((float(attributes["x"]), float(attributes["y"])), node.text or "",
-                      font=_font(int(attributes["font-size"])), fill=attributes["fill"], anchor="ls")
+                      font=_font(int(attributes["font-size"])), fill=attributes["fill"],
+                      anchor={'middle':'ms','end':'rs'}.get(attributes.get('text-anchor'),'ls'))
         elif tag == "path":
             tokens = re.findall(r"[ML]|[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?", attributes["d"], re.I)
             cursor = 0

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
@@ -10,13 +12,15 @@ from typing import Callable
 from zhijiang.agents import (
     AIAgents, DemoAgents, GenerationError, OllamaClient, OpenAICompatibleClient,
     validate_lesson,
+    validate_evidence,
 )
 from zhijiang.config import Settings
-from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
+from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode, SourceDocument, KnowledgeBundle
 from zhijiang.math_planning import MathAnimationError, math_capabilities, plan_math_lesson, supports_math
 from zhijiang.math_media import render_math_assets
 from zhijiang.visual_planning import plan_general_lesson
 from zhijiang.visual_media import render_visual_assets
+from zhijiang.teaching_design import prepare_source_assets, TeachingDesignError
 from zhijiang.pdf import PDFError, read_pdf
 from zhijiang.presentation import PresentationError, render_presentation
 from zhijiang.speech import AISpeech, SpeechError, SystemSpeech
@@ -25,6 +29,19 @@ from zhijiang.video import VideoError, render_video
 
 
 logger = logging.getLogger(__name__)
+
+
+def checkpoint(path, fingerprint, schema, build):
+    """Reuse only completed input-dependent stages; never cache credentials."""
+    try:
+        saved=json.loads(path.read_text(encoding='utf-8'))
+        if saved.get('fingerprint')==fingerprint:
+            return schema.model_validate(saved['data'])
+    except (OSError,ValueError,KeyError):
+        pass
+    result=build()
+    path.write_text(json.dumps({'fingerprint':fingerprint,'data':result.model_dump()},ensure_ascii=False),encoding='utf-8')
+    return result
 
 
 class JobProcessor:
@@ -80,10 +97,10 @@ class JobProcessor:
         speech = None
         try:
             self.store.set_progress(job_id, "解析 PDF", 8)
-            document = read_pdf(
-                (folder / "source.pdf").read_bytes(),
-                job["filename"],
-            )
+            source_bytes=(folder/'source.pdf').read_bytes()
+            source_hash=hashlib.sha256(source_bytes).hexdigest()
+            document=checkpoint(folder/'parsed-source.json','pdf-v1:'+source_hash,SourceDocument,
+                lambda:read_pdf(source_bytes,job['filename']))
             mode = Mode(job["mode"])
             voice_mode = VoiceMode(job["voice_mode"])
             options = self.store.get_options(job_id)
@@ -107,11 +124,19 @@ class JobProcessor:
                     lambda stage, value: self.store.set_progress(job_id, stage, value))
             else:
                 self.store.set_progress(job_id, "提取知识点", 22)
-                bundle = agents.extract_knowledge(document)
+                # A failed diagram should not repeat a successful OCR/extraction.
+                # Input or model/prompt changes invalidate the analysis cache.
+                fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v3',
+                    'source':source_hash,'mode':mode,'options':options.model_dump()},sort_keys=True).encode()).hexdigest()
+                bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
+                    lambda:agents.extract_knowledge(document))
+                for point in bundle.points: validate_evidence(document,point.evidence)
                 self.store.set_progress(job_id, "设计课程结构", 38)
                 if use_visual:
+                    source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document)
                     lesson=plan_general_lesson(agents.client,bundle,document,options.prompt,voice_mode,
-                        lambda stage,value: self.store.set_progress(job_id,stage,value),draft_output=folder/'visual-planning.json')
+                        lambda stage,value: self.store.set_progress(job_id,stage,value),draft_output=folder/'visual-planning.json',
+                        source_assets=source_assets,pdf_path=folder/'source.pdf')
                 else:
                     outline = agents.plan(bundle)
                     self.store.set_progress(job_id, "编写讲稿与分镜", 53)
@@ -157,7 +182,7 @@ class JobProcessor:
             self.store.set_progress(job_id, "制作 SVG 教学图与 PPT 动画", 94)
             self.presentation_renderer(lesson, folder / "lesson.pptx")
             self.store.complete(job_id)
-        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError, MathAnimationError) as exc:
+        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError, MathAnimationError, TeachingDesignError) as exc:
             self.store.fail(job_id, str(exc))
         except Exception:
             logger.exception("任务 %s 发生未预期的错误", job_id)
@@ -165,6 +190,21 @@ class JobProcessor:
         finally:
             self.store.clear_api_key(job_id)
             if agents is not None and isinstance(agents, AIAgents):
+                knowledge_log=folder / 'knowledge-planning.json'
+                if agents.knowledge_drafts or not knowledge_log.exists():
+                    knowledge_log.write_text(json.dumps(
+                        agents.knowledge_drafts, ensure_ascii=False, indent=2), encoding='utf-8')
+                if isinstance(agents.client, OllamaClient):
+                    (folder / 'model-calls.json').write_text(json.dumps(
+                        agents.client.call_metrics, ensure_ascii=False, indent=2), encoding='utf-8')
+                    if agents.client.invalid_outputs:
+                        invalid_path=folder/'model-format-errors.json'
+                        try:
+                            previous=json.loads(invalid_path.read_text(encoding='utf-8'))
+                            if not isinstance(previous,list):previous=[]
+                        except (OSError,ValueError):previous=[]
+                        invalid_path.write_text(json.dumps(previous+agents.client.invalid_outputs,
+                            ensure_ascii=False,indent=2),encoding='utf-8')
                 agents.client.close()
             if speech is not None and isinstance(speech, AISpeech):
                 speech.close()
