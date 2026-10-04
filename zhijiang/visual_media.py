@@ -22,7 +22,7 @@ def visual_summary_svg(scene) -> str:
     def xy(p):
         return [60+1080*(p[0]-scene.x_range[0])/(scene.x_range[1]-scene.x_range[0]),
                 405-310*(p[1]-scene.y_range[0])/(scene.y_range[1]-scene.y_range[0])]
-    parts=['<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500">',
+    parts=['<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">',
            '<title>'+html.escape(scene.domain)+'</title><desc>'+html.escape(scene.question)+'</desc>',
            '<rect width="1200" height="500" fill="#10283A"/>',
            '<defs><clipPath id="plot"><rect x="50" y="85" width="1100" height="330"/></clipPath></defs>',
@@ -65,7 +65,7 @@ def teaching_summary_svg(scene):
     from zhijiang.teaching_layout import layout_diagram,wrap_label
     diagram=scene.diagram;nodes,edges=layout_diagram(diagram)
     def xy(p):return (600+p[0]*82,330-p[1]*82)
-    parts=['<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="675" viewBox="0 0 1200 675">',
+    parts=['<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="675" viewBox="0 0 1200 675" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">',
         '<title>'+html.escape(scene.question)+'</title><desc>'+html.escape(diagram.rationale)+'</desc>',
         '<rect width="1200" height="675" fill="#081623"/>',
         '<text x="600" y="40" text-anchor="middle" font-size="25" fill="#F4F7F9">'+html.escape(scene.question)+'</text>']

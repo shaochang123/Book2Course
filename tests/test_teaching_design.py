@@ -109,21 +109,63 @@ def test_living_analogies_and_indefinite_articles_are_not_measurements():
 
 
 def test_semantic_review_cannot_approve_with_missing_or_rejected_meanings():
-    from zhijiang.teaching_design import TeachingSourceReview,validate_meaning_review,meaning_review_schema
+    from zhijiang.teaching_design import TeachingSourceReview,validate_meaning_review,meaning_review_schema,compose_meaning_review
     d=diagram()
     with pytest.raises(TeachingDesignError,match='遗漏'):validate_meaning_review(TeachingSourceReview(approved=True),d)
     value={'approved':True,'issues':[]}
     for name,ids in [('node_checks',[1,2,3]),('relation_checks',[1,2]),('step_checks',[1,2,3])]:
         value[name]=[{'id':key,'supported':True,'source_meaning':'原文描述控制与记录之间的具体关系。','reason':'候选保留原文关系与适用条件，没有添加保证。'} for key in ids]
-    review=meaning_review_schema(d).model_validate(value)
+    review=compose_meaning_review(meaning_review_schema(d).model_validate(value))
     schema=meaning_review_schema(d).model_json_schema()
-    assert list(schema['properties'])==['node_checks','relation_checks','step_checks','approved','issues']
+    assert list(schema['properties'])==['node_checks','relation_checks','step_checks','source_warnings']
     node_check=schema['$defs']['MeaningCheck_node_checks']['properties']
     assert list(node_check).index('source_meaning')<list(node_check).index('reason')<list(node_check).index('supported')
     validate_meaning_review(review,d)
     review.relation_checks[0].supported=False
     review.relation_checks[0].reason='原文只描述共现，候选却添加了因果关系。'
     with pytest.raises(TeachingDesignError,match='relation_checks'):validate_meaning_review(review,d)
+
+
+def test_source_warning_does_not_replace_item_checks_or_override_cached_rejection():
+    from zhijiang.teaching_design import meaning_review_schema,compose_meaning_review,validate_meaning_review
+    d=diagram();value={'source_warnings':['原页存在OCR断句疑点，当前完整事实已逐项核对。']}
+    for name,ids in [('node_checks',[1,2,3]),('relation_checks',[1,2]),('step_checks',[1,2,3])]:
+        value[name]=[{'id':key,'source_meaning':'原文说明当前信号、记录和数据的限定关系。',
+            'reason':'当前条目保留来源的含义与条件，没有扩大适用范围。','supported':True} for key in ids]
+    raw=meaning_review_schema(d).model_validate(value);review=compose_meaning_review(raw)
+    validate_meaning_review(review,d)
+    assert review.approved and review.source_warnings==value['source_warnings']
+    raw.step_checks[0].supported=False
+    rejected=compose_meaning_review(raw)
+    assert not rejected.approved and rejected.issues
+    with pytest.raises(TeachingDesignError,match='step_checks'):validate_meaning_review(rejected,d)
+    raw.step_checks[0].supported=True;raw.node_checks.pop()
+    with pytest.raises(TeachingDesignError,match='遗漏'):validate_meaning_review(compose_meaning_review(raw),d)
+    # Already persisted global rejections keep their strict legacy contract.
+    review.approved=False;review.issues=['已有审稿记录的整体拒绝不能自动改成批准。']
+    with pytest.raises(TeachingDesignError,match='教学含义核对未通过'):validate_meaning_review(review,d)
+
+
+def test_source_page_assets_reuse_checks_source_and_image_hashes(sample_pdf,tmp_path,monkeypatch):
+    import pymupdf
+    from zhijiang.pdf import read_pdf
+    from zhijiang.teaching_design import prepare_source_assets
+    source=tmp_path/'source.pdf';source.write_bytes(sample_pdf)
+    document=read_pdf(sample_pdf,'sample.pdf');folder=tmp_path/'images';events=[]
+    first=prepare_source_assets(source,folder,document,progress=lambda *args:events.append(args))
+    assert len(first)==len(document.pages) and all(event[2]=='导出原页插图' for event in events)
+    render=pymupdf.Page.get_pixmap;calls=[]
+    def recorded(page,*args,**kwargs):calls.append(page.number);return render(page,*args,**kwargs)
+    monkeypatch.setattr(pymupdf.Page,'get_pixmap',recorded)
+    events.clear()
+    assert prepare_source_assets(source,folder,document,progress=lambda *args:events.append(args))==first
+    assert not calls and all(event[2]=='复用原页插图' for event in events)
+    damaged=next(iter(first.values()));__import__('pathlib').Path(damaged['path']).write_bytes(b'invalid image')
+    prepare_source_assets(source,folder,document)
+    assert calls==[document.pages[0].page-1]
+    calls.clear();source.write_bytes(sample_pdf+b'\n% changed source\n')
+    prepare_source_assets(source,folder,document)
+    assert calls==[page.page-1 for page in document.pages]
 
 
 @pytest.mark.parametrize('representation',['source_figure','comparison'])
@@ -151,6 +193,8 @@ def test_annotation_review_keeps_phrase_role_and_rejects_wrong_meaning(represent
             if schema.__name__=='TeachingScriptDraft':
                 return schema.model_validate({'steps':[{'fact_id':1}],'example':None})
             candidate=json.loads(material)['design'];reviews.append(candidate)
+            assert 'annotations' in candidate and 'nodes' not in candidate
+            assert 'annotation_checks' in schema.model_json_schema()['properties']
             assert '当前表达方式：'+candidate['representation'] in instruction
             assert '没有连线时不假定节点之间存在' in instruction
             assert '共现不等于关系' in instruction
@@ -159,6 +203,7 @@ def test_annotation_review_keeps_phrase_role_and_rejects_wrong_meaning(represent
                     'reason':'原文支持数量短语的指代，注释没有增加实体或关系。' if supported else '该标签的指代与原文不符，不能用文字出现替代含义检查。'} for key in [1,2]],
                 'step_checks':[{'id':1,'supported':True,'source_meaning':source,
                     'reason':'口播使用完整原文定义，没有改变适用条件。'}]}
+            result['annotation_checks']=result.pop('node_checks')
             return schema.model_validate(result)
     if supported:
         draft,report,_=plan_teaching_representation(Client(),segment,document,'')

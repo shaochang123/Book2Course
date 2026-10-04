@@ -4,11 +4,12 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import os
 import unicodedata
 from pathlib import Path
 from typing import Literal,Union
 
-from pydantic import BaseModel, Field, ValidationError, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, model_validator
 from pydantic_core import PydanticCustomError
 
 from zhijiang.models import (TeachingDiagram, TeachingNode, TeachingRelation, TeachingStep, TeachingSourceFact,
@@ -533,11 +534,28 @@ class MeaningCheck(BaseModel):
 
 class TeachingSourceReview(BaseModel):
     """Review meanings individually; a single approval flag is insufficient."""
+    model_config=ConfigDict(populate_by_name=True)
     node_checks: list[MeaningCheck] = Field(default_factory=list)
     relation_checks: list[MeaningCheck] = Field(default_factory=list)
     step_checks: list[MeaningCheck] = Field(default_factory=list)
     approved: bool
     issues: list[str] = Field(default_factory=list)
+    source_warnings: list[str] = Field(default_factory=list,max_length=8)
+
+
+class ItemizedMeaningReview(BaseModel):
+    """Candidate defects belong to an item; raw-source warnings stay separate."""
+    model_config=ConfigDict(populate_by_name=True)
+    node_checks: list[MeaningCheck] = Field(default_factory=list)
+    relation_checks: list[MeaningCheck] = Field(default_factory=list)
+    step_checks: list[MeaningCheck] = Field(default_factory=list)
+    source_warnings: list[str] = Field(default_factory=list,max_length=8)
+
+
+def compose_meaning_review(review):
+    checks=[check for name in ('node_checks','relation_checks','step_checks') for check in getattr(review,name)]
+    return TeachingSourceReview(**review.model_dump(),approved=all(check.supported for check in checks),
+        issues=[check.reason for check in checks if not check.supported])
 
 
 def meaning_review_schema(draft):
@@ -547,8 +565,18 @@ def meaning_review_schema(draft):
                      ('step_checks',list(range(1,len(draft.steps)+1)))]:
         check=create_model('MeaningCheck_'+name,__base__=MeaningCheck,
             id=(Literal[tuple(ids)] if ids else int,Field(description='ID of the item being reviewed.')))
-        fields[name]=(list[check],Field(min_length=len(ids),max_length=len(ids)))
-    return create_model('TeachingSourceReview',__base__=TeachingSourceReview,**fields)
+        alias='annotation_checks' if name=='node_checks' and draft.representation in {'source_figure','comparison'} else None
+        fields[name]=(list[check],Field(min_length=len(ids),max_length=len(ids),alias=alias))
+    return create_model('TeachingSourceReview',__base__=ItemizedMeaningReview,**fields)
+
+
+def meaning_review_material(draft,source_page):
+    design=draft.model_dump()
+    if draft.representation in {'source_figure','comparison'}:
+        # These are labels on a source image/comparison, not independent graph
+        # entities. Keep the same IDs, literal anchors and complete fact steps.
+        design['annotations']=design.pop('nodes')
+    return json.dumps({'source_page':source_page,'design':design},ensure_ascii=False)
 
 
 def validate_meaning_review(review,draft):
@@ -573,14 +601,21 @@ def meaning_review_instruction(draft):
         'process':'nodes是来源支持的阶段、动作、材料或信息；关系须支持阶段之间的真实顺序或传递。',
         'relationship':'nodes是来源支持的概念、属性、数量或结果；关系须支持其具体主体、谓词与宾语。',
     }
+    annotations=draft.representation in {'source_figure','comparison'}
+    item_contract=(
+        'annotation_checks逐项核对design.annotations：label是原文标注文字，source_term是其原文定位词。'
+        '写出这个标注在原句中的指代，判断名称及定位词是否对应原文含义。数量、动作、条件、结果或修饰短语均可作为文字标注。'
+        '标注文字本身没有断言独立实体或额外关系；有明确指代的原文短语可作为标注。' if annotations else
+        'node_checks逐项核对design.nodes的来源指代与含义，按当前表达方式判断。')
     return (
         '核对教学图的对象、关系和逐步口播是否忠实于source_page。source_facts来自独立原文理解，核查其翻译是否忠实，不把候选设计当依据。每条source_quote已逐字核对，但还须检查它是否真的支持该节点/关系。'
         '当前讲解问题是design.question；source_page中的其他练习问句是资料内容，不是当前任务。只核对当前片段，不要求解答整页所有问题。'
-        '先写每项的source_meaning与reason，再判断supported；完成所有条目后才判断approved。'
+        '先写每项的source_meaning与reason，再判断supported；程序根据逐项判定汇总结论。'
         '当前表达方式：'+draft.representation+'。'+roles.get(draft.representation,'')+
-        'node_checks核对标签所指的来源含义及source_term对应，不给节点补写未显示的关系。短语是修饰语、加法动作或结果本身不构成拒绝理由；仅当指代不符、误译、引入来源没有的对象或含义时拒绝。'
+        item_contract+
+        '指代不符、误译、引入来源没有的对象或含义时supported=false。'
         '没有连线时不假定节点之间存在乘法、因果或其他关系；有连线的关系单独严格检查。'
-        '必须逐个完成node_checks、relation_checks、step_checks。source_meaning只转述原文实际表达的含义，reason比较它与候选内容，不复述候选当作依据。'
+        '必须逐个完成'+('annotation_checks' if annotations else 'node_checks')+'、relation_checks、step_checks。source_meaning只转述原文实际表达的含义，reason比较它与候选内容，不复述候选当作依据。'
         'source_meaning忠实转述原文含义，2至120字；原文只提及对象时可保留简短名称，不凑句子、不补推论。reason用12至120字中文解释核对理由。节点、关系、事实和类比分别判断。'
         '每条关系核对原文实际的主体、谓词和宾语：共现不等于关系，修饰的对象不是该端点时supported=false，不能推断缺失的中间因果。'
         '逐句核对口播：原文只说有帮助，不能升级成保证、完整覆盖、必要条件或必然结果；原文没有的前提和普遍断言必须拒绝。'
@@ -952,7 +987,7 @@ def validate_diagram(diagram, source_text=None, *, require_steps=True):
             'scope':'原文摘录、对象关系引用与讲解状态推进；语义、专业事实与表达质量仍需复核'}
 
 
-def prepare_source_assets(pdf_path, output_dir, document):
+def prepare_source_assets(pdf_path, output_dir, document, *, progress=None):
     """Retain original drawings, including vector figures and scanned images.
 
     Assets are local program-selected PDF pages, never model-selected file paths.
@@ -960,14 +995,29 @@ def prepare_source_assets(pdf_path, output_dir, document):
     """
     import pymupdf
     output_dir.mkdir(parents=True,exist_ok=True)
+    fingerprint='source-page-assets-v1:'+hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    manifest=output_dir/'assets.json';saved={};entries={}
+    try:
+        metadata=json.loads(manifest.read_text(encoding='utf-8'))
+        if metadata['fingerprint']==fingerprint:saved=metadata['pages']
+    except (OSError,ValueError,KeyError):pass
     catalog={}
     with pymupdf.open(pdf_path) as pdf:
-        for page_text in document.pages:
+        for index,page_text in enumerate(document.pages,start=1):
             page=pdf[page_text.page-1]
             target=output_dir/f'page-{page_text.page:04d}.png'
-            scale=min(1.6,1400/max(page.rect.width,page.rect.height))
-            page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),alpha=False).save(target)
+            old=saved.get(str(page_text.page),{})
+            try:cached=old.get('image_sha256')==hashlib.sha256(target.read_bytes()).hexdigest()
+            except OSError:cached=False
+            if not cached:
+                scale=min(1.6,1400/max(page.rect.width,page.rect.height))
+                page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),alpha=False).save(target)
+            entries[str(page_text.page)]={'image_sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
             catalog[page_text.page]={'path':str(target.resolve()),'width':page.rect.width,'height':page.rect.height}
+            if progress:progress(index,len(document.pages),'复用原页插图' if cached else '导出原页插图')
+    temporary=manifest.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'fingerprint':fingerprint,'pages':entries}),encoding='utf-8')
+    os.replace(temporary,manifest)
     return catalog
 
 
@@ -1131,9 +1181,11 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
             else:
                 raise TeachingDesignError('逐步讲解未通过：'+script_errors[-1])
             phase('核对来源含义')
-            review=client.generate(meaning_review_schema(draft),
-                meaning_review_instruction(draft),
-                json.dumps({'source_page':page.text,'design':draft.model_dump()},ensure_ascii=False))
+            raw_review=client.generate(meaning_review_schema(draft),
+                meaning_review_instruction(draft)+
+                'source_warnings只记录原始资料的OCR或排版疑点，不进入口播。若疑点使当前标注、关系或口播无法确认，相应条目的supported必须为false；可确认的条目按其真实含义判断。',
+                meaning_review_material(draft,page.text))
+            review=compose_meaning_review(raw_review)
             attempts[-1]['semantic_review']=review.model_dump()
             if diagnostic_output:
                 diagnostic_output.write_text(json.dumps({'sources':spans,'source_facts':facts,'attempts':attempts},ensure_ascii=False,indent=2),encoding='utf-8')

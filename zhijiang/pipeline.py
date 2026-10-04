@@ -152,7 +152,8 @@ class JobProcessor:
                 for point in bundle.points: validate_evidence(document,point.evidence)
                 progress("设计课程结构", 38)
                 if use_visual:
-                    source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document)
+                    source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document,
+                        progress=lambda done,total,label:progress(f'{label}（{done}/{total} 页）',38+done*4//total))
                     lesson=plan_general_lesson(agents.client,bundle,document,options.prompt,voice_mode,
                         progress,draft_output=folder/'visual-planning.json',
                         source_assets=source_assets,pdf_path=folder/'source.pdf')

@@ -12,7 +12,7 @@ The sketch's “book → OCR/typesetting → pages” and “main slides → nar
 
 [![Workflow from PDF to lesson video](docs/workflow.en.svg)](docs/workflow.en.svg)
 
-Basic videos use Pillow. General teaching scenes and specialized math videos use local Manim Cairo with LaTeX formulas. The PPTX has a cover and two slides per topic: an SVG summary and an animation. Native text is editable; each SVG has a PNG fallback. Click a segment's MP4 during a slideshow. Notes contain step-by-step narration, source pages, and excerpts. General and specialized clips include narration and reuse the full lesson video's assets, embedded at their original 16:9 aspect ratio.
+Basic videos use Pillow. General teaching scenes and specialized math videos use local Manim Cairo with LaTeX formulas. The PPTX has a cover and two slides per topic: an SVG summary and an animation. Native text is editable; each SVG has a PNG fallback. Summary images are centered at their original aspect ratio, and SVGs specify a Chinese font and fallback fonts. Click a segment's MP4 during a slideshow. Notes contain step-by-step narration, source pages, and excerpts. General and specialized clips include narration and reuse the full lesson video's assets, embedded at their original 16:9 aspect ratio.
 
 ### PPT production skills
 
@@ -161,7 +161,9 @@ Source reading validates the complete JSON container, count, and source IDs befo
 
 Meaning review checks nodes according to the chosen representation. Source-page annotations and comparisons may label phrases, actions, conditions, or outcomes without treating each label as an independent entity. Unlinked annotations do not imply a relationship. Links in relationship and process diagrams still require separate source checks; wrong references and omitted spoken conditions are rejected.
 
-Review output records each item's source meaning and reason before its support verdict and the overall conclusion. The current question comes from the storyboard, not a neighboring exercise on the same page. Complete course ordering is saved to `course-order.json` and can be reused after a scene failure. Changes to the source, knowledge points, prompt, model, or API address invalidate this cache; missing or repeated IDs cannot be reused.
+Review output records each item's source meaning and reason before its support verdict. The program checks item coverage and aggregates approval. Source annotations use separate `annotation_checks` rather than graph-entity checks. Raw OCR and layout concerns go into `source_warnings`; any concern preventing confirmation of the current explanation must still reject that item. Persisted rejections are not automatically approved. The current question comes from the storyboard, not a neighboring exercise on the same page.
+
+Complete course ordering is saved to `course-order.json` and can be reused after a scene failure. Changes to the source, knowledge points, prompt, model, or API address invalidate this cache; missing or repeated IDs cannot be reused. Source-page images are reused after matching PDF and image-file hashes. The web page shows the page being exported or reused, and missing or damaged images are exported again individually.
 
 ## Use local AI narration
 

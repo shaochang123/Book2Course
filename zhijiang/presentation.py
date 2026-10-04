@@ -713,9 +713,14 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
                 diagram_height = 4.5
             diagram_slide = presentation.slides.add_slide(blank)
             _set_title(diagram_slide, segment, index, total, animation=False)
+            with Image.open(diagram_png) as image:
+                ratio=image.width/image.height
+            picture_width=min(12.0,diagram_height*ratio)
+            picture_height=picture_width/ratio
             picture = diagram_slide.shapes.add_picture(
-                str(diagram_png), Inches(0.67), Inches(1.55),
-                width=Inches(12.0), height=Inches(diagram_height)
+                str(diagram_png), Inches((13.333-picture_width)/2),
+                Inches(1.55+(diagram_height-picture_height)/2),
+                width=Inches(picture_width), height=Inches(picture_height)
             )
             svg_assets[len(presentation.slides)] = (picture.shape_id, svg_bytes)
             _notes(diagram_slide, segment, animation=False,

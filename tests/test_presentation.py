@@ -54,6 +54,10 @@ def test_pptx_embeds_svg_and_animation_with_notes(tmp_path: Path) -> None:
 
     deck = Presentation(path)
     assert len(deck.slides) == 7  # cover, then diagram + animation for each point
+    for slide in (deck.slides[1],deck.slides[3],deck.slides[5]):
+        picture=next(shape for shape in slide.shapes if shape.shape_type==13)
+        pixels=picture.image.size
+        assert abs(picture.width/picture.height-pixels[0]/pixels[1])<.0001
     assert "七年级概率导论" in " ".join(shape.text for shape in deck.slides[0].shapes
                                       if shape.has_text_frame)
     assert "计算顺序 <A & B>" in " ".join(shape.text for shape in deck.slides[5].shapes
