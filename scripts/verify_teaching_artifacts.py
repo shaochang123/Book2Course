@@ -63,11 +63,12 @@ def check_moving_marker_pixels(scene, asset, clip):
     return results
 
 
-def verify(folder: Path):
+def verify(folder: Path, *, document=None):
     if not (folder/'scene-data.json').is_file(): return verify_math(folder)
     data=json.loads((folder/'scene-data.json').read_text(encoding='utf-8'))
     lesson=Lesson.model_validate(data['lesson'])
-    document=read_pdf((folder/'source.pdf').read_bytes(),'source.pdf')
+    if document is None:
+        document=read_pdf((folder/'source.pdf').read_bytes(),'source.pdf')
     assets=data['assets']; assert len(assets)==len(lesson.segments)
     report={'passed':False,'scene_count':len(assets),'scenes':[],
         'human_review':{'source_meaning':'not performed by this script','layout':'not performed by decoding',

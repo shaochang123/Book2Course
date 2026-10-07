@@ -143,6 +143,21 @@ function addSegment(segment, index) {
       const strategy = document.createElement("p");
       strategy.textContent = `教学表达：${representationNames[scene.diagram.representation] || scene.diagram.representation}。${scene.diagram.rationale}`;
       body.append(strategy);
+      if (scene.diagram.relations.length) {
+        const graph = document.createElement("details");
+        const heading = document.createElement("summary");
+        heading.textContent = "知识关系与来源";
+        graph.append(heading);
+        const nodes = new Map(scene.diagram.nodes.map(node => [node.id, node.label]));
+        scene.diagram.relations.forEach(edge => {
+          const triple = document.createElement("p");
+          triple.textContent = `${nodes.get(edge.source)} ${edge.directed ? "→" : "—"} ${edge.label} ${edge.directed ? "→" : "—"} ${nodes.get(edge.target)}（PDF 第 ${segment.evidence.page} 页）`;
+          const statements = document.createElement("p");
+          statements.textContent = (edge.source_statements || []).join(" ");
+          graph.append(triple, statements);
+        });
+        body.append(graph);
+      }
     }
     const steps = document.createElement("ol");
     scene.beats.forEach((beat) => {
@@ -300,9 +315,10 @@ $("#retry-button").addEventListener("click", async () => {
 (async function initialize() {
   try {
     config = await getJSON("/api/config");
-    $("#math-ready-label").textContent = config.math_animation?.ready ?
-      "教学动画环境就绪：通用场景支持各学科；二维线性变换提供专用推演。" :
-      `数学动画环境未就绪：${config.math_animation?.reason || "请安装 math-animation 依赖"}。基础图示仍可使用。`;
+    $("#math-ready-label").textContent = config.visual_animation?.ready ?
+      (config.visual_animation.geometry_ready ? "教学动画已就绪：支持来源关系图与可计算场景。" :
+        "来源图示动画已就绪。公式演示还需 LaTeX；自动模式会按内容选择图示。") :
+      `教学动画环境未就绪：${config.visual_animation?.reason || "请安装 math-animation 依赖"}。基础图示仍可使用。`;
     $("#pdf-limits").textContent = `文字版和扫描版 PDF · 最多 ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB · 无页数上限`;
     $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
     $("#llm-base-url").value = config.llm_base_url || "";

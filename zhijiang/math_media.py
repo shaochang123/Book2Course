@@ -219,7 +219,7 @@ def render_summary_png(svg: Path, output: Path) -> None:
             draw.ellipse((x-r,y-r,x+r,y+r),fill=rgba,outline=attributes.get('stroke',attributes['fill']),width=int(attributes.get('stroke-width','1')))
         elif tag == "text":
             draw.text((float(attributes["x"]), float(attributes["y"])), node.text or "",
-                      font=_font(int(attributes["font-size"])), fill=attributes["fill"],
+                font=_font(max(1,round(float(attributes["font-size"])))), fill=attributes["fill"],
                       anchor={'middle':'ms','end':'rs'}.get(attributes.get('text-anchor'),'ls'))
         elif tag == "path":
             tokens = re.findall(r"[ML]|[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?", attributes["d"], re.I)

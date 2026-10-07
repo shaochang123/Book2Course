@@ -12,6 +12,8 @@ import json
 import hashlib
 import os
 import unicodedata
+import importlib.util
+import shutil
 from functools import lru_cache
 from pydantic import BaseModel, Field, model_validator, create_model, ConfigDict
 
@@ -21,6 +23,16 @@ from zhijiang.models import Lesson, LessonSegment, VisualScenePlan, VisualBeat, 
 
 class VisualSceneError(GenerationError):
     pass
+
+
+def visual_capabilities() -> dict:
+    """Diagram animation uses native text; only computed geometry needs TeX."""
+    missing = [name for name in ('manim','jieba','pymupdf')
+               if importlib.util.find_spec(name) is None]
+    tex_missing = [name for name in ('latex','dvisvgm') if not shutil.which(name)]
+    return {'ready':not missing,'missing':missing,'geometry_ready':not (missing or tex_missing),
+            'geometry_reason':'缺少：'+'、'.join(missing+tex_missing) if missing or tex_missing else '',
+            'renderer':'Manim Cairo','reason':'缺少：'+'、'.join(missing) if missing else ''}
 
 
 class VisualCoursePlan(BaseModel):
@@ -490,9 +502,11 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
     source_digest=hashlib.sha256(pdf_path.read_bytes()).hexdigest() if pdf_path else document.model_dump_json()
     for index, segment in enumerate(lesson.segments):
         cache_path=draft_output.with_name(f'planned-scene-{index+1:02d}.json') if pedagogical_design and draft_output else None
-        fingerprint=hashlib.sha256(json.dumps({'version':'teaching-design-v9','source':source_digest,
+        fingerprint=hashlib.sha256(json.dumps({'version':'teaching-design-v20','source':source_digest,
+            'semantic_thinking':getattr(client,'semantic_thinking',True),
             'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model',''),
-            'prompt':prompt,'topic':segment.title,'evidence':segment.evidence.model_dump()},sort_keys=True).encode()).hexdigest()
+            'prompt':prompt,'topic':segment.title,'evidence':segment.evidence.model_dump(),
+            'geometry_ready':visual_capabilities()['geometry_ready']},sort_keys=True).encode()).hexdigest()
         if cache_path:
             cached=load_planned_scene(cache_path,fingerprint,document,segment)
             if cached and cached[0].diagram:
@@ -518,6 +532,7 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
             progress(f'分析教学表达（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments))
             diagnostic=draft_output.with_name(f'teaching-design-{index+1:02d}.json') if draft_output else None
             design,report,design_errors=plan_teaching_representation(client,segment,document,prompt,diagnostic_output=diagnostic,
+                force_diagram=not visual_capabilities()['geometry_ready'],
                 on_phase=lambda name:progress(f'{name}（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments)))
             drafts.append({'segment_index':index,'teaching_design':design.model_dump(),'rejected_designs':design_errors})
             if draft_output:
@@ -541,18 +556,32 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
             material="片段："+segment.model_dump_json(exclude={'math_scene','visual_scene'})+previous_draft
             if layout is None:
                 progress(f'规划图形对象（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments))
-                layout=client.generate(VisualLayoutDraft,task_instruction+
-                    '\n本轮只规划对象与初始参数，不输出口播步骤或计算检查。把用户要求的曲线、点、参照线全部画出；'
-                    '对象表达式保留可变参数，固定对象不得依赖未来会变化的参数。明确每个对象的颜色。'
-                    'step_count按用户要求选择3至5步，后续分镜必须恰好使用这个步数。',material)
+                try:
+                    layout=client.generate(VisualLayoutDraft,task_instruction+
+                        '\n本轮只规划对象与初始参数，不输出口播步骤或计算检查。把用户要求的曲线、点、参照线全部画出；'
+                        '对象表达式保留可变参数，固定对象不得依赖未来会变化的参数。明确每个对象的颜色。'
+                        'step_count按用户要求选择3至5步，后续分镜必须恰好使用这个步数。',material)
+                except (GenerationError,ValueError) as exc:
+                    last_error=str(exc); feedback='\n必须修正对象契约：'+last_error
+                    drafts.append({'segment_index':index,'phase':'layout','error':last_error})
+                    if draft_output:draft_output.write_text(json.dumps(drafts,ensure_ascii=False,indent=2),encoding='utf-8')
+                    progress(f'修正图形对象：{last_error}',54+index*10//len(lesson.segments))
+                    continue
             layout_data=layout.model_dump(include=LAYOUT_FIELDS)
             progress(f'规划操作与计算（{index+1}/{len(lesson.segments)}）：{segment.title}',55+index*10//len(lesson.segments))
-            sequence=client.generate(sequence_schema(layout),sequence_instruction+
-                f'\n本场景恰好{getattr(layout,"step_count",3)}步，不得重复追加步骤。'
-                '\n用户的教学偏好：'+prompt+feedback,
-                material+'\n已确定的场景对象：'+json.dumps(layout_data,ensure_ascii=False))
-            scene=VisualScenePlan.model_validate({**layout_data,**sequence.model_dump(include=SEQUENCE_FIELDS),
-                'evidence':segment.evidence,'narration_binding':'computed'})
+            try:
+                sequence=client.generate(sequence_schema(layout),sequence_instruction+
+                    f'\n本场景恰好{getattr(layout,"step_count",3)}步，不得重复追加步骤。'
+                    '\n用户的教学偏好：'+prompt+feedback,
+                    material+'\n已确定的场景对象：'+json.dumps(layout_data,ensure_ascii=False))
+                scene=VisualScenePlan.model_validate({**layout_data,**sequence.model_dump(include=SEQUENCE_FIELDS),
+                    'evidence':segment.evidence,'narration_binding':'computed'})
+            except (GenerationError,ValueError) as exc:
+                last_error=str(exc); feedback='\n必须修正步骤契约：'+last_error
+                drafts.append({'segment_index':index,'phase':'sequence','error':last_error})
+                if draft_output:draft_output.write_text(json.dumps(drafts,ensure_ascii=False,indent=2),encoding='utf-8')
+                progress(f'修正操作步骤：{last_error}',54+index*10//len(lesson.segments))
+                continue
             # The lesson's already checked citation is authoritative.
             scene.evidence = segment.evidence
             if not scene.parameters and scene.beats[0].parameters:
@@ -578,7 +607,9 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
                     '逐项核对口播中的数值与当前参数/表达式，不能批准错误斜率、遗漏要求的函数图像、或不匹配的对象颜色。'
                     '只审批当前片段，不要求该片段讲完其他知识点。若有问题，明确指出对象ID和操作。'
                     '\n用户的教学偏好：'+prompt,
-                    json.dumps({'scene':scene.model_dump(exclude={'verification'}),
+                    json.dumps({'source_page':next(p.text for p in document.pages if p.page==segment.evidence.page),
+                        'topic':segment.title,'citation':segment.evidence.model_dump(),
+                        'scene':scene.model_dump(exclude={'verification'}),
                         'computed_steps':[{'parameters':s['parameters'],'calculations':s['calculations']} for s in scene.verification['states']]},ensure_ascii=False))
                 if not review.approved:
                     raise VisualSceneError('分镜教学检查未通过：'+'；'.join(review.issues[:3]))
@@ -654,6 +685,11 @@ def load_planned_scene(path, fingerprint, document, segment):
         if scene.evidence!=segment.evidence:return None
         validate_evidence(document,scene.evidence)
         if scene.diagram:
+            from zhijiang.teaching_graph import design_digest,validate_source_propositions
+            if review.get('reviewed_design_digest')!=design_digest(scene.diagram):
+                return None
+            if any(edge.binding=='semantic' for edge in scene.diagram.relations):
+                validate_source_propositions(scene.diagram,review.get('source_propositions',[]))
             validate_meaning_review(TeachingSourceReview.model_validate(review['semantic_review']),scene.diagram)
             page=next(p for p in document.pages if p.page==scene.evidence.page)
             validate_diagram(scene.diagram,page.text)

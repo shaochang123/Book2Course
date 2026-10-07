@@ -1,0 +1,81 @@
+{
+  "selection_date": "2026-10-08",
+  "prompt": "",
+  "authored_storyboards": false,
+  "sources": [
+    {
+      "id": "linguistics",
+      "title": "Essentials of Linguistics",
+      "author": "Catherine Anderson",
+      "year": 2018,
+      "publisher": "McMaster University",
+      "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/497",
+      "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/497/1/Essentials-of-Linguistics-1539375869.pdf",
+      "license": "CC BY-SA 4.0, except where otherwise noted",
+      "license_pdf_page": 4,
+      "sha256": "00389ff98ff1519d24c93cd431c38a9e42a88e0c192a1424690b6a4c7c7d3d96",
+      "pdf_pages": [
+        172,
+        173,
+        175
+      ],
+      "local_path": "data/holdout/linguistics.pdf"
+    },
+    {
+      "id": "economics",
+      "title": "Principles of Microeconomics (UVic)",
+      "author": "University of Victoria; adapted from OpenStax",
+      "year": 2017,
+      "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/355",
+      "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/355/1/Principles-of-Microeconomics-1511378083.pdf",
+      "license": "CC BY 4.0 according to the downloaded PDF, except where otherwise noted",
+      "license_pdf_page": 3,
+      "license_note": "The repository abstract describes NC-SA; the downloaded PDF explicitly states BY 4.0. Originals and generated artifacts stay local.",
+      "sha256": "2efc12ae6f1d93036be8df7fe9a67ec3a4cf2cadcd175b650a2d997d4fb5e135",
+      "pdf_pages": [
+        18,
+        19,
+        20
+      ],
+      "local_path": "data/holdout/economics.pdf"
+    },
+    {
+      "id": "sociology",
+      "title": "Introduction to Sociology – 2nd Canadian Edition",
+      "author": "William Little",
+      "year": 2016,
+      "publisher": "BCcampus",
+      "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/316",
+      "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/316/13/Introduction-to-Sociology-2nd-Canadian-Edition-1576267819.pdf",
+      "license": "CC BY 4.0 for the Canadian additions; original OpenStax material CC BY 3.0, except where otherwise noted",
+      "license_pdf_page": 4,
+      "sha256": "7456fffc2735e3c583f2871e7f96ba1b98f54435892a2585dd93b874a93c0572",
+      "pdf_pages": [
+        212,
+        213,
+        214
+      ],
+      "local_path": "data/holdout/sociology.pdf"
+    },
+    {
+      "id": "database",
+      "title": "Database Design – 2nd Edition",
+      "author": "Adrienne Watt; Nelson Eng",
+      "year": 2014,
+      "publisher": "BCcampus",
+      "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/247",
+      "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/247/16/Database-Design-2nd-Edition-1540829576.pdf",
+      "license": "CC BY 4.0, except where otherwise noted",
+      "license_pdf_page": 4,
+      "attribution": "Download this book for free at http://open.bccampus.ca",
+      "sha256": "d6311d2fcc2344c7809f3be03d93e195a3ab063425bdd5aa24c6a723a4f87e44",
+      "pdf_pages": [
+        72,
+        73,
+        74
+      ],
+      "local_path": "data/holdout/database.pdf",
+      "protocol": "Fresh fourth textbook selected after teaching-design-v19. No cached facts or authored scenes."
+    }
+  ]
+}

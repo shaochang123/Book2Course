@@ -205,6 +205,8 @@ def test_source_coverage_repair_keeps_only_authoritative_ids(sample_pdf):
                 import json
                 source_id=json.loads(material)['sources'][0]['id']
                 return schema.model_validate({'facts':[{'source_id':source_id,'statement':'原文说明当前知识点的对象、关系及对应条件。'}]})
+            if schema.__name__=='SourcePropositionsDraft':
+                return schema.model_validate({'propositions':[]})
             if schema is VisualCoursePlan:
                 return VisualCoursePlan(title='完整来源课程',objective='保留所有真实来源依据，按连续过程组织教学。',point_ids=[2,2,999])
             if schema is ReviewResult: return ReviewResult(approved=True)
@@ -289,7 +291,8 @@ def test_full_context_domain_validator():
     with pytest.raises(VisualSceneError,match='未安装'): verify_visual_scene(scene)
 
 
-def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkeypatch):
+@pytest.mark.parametrize('has_special_topic',[False,True])
+def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkeypatch,has_special_topic):
     from zhijiang.agents import DemoAgents
     from zhijiang.models import GenerationOptions,Mode,VoiceMode
     from zhijiang.config import Settings
@@ -304,6 +307,8 @@ def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkey
                 import json
                 source_id=json.loads(material)['sources'][0]['id']
                 return schema.model_validate({'facts':[{'source_id':source_id,'statement':'原文说明当前知识点的对象、关系及对应条件。'}]})
+            if schema.__name__=='SourcePropositionsDraft':
+                return schema.model_validate({'propositions':[]})
             if schema is ReviewResult: return ReviewResult(approved=True)
             if schema.__name__=='TeachingDesignDraft':
                 from zhijiang.teaching_design import TeachingDesignDraft
@@ -318,8 +323,9 @@ def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkey
     settings=Settings(data_dir=tmp_path); store=JobStore(tmp_path)
     job=store.create('source.pdf',Mode.AI,VoiceMode.SYSTEM,True,False,sample_pdf,
                      GenerationOptions(provider='ollama',base_url='http://localhost',model='test'))
-    monkeypatch.setattr('zhijiang.pipeline.supports_math',lambda _:False)
-    monkeypatch.setattr('zhijiang.pipeline.math_capabilities',lambda:{'ready':True})
+    monkeypatch.setattr('zhijiang.pipeline.supports_math',lambda _:has_special_topic)
+    monkeypatch.setattr('zhijiang.pipeline.plan_math_lesson',lambda *_:pytest.fail('auto must preserve all textbook topics'))
+    monkeypatch.setattr('zhijiang.pipeline.visual_capabilities',lambda:{'ready':True,'geometry_ready':True})
     rendered=[]
     monkeypatch.setattr('zhijiang.pipeline.render_visual_assets',lambda l,s,f,p:rendered.extend(x.visual_scene.domain for x in l.segments))
     processor=JobProcessor(settings,store,agent_factory=lambda _:Agents(),speech_factory=lambda _:FakeSpeech(),

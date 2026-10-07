@@ -6,9 +6,19 @@
 
 ### 不以学科名称限制生成
 
-`visual_scene.domain` 是说明性文本，不是执行器白名单。新的学科、交叉主题或专题可以直接使用通用图形和参数步骤，不必先添加学科分支。`auto` 为可识别的二维线性变换选择专用执行器，其余 AI 课程进入通用场景；`visual` 强制通用场景。环境缺失时 auto 明确使用基础回退，分镜无效时尝试修正，仍失败则报错。
+`visual_scene.domain` 是说明性文本，不是执行器白名单。新的学科、交叉主题或专题可以直接使用通用图形和参数步骤，不必先添加学科分支。`auto` 保留所有知识点，逐点进入通用场景；专用线性推演由 `math` 显式选择；`visual` 强制通用场景。环境缺失时 auto 明确使用基础回退，分镜无效时尝试修正，仍失败则报错。
 
 通用场景与专用执行器可以共同发展：通用层承接任意学科的二维表达，专用层用于加强某些主题的推理规则、可读性与核验。学科范围开放不证明任意资料的自动讲解质量相同。
+
+### 来源知识图谱
+
+`teaching_graph.py` 在图示设计之前独立提取 `subject/predicate/object/fact_ids` 命题。设计模型只选 `source_proposition_id`，程序填入关系并检查端点全称和角色，不能另造关系。图示设计的对象候选首先使用这些命题中的名称；英文术语、代码字符串和符号可保留原语言，不为凑中文截断名称。命题读取与整页语义审稿分开，二者仍是模型判断。
+
+`TeachingRelation` 扩展字段向后兼容：`binding`、`source_proposition_id`、`supporting_fact_ids`、`source_statements`、`condition`。单句主谓宾可用 `extractive`；新网页任务用 `semantic`，同时要求匹配独立命题，保留最多三条完整来源事实、原文及条件。`TeachingNode.kind` 区分实体、操作与条件。程序按图方向做拓扑分层，分支共享一层，循环保留为环；SVG 和 Manim 使用同一布局。
+
+审稿批准绑定包含节点、关系、条件与口播的 `reviewed_design_digest`；缓存设计变更会失效。`source-propositions-XX.json` 是未批准命题草稿，不能当作已证明关系。`knowledge_graph` 在课程报告与网页中提供页码、命题、事实及摘录，不跨章节自动合并同名实体或推断因果。
+
+匹配知识点原始引文的事实必须进入讲稿，缓存也按此重查。新原页注释以完整摘录定位；只有原文直接出现的名称才绑定单词，不把模型猜测的英文字段当作中文概念译名。关系图保持命题端点的精确角色检查。实际新领域输出与未通过的人工内容项见[教材泛化验证](generalization-validation-2026-10.md)。
 
 ### 数据链路
 
@@ -18,7 +28,7 @@
 
 模型通过 `source_id` 选择程序编号的原文片段；节点和关系中的 `source_quote` 由程序填入，避免要求小模型重新抄写原文。教学设计的原始候选及拒绝原因保存在 `teaching-design-XX.json`。这套接口与参数场景共用课程、语音、PPT 和下载链路。
 
-定性设计先独立理解完整来源句子的主语、动作、宾语和条件，调用不接触候选分镜或用户风格。再规划对象与关系，最后用 `source_fact_id` 选择来源事实；程序将当前事实与对应的图形焦点、连线绑定，类比通过独立 `example` 字段选择同一事实，程序填入 `source_statement`，不让口播模型重新改写事实。按实际内容规划 1–5 步，不凑固定条数。`source_term` 的输出契约使用当前原文中的候选短语，不允许拼接或翻译原文术语；可定位的索引误选可以修正并记录。非比较关系的原文及相邻上下文必须包含两端术语，不能把无关的定义拼成因果，过程图与关系图中的节点须参与关系；比较图和原页标注允许不连线，原页标注允许一个对象的多个不同事实。原始与补充摘录分别保留。口播的 `source_statement` 与 `analogy` 分开记录；程序将二者合成实际口播并明确标出生活类比，类比不必出现在原文中，但不得增加技术事实或保证。定性口播不自行断言维数、时间窗口或预测数值。过程关系有方向，其他关系默认关联线。Ollama 读取模型实际支持的推理控制，不依据名称假设开关；非推理模型可完成相同的结构化契约，耗尽输出预算会明确报错。完整来源页和候选送入逐项语义审稿，分别记录对象、关系与每步事实/类比的原文含义、支持判断及理由；遗漏条目或任一拒绝项都不能通过。通过审稿的分镜按资料、模型与提示词缓存，重试时重新检查来源与执行契约；语义审稿与确定性来源检查分别记录，不能将模型审批当成专业事实证明。
+定性设计先独立理解完整来源句子的主语、动作、宾语和条件，调用不接触候选分镜或用户风格。再规划对象与关系，最后用 `source_fact_id` 选择来源事实；程序将当前事实与对应的图形焦点、连线绑定，类比通过独立 `example` 字段选择同一事实，程序填入 `source_statement`，不让口播模型重新改写事实。按实际内容规划 1–5 步，不凑固定条数。`source_term` 的输出契约使用当前原文中的候选短语，不允许拼接或翻译原文术语；可定位的索引误选可以修正并记录。非比较关系的原文及相邻上下文必须包含两端术语，不能把无关的定义拼成因果，过程图与关系图中的节点须参与关系；比较图和原页标注允许不连线，原页标注允许一个对象的多个不同事实。原始与补充摘录分别保留。口播的 `source_statement` 与 `analogy` 分开记录；程序将二者合成实际口播并明确标出生活类比，类比不必出现在原文中，但不得增加技术事实或保证。定性口播不自行断言维数、时间窗口或预测数值。过程和关系图按来源命题主谓宾方向连接，谓词说明其含义；比较和原页注释可不连线。Ollama 读取模型实际支持的推理控制，不依据名称假设开关；非推理模型可完成相同的结构化契约，耗尽输出预算会明确报错。完整来源页和候选送入逐项语义审稿，分别记录对象、关系与每步事实/类比的原文含义、支持判断及理由；遗漏条目或任一拒绝项都不能通过。通过审稿的分镜按资料、模型与提示词缓存，重试时重新检查来源与执行契约；语义审稿与确定性来源检查分别记录，不能将模型审批当成专业事实证明。
 
 1. 从 PDF 提取带编号的原文依据，模型规划知识点及顺序。来源编号保持稳定，标题可以改写。
 2. 为每个片段分两次调用规划对象布局与操作计算。布局阶段确定 3–5 步的 `step_count`，操作阶段的输出契约要求相同步数，避免重复追加；合并为 `visual_scene`：问题、对象、参数、步骤、计算、来源和示意简化。
@@ -81,6 +91,15 @@ my_domain_rule = "my_course_rules:check_scene"
 
 ## English
 
+### Source knowledge graph
+
+Before diagram design, `teaching_graph.py` independently reads `subject/predicate/object/fact_ids` propositions. The designer chooses `source_proposition_id`; trusted code copies the relation and requires matching endpoint names and roles. Graph node candidates come from those propositions. Original-language terms and strings remain intact. Proposition reading and full-page semantic review are separate model judgements, not formal proofs.
+
+Backward-compatible relation fields include `binding`, `source_proposition_id`, `supporting_fact_ids`, `source_statements`, and `condition`; node `kind` distinguishes entities, operations, and conditions. New semantic relations must match independent propositions and retain up to three complete source facts. Directed topology, branches, and cycles determine shared SVG/Manim layouts. Review approval binds to `reviewed_design_digest`, including nodes, edges, conditions, and speech. Proposition caches remain unapproved drafts. The exported `knowledge_graph` includes pages, propositions, facts, and quotes, without merging homonyms across chapters or inferring causation.
+
+Facts matching the topic's original citation must appear in speech, including on cache reuse. New source-page notes anchor full quotes; only literal names receive exact word anchors, avoiding guessed English fields for translated concepts. Graph endpoints retain their strict proposition-role checks. See [textbook validation](generalization-validation-2026-10.md) for actual new-domain outputs and unaccepted human content checks.
+
+
 ### Choose the representation before geometry
 
 Web jobs use `teaching_design.py` to analyze each topic and its full source page, selecting `geometry`, `process`, `relationship`, `comparison`, or `source_figure`. The last four use `visual_scene.diagram`: model-designed nodes, relations, literal source excerpts, a question, and explanatory steps. Trusted code checks excerpts, IDs, relation endpoints, coverage, and progression, then uses shared layouts for SVG images and narrated relation tracing. Local PDF page extraction preserves complex original artwork; model output cannot choose file paths. Searchable source regions can be highlighted. Repeated geometry failures trigger representation redesign rather than invented parameter changes.
@@ -97,11 +116,11 @@ When everyday examples are requested, comparisons and source-page guidance prefe
 
 `preserve_topic_focus` binds a specific phrase shared by the topic and its source facts to required spoken facts, recorded as `topic_facts`. Background on the same page cannot replace the topic. Phrases come from the current facts, without a subject glossary, and reused caches undergo the same check. This does not establish synonym coverage, chapter completeness, or teaching quality.
 
-An isolated call first reads source sentence subjects, actions, objects, and conditions without candidate storyboards or style prompts. Later calls design objects/relations and choose source facts through `source_fact_id`; trusted code inserts `source_statement` without narration-model rewriting. Qualitative diagrams use 1–5 steps based on the material, without filling a fixed count. `source_term` selects actual phrases from the current source, preventing concatenated or translated anchors. Determinate index mistakes can be repaired and logged. Non-comparison relation evidence and adjacent context must contain both endpoint terms, and isolated nodes are rejected in process/relationship diagrams. Comparisons and source-page annotations can omit relations; source annotations can explain several distinct facts about one object. Primary and supporting excerpts remain separate; neighboring definitions do not establish causation. `source_statement` and `analogy` are stored separately, and the program labels analogies in the composed speech. Original analogies need not appear in the source, but cannot add technical facts or guarantees. Qualitative narration does not assert dimensions, time windows, or predicted values. Processes use directed links; other relations default to association lines. Ollama reads advertised thinking controls rather than inferring switches from names. Non-thinking models use the same structured contracts; output-budget exhaustion is reported explicitly. Itemized semantic reviews use the full source page and record source meanings, decisions, and reasons for every object, relation, and spoken step. Missing or rejected items fail validation. Accepted storyboards are cached by source, model, and prompt and rechecked on retries. Reviews remain separate from deterministic source checks; approval is not proof of domain facts.
+An isolated call first reads source sentence subjects, actions, objects, and conditions without candidate storyboards or style prompts. Later calls design objects/relations and choose source facts through `source_fact_id`; trusted code inserts `source_statement` without narration-model rewriting. Qualitative diagrams use 1–5 steps based on the material, without filling a fixed count. `source_term` selects actual phrases from the current source, preventing concatenated or translated anchors. Determinate index mistakes can be repaired and logged. Non-comparison relation evidence and adjacent context must contain both endpoint terms, and isolated nodes are rejected in process/relationship diagrams. Comparisons and source-page annotations can omit relations; source annotations can explain several distinct facts about one object. Primary and supporting excerpts remain separate; neighboring definitions do not establish causation. `source_statement` and `analogy` are stored separately, and the program labels analogies in the composed speech. Original analogies need not appear in the source, but cannot add technical facts or guarantees. Qualitative narration does not assert dimensions, time windows, or predicted values. Process and relationship links follow sourced subject–predicate–object roles; comparisons and page guidance can omit links. Ollama reads advertised thinking controls rather than inferring switches from names. Non-thinking models use the same structured contracts; output-budget exhaustion is reported explicitly. Itemized semantic reviews use the full source page and record source meanings, decisions, and reasons for every object, relation, and spoken step. Missing or rejected items fail validation. Accepted storyboards are cached by source, model, and prompt and rechecked on retries. Reviews remain separate from deterministic source checks; approval is not proof of domain facts.
 
 ### Subject-independent generation
 
-`visual_scene.domain` is descriptive text, not an executor whitelist. New subjects and interdisciplinary topics use the same primitives and parameter steps without adding a subject branch. Auto mode selects the specialized executor for recognized 2-D linear transformations and general scenes for other AI lessons. Visual mode requires general scenes. Missing dependencies produce an explained auto fallback; invalid storyboards are revised or rejected.
+`visual_scene.domain` is descriptive text, not an executor whitelist. New subjects and interdisciplinary topics use the same primitives and parameter steps without adding a subject branch. Auto mode preserves all extracted topics and selects a general representation per topic; math mode explicitly chooses specialized linear transformations. Visual mode requires general scenes. Missing dependencies produce an explained auto fallback; invalid storyboards are revised or rejected.
 
 The general layer handles parameterized 2-D teaching across subjects. Specialized executors can add stronger reasoning, presentation, and checks for particular topics. Open subject scope does not establish equal automatic teaching quality for every source.
 

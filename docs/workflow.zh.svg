@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1010" viewBox="0 0 1200 1010" role="img" aria-labelledby="title desc">
-<title id="title">从 PDF 到跨学科教学课件</title><desc id="desc">来源可追溯 · 场景可扩展 · 配音与画面共用时间线. auto：专用或通用场景；visual：通用；math：专用；basic：基础。领域事实和教学质量需对应验收。</desc>
+<title id="title">从 PDF 到跨学科教学课件</title><desc id="desc">来源可追溯 · 场景可扩展 · 配音与画面共用时间线. auto：逐点通用场景；visual：通用；math：专用；basic：基础。领域事实和教学质量需对应验收。</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#6EE1CD"/></marker></defs>
 <rect width="1200" height="1010" fill="#091723"/>
 <text x="45" y="53" fill="#F4FAFD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="31" text-anchor="start">从 PDF 到跨学科教学课件</text>
@@ -25,7 +25,7 @@
 <path d="M 425 365 H 185 V 485" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <text x="210" y="344" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">basic / 环境回退</text>
 <path d="M 775 365 H 1015 V 485" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<text x="875" y="344" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">专用线性变换</text>
+<text x="875" y="344" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">math：专用线性变换</text>
 <path d="M 600 430 V 485" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <text x="620" y="465" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">通用场景 · 学科不限</text>
 <rect x="45" y="485" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
@@ -40,14 +40,14 @@
 <text x="476" y="514" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">按内容选择教学表达</text>
 <text x="476" y="539" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">过程 / 关系 / 比较 / 原图</text>
 <text x="476" y="564" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">定量内容：参数与几何推演</text>
-<text x="476" y="589" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">逐字来源 / 关系 / 计算检查</text>
+<text x="476" y="589" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">来源命题 / 关系 / 计算检查</text>
 <path d="M 185 620 V 660 H 540 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 1015 620 V 660 H 660 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 600 620 V 695" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <rect x="460" y="695" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
 <text x="476" y="724" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">配音与同步渲染</text>
 <text x="476" y="749" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">实际语音时长 → 动作与停顿</text>
-<text x="476" y="774" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">场景：Manim + TeX</text>
+<text x="476" y="774" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Manim · 公式另需 TeX</text>
 <text x="476" y="799" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">基础：Pillow</text>
 <text x="1015" y="688" fill="#F2AC99" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="middle">检查失败：修正或报错</text>
 <path d="M 600 830 V 855" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
@@ -65,5 +65,5 @@
 <text x="891" y="934" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">来源页码与逐步讲者备注</text>
 <path d="M 460 910 H 325" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 740 910 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<text x="45" y="992" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">auto：专用或通用场景；visual：通用；math：专用；basic：基础。领域事实和教学质量需对应验收。</text>
+<text x="45" y="992" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">auto：逐点通用场景；visual：通用；math：专用；basic：基础。领域事实和教学质量需对应验收。</text>
 </svg>

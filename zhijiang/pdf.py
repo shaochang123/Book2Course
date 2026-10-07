@@ -18,6 +18,22 @@ class PDFError(ValueError):
     """PDF 无法作为首版文本资料处理。"""
 
 
+def extract_page_text(page) -> str:
+    """Use positions to retain spaces across font changes and example lines.
+
+    No vocabulary-dependent repair is performed. Layout is still extracted
+    text, so multi-column reading order and diagrams require source inspection.
+    """
+    try:
+        raw = page.extract_text(extraction_mode='layout',layout_mode_strip_rotated=False) or ''
+    except Exception:
+        raw = ''
+    if not raw.strip():
+        try:raw = page.extract_text() or ''
+        except Exception:raw = ''
+    return '\n'.join(' '.join(line.split()) for line in raw.splitlines() if line.strip())
+
+
 def validate_pdf(data: bytes) -> None:
     """上传时只做快速校验；耗时 OCR 在后台任务中执行。"""
     if not data.startswith(b"%PDF-"):
@@ -39,7 +55,7 @@ def read_pdf(data: bytes, filename: str, ocr_engine=None, *,
              cache_dir: Path | None = None) -> SourceDocument:
     """无可用文字的页面逐页 OCR。"""
     validate_pdf(data)
-    fingerprint = 'pdf-pages-v1:' + hashlib.sha256(data).hexdigest()
+    fingerprint = 'pdf-pages-v2:' + hashlib.sha256(data).hexdigest()
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
     rendered = None
@@ -66,11 +82,7 @@ def read_pdf(data: bytes, filename: str, ocr_engine=None, *,
                 continue
             if progress:
                 progress(index - 1, total, f'第 {index} 页提取文字')
-            try:
-                raw = page.extract_text() or ""
-            except Exception:
-                raw = ""
-            text = "\n".join(line.strip() for line in raw.splitlines() if line.strip())
+            text = extract_page_text(page)
             used_ocr = False
             if len("".join(text.split())) < 80:
                 if progress:

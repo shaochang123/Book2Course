@@ -246,9 +246,10 @@ class OllamaClient:
     """本机 Ollama 原生接口，使用其 JSON Schema 约束模型输出。"""
 
     def __init__(self, base_url: str, model: str, http_client: httpx.Client | None = None,
-                 progress: Callable[[str, int, int], None] | None = None):
+                 progress: Callable[[str, int, int], None] | None = None, *, semantic_thinking: bool = True):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.semantic_thinking = semantic_thinking
         # CPU-only local inference can take several minutes for structured output.
         self.http_client = http_client or httpx.Client(timeout=900, trust_env=False)
         self._owns_client = http_client is None
@@ -281,7 +282,7 @@ class OllamaClient:
         values = thinking.get("values", [])
         if not isinstance(values, list):
             return None
-        desired = semantic_stage
+        desired = semantic_stage and self.semantic_thinking
         if any(type(value) is bool and value is desired for value in values):
             return desired
         default = thinking.get("default")
@@ -311,7 +312,7 @@ class OllamaClient:
                     "keep_alive": "10m",
                 }
                 scene_stage=schema.__name__ in {'VisualLayoutDraft','VisualSequenceDraft'}
-                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection'}
+                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft'}
                 thinking = self._thinking_option(semantic_stage)
                 if thinking is not None:
                     payload["think"] = thinking
@@ -325,6 +326,8 @@ class OllamaClient:
                     payload['options']['num_predict']=1536
                 elif schema.__name__ == 'SourceFactsDraft':
                     payload['options']['num_predict']=2048
+                elif schema.__name__ == 'SourcePropositionsDraft':
+                    payload['options']['num_predict']=3072
                 elif schema.__name__ == 'SourceFactClauseSelection':
                     payload['options']['num_predict']=512
                 elif schema.__name__ == 'VisualSceneDraft':
@@ -1067,6 +1070,7 @@ class AIAgents:
             "只选覆盖核心所需的数量，不必凑满 6 个。"
             "跳过页眉、学习建议、教学方法及未来章节预告，除非它们就是文档主题。"
             "不要把参考文献条目、作者单位、致谢或表格残片变成教学知识点；概念标题和解释用中文。"
+            "学习目标、能力列表只说明学习安排，不能代替概念定义；选择正文直接说明该概念的片段。"
             "判断对错和选择题中的选项不一定正确，必须保留题目语境；不得把待判断的命题直接当作定理。"
             "每个引文须直接支撑该知识点的定义或步骤；不能仅凭术语列表编造定义。"
             "source_id 必须是输入 sources 中存在的 id，不是页码。"

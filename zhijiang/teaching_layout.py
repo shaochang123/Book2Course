@@ -1,6 +1,8 @@
 """Shared deterministic diagram geometry for movies and SVG summaries."""
 from __future__ import annotations
 import math
+import re
+from zhijiang.teaching_graph import graph_layers
 
 COLORS=('#78BAFF','#6DE2C0','#FFA458','#D5A3FF','#FF829E','#B2D77B')
 
@@ -25,6 +27,23 @@ def layout_diagram(diagram):
     else:
         positions=[(-4.25,1.55),(0,1.55),(4.25,1.55),(4.25,-.65),(0,-.65),(-4.25,-.65)]
         width,height=3.1,1.1
+    layers=graph_layers(diagram)
+    if not has_source and layers:
+        # A hub and its branches occupy one column per dependency layer,
+        # regardless of the order in which the model numbered the entities.
+        columns=len(layers)
+        width=min(3.15,10.8/columns-.45);height=min(1.15,4.3/max(map(len,layers))-.25)
+        by_id={}
+        for column,layer in enumerate(layers):
+            x=0 if columns==1 else -4.8+9.6*column/(columns-1)
+            for row,key in enumerate(layer):
+                y=.45 if len(layer)==1 else 1.8-3.4*row/(len(layer)-1)
+                by_id[key]=(x,y)
+        positions=[by_id[key] for key in ids]
+    elif not has_source and layers==[]:
+        width,height=2.6,1.05
+        positions=[(4.45*math.cos(math.pi/2-2*math.pi*i/count),
+                    .4+1.55*math.sin(math.pi/2-2*math.pi*i/count)) for i in range(count)]
     nodes={key:{'position':positions[i],'width':width,'height':height,'color':COLORS[i]} for i,key in enumerate(ids)}
     edges={}
     for relation in diagram.relations:
@@ -33,14 +52,33 @@ def layout_diagram(diagram):
         scale=min(width/2/abs(dx) if dx else math.inf,height/2/abs(dy) if dy else math.inf)
         scale+=.1/length
         start=(a[0]+dx*scale,a[1]+dy*scale);end=(b[0]-dx*scale,b[1]-dy*scale)
-        # Horizontal labels sit above the boxes, because the short gap between
-        # boxes cannot hold a complete explanatory phrase. Shared SVG/movie
-        # coordinates avoid labels being hidden behind SVG node rectangles.
-        offset=height/2+.32 if abs(dx)>=3*abs(dy) else .28
+        # Shared SVG/movie coordinates keep predicates clear of concept cards.
+        words=relation.label
+        if relation.condition:words+=' [条件1]'
+        lines=wrap_label(words,18).splitlines()
+        label_width=max(sum(.55 if c.isascii() else 1 for c in line) for line in lines)*.19+.25
+        gap=math.hypot(end[0]-start[0],end[1]-start[1])
+        horizontal=abs(dx)>=3*abs(dy)
+        # When the gap is wide enough, put the predicate next to its own
+        # arrow. Raising it above all cards could place it on a different
+        # branch, visually swapping two otherwise correct predicates.
+        offset=(height/2+.32 if horizontal and label_width>gap-.2 else .28)
         label=((start[0]+end[0])/2-dy/length*offset,(start[1]+end[1])/2+dx/length*offset)
         edges[relation.id]={'start':start,'end':end,'label':label,'color':nodes[relation.source]['color']}
     return nodes,edges
 
 
 def wrap_label(value,width=10):
-    return '\n'.join(value[i:i+width] for i in range(0,len(value),width))
+    # Preserve Latin words; count their narrower glyphs at half a CJK glyph.
+    # An unusually long word stays intact and the renderer scales to its box.
+    lines=[];line='';used=0
+    for token in re.findall(r'[A-Za-z0-9]+(?:[\x27\u2019-][A-Za-z0-9]+)*|[^A-Za-z0-9]',value):
+        if token=='\n':
+            lines.append(line.rstrip());line='';used=0;continue
+        size=len(token)*.55 if token.isascii() else len(token)
+        if line and used+size>width:
+            lines.append(line.rstrip());line='';used=0
+        if not line and token.isspace():continue
+        line+=token;used+=size
+    if line:lines.append(line.rstrip())
+    return '\n'.join(lines)

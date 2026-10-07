@@ -22,18 +22,42 @@ class TeachingDesignError(ValueError):
 
 class DesignNodeDraft(BaseModel):
     id: int = Field(ge=1,le=6)
-    label: str = Field(min_length=2,max_length=24,pattern=r'^[^\r\n]{0,12}[\u4e00-\u9fff][^\r\n]{0,11}$')
+    label: str = Field(min_length=2,max_length=48,pattern=r'^[^\r\n]{2,48}$')
     source_id: int = Field(ge=1)
     source_term: str = Field(min_length=1,max_length=64,pattern=r'^[^\r\n]{1,64}$')
+    kind: Literal['entity','operation','condition'] = 'entity'
 
 
 class DesignRelationDraft(BaseModel):
     id: int = Field(ge=1,le=8)
     source: int = Field(ge=1,le=6)
     target: int = Field(ge=1,le=6)
-    label: str = Field(min_length=1,max_length=18,pattern=r'^[^\r\n]{0,8}[\u4e00-\u9fff][^\r\n]{0,9}$')
+    label: str = Field(min_length=1,max_length=32,pattern=r'^[^\r\n]{1,32}$')
     source_id: int = Field(ge=1)
     source_fact_id: int | None = Field(default=None,ge=1)
+    binding: Literal['extractive', 'semantic'] = 'extractive'
+    supporting_fact_ids: list[int] = Field(default_factory=list,max_length=2)
+    source_proposition_id: int | None = Field(default=None,ge=1)
+
+
+class FactRelationSelection(BaseModel):
+    """Old extractive selections remain readable; new edges name a meaning."""
+    @model_validator(mode='before')
+    @classmethod
+    def legacy_selection(cls,value):
+        if isinstance(value,dict) and not value.get('label'):
+            return {**value,'binding':'extractive','label':'来源关系'}
+        return value
+
+
+def source_condition(statement):
+    """Retain a complete literal conditional clause, never infer a new one."""
+    match=re.match(r'^((?:如果|若|当|只有|除非)[^，。！？；,]{2,110})[，,]',statement)
+    return match.group(1) if match else ''
+
+
+def condition_label(condition):
+    return re.sub(r'^(?:如果|若|当|只有|除非)','',condition)
 
 
 class DesignStepDraft(TeachingStep):
@@ -148,14 +172,16 @@ def fact_labels(facts):
         for token in jieba.posseg.cut(text):
             tokens.append((token.word,offset,offset+len(token.word),token.flag));offset+=len(token.word)
         for index,(_,start,_,flag) in enumerate(tokens):
-            if not (flag.startswith(('n','a')) or flag in {'m','eng','vn','l','i','j'}):continue
+            # Actions also form entity names (审核人员、缓存结果、装配设备).
+            # POS tags are lexical hints, not a whitelist of allowable concepts.
+            if not (flag.startswith(('n','a','v','m')) or flag in {'eng','l','i','j'}):continue
             for count in range(1,6):
                 if index+count>len(tokens):break
                 end=tokens[index+count-1][2];value=text[start:end]
                 end_flag=tokens[index+count-1][3]
-                if (2<=len(value)<=24 and re.search(r'[\u4e00-\u9fff]',value)
-                        and (end_flag.startswith(('n','a')) or end_flag in {'m','eng','vn','l','i','j'})
-                        and not re.search(r'[，。！？；：、（）()\[\]{};,:.!?\s]',value)):
+                if (2<=len(value)<=24
+                        and (end_flag.startswith(('n','a','v','m')) or end_flag in {'eng','l','i','j'})
+                        and not re.search(r'[，。！？；：、（）()\[\]{};,:.!?]',value)):
                     fact_names.add(value)
         if not fact_names:
             # Some definitions/processes contain quantity phrases or actions,
@@ -186,6 +212,32 @@ def bind_fact_relation(relation,nodes,facts):
     endpoints={node.id:node for node in nodes}
     if relation.source not in endpoints or relation.target not in endpoints:
         raise TeachingDesignError('连线引用不存在的对象。')
+    if relation.binding == 'semantic':
+        ids = [relation.source_fact_id, *relation.supporting_fact_ids]
+        if len(set(ids)) != len(ids) or any(key not in by_id for key in ids):
+            raise TeachingDesignError('关系必须选择不同且已有的来源事实编号。')
+        selected = [by_id[key] for key in ids]
+        premise=source_condition(fact['statement'])
+        for node in (endpoints[relation.source], endpoints[relation.target]):
+            if not any(fact_mentions_node(node,item) and (
+                    getattr(node, 'source_quote', None) == item['source_quote']
+                    or getattr(node, 'source_id', None) == item['source_id'])
+                    and (not node.source_term or normalized(node.source_term) in normalized(item['source_quote']))
+                    for item in selected):
+                raise TeachingDesignError('关系端点必须分别绑定所选来源事实，不能仅凭同页共现连接。')
+        source_node=endpoints[relation.source]
+        if source_node.kind=='condition' and premise and source_node.label!=condition_label(premise):
+            raise TeachingDesignError(f'条件分支错配：节点{source_node.id}（{source_node.label}）不能作为“{premise}”的条件起点；'
+                '请从共同的检查步骤分别连接各条件和操作，不把不同条件连成同一分支。')
+        if not relation.supporting_fact_ids and relation.source_proposition_id is None:
+            try:
+                direct=bind_fact_relation(relation.model_copy(update={'binding':'extractive'}),nodes,facts)
+            except TeachingDesignError:
+                pass  # Passive/conditional clauses require semantic review.
+            else:
+                relation.label=direct.label
+        relation.source_id = fact['source_id']
+        return relation
     left=endpoints[relation.source].label;right=endpoints[relation.target].label
     statement=fact['statement'];starts=[m.start() for m in re.finditer(re.escape(left),statement)]
     predicates=[]
@@ -270,6 +322,8 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
     instruction=(
         '仅阅读原文，提取可用于讲解的事实，用中文忠实转述。你没有候选分镜或口播，不做教学设计。'
         '每条statement只翻译一个原文断言，保留原文主语、动作、宾语和条件；不要补充解释、类比、因果或评价。'
+        '引用的完整术语、被操作的完整字符串和前后示例须原样保留，不拆开翻译或删去冠词、否定词、限定词。'
+        '文字排版不足以辨别输入、输出或改动位置时不猜测改动后的示例，只提取明确说明的概念。'
         '原文描述数据时仍写数据，描述训练目标时仍写目标，描述实验结果时保留实验范围。'
         '有帮助或关键不能改写为必要条件、完整还原或成功保证。允许保留原文中的数字与科学名称。'
         'OCR中分数结构缺失、多列数字穿插或无法连读的数值片段不能猜补；优先提取可读的定义、步骤和条件。'
@@ -298,11 +352,10 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
                 rejections.append({'source_id':record.source_id,'statement':record.statement,'issues':issues})
             continue
         if item.source_id not in spans:raise TeachingDesignError('来源事实引用了不存在的片段。')
-        if ocr:
-            if problems := scanned_fact_issues(item.statement,spans[item.source_id]):
-                if rejections is not None:
-                    rejections.append({'source_id':item.source_id,'statement':item.statement,'issues':problems})
-                continue  # Reject this optional assertion, not the course topic.
+        if problems := scanned_fact_issues(item.statement,spans[item.source_id]):
+            if rejections is not None:
+                rejections.append({'source_id':item.source_id,'statement':item.statement,'issues':problems})
+            continue  # Reject this optional assertion, not the course topic.
         if item.statement in seen:continue
         seen.add(item.statement)
         facts.append({'id':len(facts)+1,'source_id':item.source_id,
@@ -315,7 +368,8 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
 
 
 def source_reading_fingerprint(client,spans,ocr=False):
-    return hashlib.sha256(json.dumps({'version':'ocr-source-reading-v3' if ocr else 'source-reading-v1','spans':spans,
+    return hashlib.sha256(json.dumps({'version':'ocr-source-reading-v4' if ocr else 'source-reading-v2','spans':spans,
+        'semantic_thinking':getattr(client,'semantic_thinking',True),
         'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model','')},sort_keys=True).encode()).hexdigest()
 
 
@@ -331,11 +385,10 @@ def source_reading(client,spans,path=None,*,ocr=False):
             kept=[];rejections=list(saved.get('rejected_facts',[]))
             for fact in facts:
                 fact['statement']=SourceFactDraft.model_validate(fact).statement
-                if ocr:
-                    if problems:=scanned_fact_issues(fact['statement'],spans.get(fact['source_id'],'')):
-                        rejection={'source_id':fact['source_id'],'statement':fact['statement'],'issues':problems}
-                        if rejection not in rejections:rejections.append(rejection)
-                        continue
+                if problems:=scanned_fact_issues(fact['statement'],spans.get(fact['source_id'],'')):
+                    rejection={'source_id':fact['source_id'],'statement':fact['statement'],'issues':problems}
+                    if rejection not in rejections:rejections.append(rejection)
+                    continue
                 kept.append(fact)
             if (saved['fingerprint']==fingerprint and facts and len({f['id'] for f in facts})==len(facts)
                     and all(f['source_quote']==spans.get(f['source_id']) for f in facts)):
@@ -361,7 +414,8 @@ def source_reading(client,spans,path=None,*,ocr=False):
 
 
 def structure_fingerprint(client,material,prompt,force_diagram=False):
-    return hashlib.sha256(json.dumps({'version':'structure-v1','material':material,'prompt':prompt,
+    return hashlib.sha256(json.dumps({'version':'structure-v3','material':material,'prompt':prompt,
+        'semantic_thinking':getattr(client,'semantic_thinking',True),
         'force_diagram':force_diagram,'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model','')},sort_keys=True).encode()).hexdigest()
 
 
@@ -374,8 +428,22 @@ def save_structure(path,fingerprint,draft):
 def literal_source_name(label,source_quote):
     """Return the original spelling of an explicit displayed name, if present."""
     if not label:return None
-    match=re.search(r'\s*'.join(re.escape(char) for char in label),source_quote)
+    pattern=r'\s*'.join(re.escape(char) for char in label)
+    if re.match(r'[A-Za-z0-9]',label):pattern=r'(?<![A-Za-z0-9])'+pattern
+    if re.search(r'[A-Za-z0-9]$',label):pattern+=r'(?![A-Za-z0-9])'
+    match=re.search(pattern,source_quote)
     return match.group() if match else None
+
+
+def fact_mentions_node(node,fact):
+    label=node.label
+    return label in fact['statement'] or (bool(re.search(r'[A-Za-z]',label)) and
+        bool(literal_source_name(label,fact['source_quote'])))
+
+
+def fact_covers_node(node,fact):
+    """Original-language names can stay on a Chinese-narrated source graph."""
+    return node.source_quote==fact['source_quote'] and fact_mentions_node(node,fact)
 
 
 def bind_literal_node_terms(nodes,spans=None,repairs=None):
@@ -387,6 +455,23 @@ def bind_literal_node_terms(nodes,spans=None,repairs=None):
                 repairs.append({'field':'nodes','id':node.id,'repair':'literal_node_name',
                     'from_source_term':node.source_term,'to_source_term':name})
             node.source_term=name
+
+
+def bind_annotation_anchors(draft,repairs):
+    """Original-page notes locate full quotes unless the name is literal.
+
+    A translated concept does not assert that a guessed English word is its
+    translation. The full quote remains the reviewed evidence and highlight.
+    Graph endpoints keep their stricter, independently bound term contract.
+    """
+    if draft.representation!='source_figure':return
+    for node in draft.nodes:
+        term=literal_source_name(node.label,node.source_quote) or ''
+        if term!=node.source_term:
+            repairs.append({'node':node.id,'repair':'annotation_quote_anchor',
+                'from_source_term':node.source_term,'to_source_term':term,
+                'anchor_scope':'literal_name' if term else 'source_quote'})
+            node.source_term=term
 
 
 def load_structure(path,fingerprint,source_text,*,repairs=None):
@@ -450,7 +535,14 @@ def preserve_source_sequence(draft,facts):
     Temporal language selects quoted facts, never inferred causes or physics.
     A source trace must not jump from an initial operation to its conclusion.
     """
-    if draft.representation not in {'source_figure','comparison'}:return []
+    if draft.representation not in {'source_figure','comparison'}:
+        # Explicit "first" is an ordering assertion, even in a graph view.
+        # Do not infer a sequence merely from PDF sentence position.
+        selected=diagram_source_facts(draft,facts)
+        initial=[fact['id'] for fact in selected if re.search(r'首先|起始|最初|\b(?:first|initially)\b',fact['statement'],re.I)]
+        if initial:
+            return [*initial,*[fact['id'] for fact in selected if fact['id'] not in initial]]
+        return []
     selected={node.source_quote for node in draft.nodes};required=[]
     ordered=sorted(facts,key=lambda fact:fact['source_id'])
     for before,after in zip(ordered,ordered[1:]):
@@ -479,12 +571,37 @@ def cached_source_sequence_covered(scene,facts):
     return set(expected)<={step.source_fact_id for step in scene.diagram.steps}
 
 
-def preserve_topic_focus(draft,facts,topic):
+def citation_fact_ids(facts,quote):
+    """Identify facts carrying the topic's actual citation, not title synonyms."""
+    key=normalized(quote)
+    if len(key)<20:return []
+    return [fact['id'] for fact in facts if key in normalized(fact['source_quote'])
+            or (len(normalized(fact['source_quote']))>=max(20,len(key)*.6)
+                and normalized(fact['source_quote']) in key)]
+
+
+def preserve_topic_focus(draft,facts,topic,quote=''):
     """Bind the current question to its most specific sourced Chinese phrase.
 
     Phrase frequency discounts generic words across the local readings; no
     discipline glossary or topic-name routing is used. Synonyms still need review.
     """
+    citation_ids=citation_fact_ids(facts,quote)
+    if citation_ids:
+        selected=diagram_source_facts(draft,facts)
+        missing=set(citation_ids)-{fact['id'] for fact in selected}
+        if missing and draft.representation not in {'source_figure','comparison'}:
+            raise TeachingDesignError('当前图示遗漏知识点原始引文的核心事实，请重新选择来源命题或原页注释。')
+        for key in missing:
+            fact=next(fact for fact in facts if fact['id']==key)
+            if len(draft.nodes)>=6:
+                raise TeachingDesignError('原页注释遗漏知识点原始引文，请减少次要标注。')
+            labels=fact_labels([fact])
+            if not labels:raise TeachingDesignError('核心引文没有可标注的来源名称。')
+            label=max(labels,key=lambda value:(value in topic,len(value)))
+            draft.nodes.append(TeachingNode(id=next(i for i in range(1,7) if i not in {n.id for n in draft.nodes}),
+                label=label,source_quote=fact['source_quote'],source_term=''))
+        return citation_ids
     if draft.representation not in {'source_figure','comparison'}:return []
     candidates=[(fact,name) for fact in facts for name in fact_labels([fact]) if name in topic]
     if not candidates:return []
@@ -500,7 +617,8 @@ def preserve_topic_focus(draft,facts,topic):
 
 def cached_topic_focus_covered(scene,facts,topic):
     if not scene.diagram:return True
-    try:expected=preserve_topic_focus(scene.diagram.model_copy(deep=True),facts,topic)
+    try:expected=preserve_topic_focus(scene.diagram.model_copy(deep=True),facts,topic,
+        getattr(getattr(scene,'evidence',None),'quote',''))
     except TeachingDesignError:return False
     return set(expected)<={step.source_fact_id for step in scene.diagram.steps}
 
@@ -572,11 +690,16 @@ def meaning_review_schema(draft):
 
 def meaning_review_material(draft,source_page):
     design=draft.model_dump()
+    names={node.id:node.label for node in draft.nodes}
+    assertions=[{'id':edge.id,'subject':names[edge.source],'predicate':edge.label,'object':names[edge.target],
+        'displayed_proposition':f'{names[edge.source]} → {edge.label} → {names[edge.target]}',
+        'source_statements':getattr(edge,'source_statements',[]),
+        'source_quotes':[edge.source_quote,*getattr(edge,'supporting_quotes',[])]} for edge in draft.relations]
     if draft.representation in {'source_figure','comparison'}:
         # These are labels on a source image/comparison, not independent graph
         # entities. Keep the same IDs, literal anchors and complete fact steps.
         design['annotations']=design.pop('nodes')
-    return json.dumps({'source_page':source_page,'design':design},ensure_ascii=False)
+    return json.dumps({'source_page':source_page,'design':design,'relation_assertions':assertions},ensure_ascii=False)
 
 
 def validate_meaning_review(review,draft):
@@ -604,6 +727,7 @@ def meaning_review_instruction(draft):
     annotations=draft.representation in {'source_figure','comparison'}
     item_contract=(
         'annotation_checks逐项核对design.annotations：label是原文标注文字，source_term是其原文定位词。'
+        'source_term为空时定位整段source_quote，不声称label是某个英文单词的逐字翻译；仍严格检查label是否由该完整来源事实支持。'
         '写出这个标注在原句中的指代，判断名称及定位词是否对应原文含义。数量、动作、条件、结果或修饰短语均可作为文字标注。'
         '标注文字本身没有断言独立实体或额外关系；有明确指代的原文短语可作为标注。' if annotations else
         'node_checks逐项核对design.nodes的来源指代与含义，按当前表达方式判断。')
@@ -618,6 +742,10 @@ def meaning_review_instruction(draft):
         '必须逐个完成'+('annotation_checks' if annotations else 'node_checks')+'、relation_checks、step_checks。source_meaning只转述原文实际表达的含义，reason比较它与候选内容，不复述候选当作依据。'
         'source_meaning忠实转述原文含义，2至120字；原文只提及对象时可保留简短名称，不凑句子、不补推论。reason用12至120字中文解释核对理由。节点、关系、事实和类比分别判断。'
         '每条关系核对原文实际的主体、谓词和宾语：共现不等于关系，修饰的对象不是该端点时supported=false，不能推断缺失的中间因果。'
+        'relation_assertions展开了实际显示的端点名字；逐条核对该displayed_proposition，不把别的主语或宾语替换进去再批准。'
+        'semantic关系可以概括被动句、条件句或相邻操作，但source_statements完整保留独立事实；'
+        '必须结合所有这些事实核对方向、限定和否定。跨句共现或原文排版顺序不能证明先后、因果或传递。'
+        '摘要label若省去关键否定、范围或条件以致改变关系含义，必须拒绝；可以用“条件成立时”等明确提示，并在对应步骤保留完整条件。'
         '逐句核对口播：原文只说有帮助，不能升级成保证、完整覆盖、必要条件或必然结果；原文没有的前提和普遍断言必须拒绝。'
         'step_checks核对source_statement是否保留原文事实与条件，并检查analogy是否仅辅助理解。原文的有时、可能等限定必须保留；原文未给出具体情境时，不要求候选额外推导或补写情境。'
         'analogy是用户允许的原创教学补充，不要求原文使用同一类比，不能以“原文未提到该类比”拒绝；只有类比歪曲概念、增加技术事实或保证时拒绝。'
@@ -627,7 +755,7 @@ def meaning_review_instruction(draft):
         '不要批准虚构因果、误译、错误概念或把示意当物理模拟。只检查当前知识点。')
 
 
-def structure_schema(spans,*,source_annotation=False,facts=None):
+def structure_schema(spans,*,source_annotation=False,facts=None,propositions=None):
     """Select actual source phrases; no subject-specific object vocabulary."""
     if not spans:raise TeachingDesignError('没有可用于分镜设计的来源片段。')
     source_id=Literal[tuple(spans)]
@@ -636,12 +764,17 @@ def structure_schema(spans,*,source_annotation=False,facts=None):
         variants=[]
         for fact in facts:
             labels=fact_labels([fact])
+            if propositions and not source_annotation:
+                # Graph design chooses independently read roles, rather than
+                # decoding thousands of arbitrary POS-token combinations.
+                labels=sorted({p[field] for p in propositions for field in ('subject','object')
+                    if p[field] in fact['statement']})
             if not labels:continue
             variants.append(create_model('FactNode_'+str(fact['id']),__base__=DesignNodeDraft,
                 source_id=(Literal[fact['source_id']],Field()),
                 label=(Literal[tuple(labels)],Field(description='Chinese phrase from this source fact.')),
                 source_term=(Literal[tuple(source_terms({fact['source_id']:fact['source_quote']})[:96])],Field(description='Original-language term from this same source.'))))
-        if not variants:raise TeachingDesignError('独立来源事实没有可用于标注的中文对象，请核对原文理解。')
+        if not variants:raise TeachingDesignError('独立来源事实没有可用于标注的对象，请核对原文理解。')
         node=Union[tuple(variants)]
     else:
         node=create_model('DesignNodeDraft',__base__=DesignNodeDraft,
@@ -650,10 +783,21 @@ def structure_schema(spans,*,source_annotation=False,facts=None):
     relation=create_model('DesignRelationDraft',__base__=DesignRelationDraft,
         source_id=(source_id,Field(description='Choose evidence containing both endpoint terms.')))
     if facts:
-        # No free predicate or source ID: both are filled from an existing fact.
-        relation=create_model('FactRelationSelection',id=(int,Field(ge=1,le=8)),
+        # The model describes a relation, while its complete evidence is filled
+        # from independent readings. Literal substring parsing cannot handle
+        # passive clauses, conditions, or operations spanning sentences.
+        relation=create_model('FactRelationSelection',__base__=FactRelationSelection,id=(int,Field(ge=1,le=8)),
             source=(int,Field(ge=1,le=6)),target=(int,Field(ge=1,le=6)),
-            source_fact_id=(Literal[tuple(fact['id'] for fact in facts)],Field()))
+            label=(str,Field(default='来源关系',min_length=1,max_length=32,pattern=r'^[^\r\n]{1,32}$',
+                description='忠实的关系说明，保留否定与条件；共现不是因果。')),
+            binding=(Literal['semantic','extractive'],Field(default='semantic')),
+            source_fact_id=(Literal[tuple(fact['id'] for fact in facts)],Field()),
+            supporting_fact_ids=(list[Literal[tuple(fact['id'] for fact in facts)]],
+                Field(default_factory=list,max_length=2,description='跨句关系所需的补充事实；没有依据则不连接。')))
+        if propositions:
+            relation=create_model('SourcePropositionSelection',__base__=FactRelationSelection,
+                id=(int,Field(ge=1,le=8)),source=(int,Field(ge=1,le=6)),target=(int,Field(ge=1,le=6)),
+                source_proposition_id=(Literal[tuple(p['id'] for p in propositions)],Field()))
     fields={}
     if source_annotation:
         # Preserve actual source art/facts when relationship planning fails;
@@ -661,7 +805,7 @@ def structure_schema(spans,*,source_annotation=False,facts=None):
         fields['representation']=(Literal['source_figure'],Field())
     return create_model('TeachingDesignDraft',__base__=TeachingDesignDraft,
         nodes=(list[node],Field(default_factory=list,max_length=4)),
-        relations=(list[relation],Field(default_factory=list,max_length=0 if source_annotation else 3)),
+        relations=(list[relation],Field(default_factory=list,max_length=0 if source_annotation or propositions==[] else 3)),
         steps=(list[DesignStepDraft],Field(default_factory=list,max_length=0)),**fields)
 
 
@@ -700,19 +844,30 @@ def script_schema(draft,facts=None,*,require_analogy=False,source_examples=(),so
     node_id=Literal[tuple(n.id for n in draft.nodes)]
     relation_id=Literal[tuple(r.id for r in draft.relations)] if draft.relations else int
     if facts is not None:
-        eligible=[fact for fact in facts if any(node.label in fact['statement'] and node.source_quote==fact['source_quote'] for node in draft.nodes)]
+        eligible=[fact for fact in facts if any(fact_covers_node(node,fact) for node in draft.nodes)]
         if not eligible:raise TeachingDesignError('来源事实没有可对应的画面对象。')
+        # Different facts can share one source excerpt. Counting quotations
+        # underestimates required speech and can strand several annotations.
+        required=set(source_examples)|set(source_sequence)|set(topic_facts)
+        required.update(r.source_fact_id for r in draft.relations if r.source_fact_id)
+        for node in draft.nodes:
+            matches=[f['id'] for f in eligible if fact_covers_node(node,f)]
+            if not matches:raise TeachingDesignError('对象没有对应的独立事实：'+node.label)
+            if not required.intersection(matches):required.add(matches[0])
+        if len(required)>5:raise TeachingDesignError('当前对象与关系需要超过五个独立事实，请拆分或简化当前片段。')
         step=create_model('GroundedStepSelection',
-            fact_id=(Literal[tuple(item['id'] for item in eligible)],Field(description='Select an independent fact. Visual focus and paths are filled from this exact fact.')))
+            fact_id=(Literal[tuple(item['id'] for item in eligible)],Field(description='Select an independent fact. Required coverage IDs: '+str(sorted(required)))))
         example=create_model('EverydayExampleDraft',__base__=EverydayExampleDraft,
             fact_id=(Literal[tuple(item['id'] for item in eligible)],Field()))
         schema=create_model('TeachingScriptDraft',__base__=GroundedScriptDraft,
-            steps=(list[step],Field(min_length=min(5,len({node.source_quote for node in draft.nodes})),max_length=min(5,len(eligible)))),
+            steps=(list[step],Field(min_length=max(1,len(required)),max_length=min(5,len(eligible)))),
             example=(example,Field(description='Exactly one complete everyday analogy for a selected fact.'))
                 if require_analogy and not source_examples else
                 (type(None),Field(default=None,description='Use source facts only; no additional everyday analogy was requested or the source already supplies an example.')))
         # Request a useful example once, rather than forcing an analogy per fact.
         def check_examples(self):
+            if required-{step.fact_id for step in self.steps}:
+                raise PydanticCustomError('source_coverage_required','讲解必须覆盖当前全部对象与关系的来源事实：'+str(sorted(required)))
             count=int(self.example is not None)+sum(bool(getattr(step,'analogy','')) for step in self.steps)
             if count>1:raise PydanticCustomError('multiple_analogies','整个片段最多一个生活类比，其他步骤保留原文事实。')
             if require_analogy and not source_examples and count==0:raise PydanticCustomError('analogy_required','用户请求生活例子，请给出一个完整的生活类比。')
@@ -751,8 +906,9 @@ def bind_script_focus(script,draft,facts):
     by_id={fact['id']:fact for fact in facts};steps=[]
     for step in script.steps:
         fact=by_id[step.fact_id]
-        focus=[node.id for node in draft.nodes if node.label in fact['statement'] and node.source_quote==fact['source_quote']]
-        relations=[relation.id for relation in draft.relations if relation.source_fact_id==step.fact_id]
+        focus=[node.id for node in draft.nodes if fact_covers_node(node,fact)]
+        relations=[relation.id for relation in draft.relations
+                   if step.fact_id in [relation.source_fact_id,*relation.supporting_fact_ids]]
         steps.append(GroundedStepDraft(fact_id=step.fact_id,focus=focus,relations=relations))
     return GroundedScriptDraft(steps=steps,example=script.example)
 
@@ -787,15 +943,76 @@ def source_spans(text):
     return {i+1:quote for i,quote in enumerate(quotes)}
 
 
-def resolve_design(draft, spans, repairs=None,facts=None):
-    draft=draft.model_copy(deep=True)
+def resolve_design(draft, spans, repairs=None,facts=None,propositions=None):
+    if propositions is not None:
+        from zhijiang.teaching_graph import bind_source_propositions
+        draft=bind_source_propositions(draft,propositions,facts)
+    # Decoder models carry Literal constraints. Normalize before repairing a
+    # literal PDF term, otherwise later serialization treats valid repairs as
+    # values outside the original grammar and emits misleading union warnings.
+    data=draft.model_dump()
+    if facts:
+        data['relations']=[{**value,'source_id':value.get('source_id',1),
+                            'label':value.get('label','来源关系')} for value in data['relations']]
+    draft=TeachingDesignDraft.model_validate(data)
+    if facts:
+        for node in draft.nodes:
+            for fact in facts:
+                if fact['source_id']!=node.source_id:continue
+                if draft.representation in {'source_figure','comparison'} and node.label in fact['statement']:
+                    import jieba.posseg
+                    tokens=list(jieba.posseg.cut(node.label))
+                    if tokens and tokens[-1].flag.startswith('v'):
+                        start=fact['statement'].find(node.label)
+                        phrase=re.split(r'[，。！？；：,;!?]',fact['statement'][start:],maxsplit=1)[0]
+                        # Complete a verb-ending annotation from this exact
+                        # independent statement, then review the expanded label.
+                        if len(node.label)<len(phrase)<=24:
+                            if repairs is not None:repairs.append({'field':'nodes','id':node.id,
+                                'repair':'complete_source_phrase','from_label':node.label,'to_label':phrase})
+                            node.label=phrase
+                full=condition_label(source_condition(fact['statement']))
+                # A truncated compound condition is not a meaningful entity.
+                # Restore only an exact prefix of the independent statement.
+                if full and (node.label==full or (len(node.label)>=6 and re.search(r'且|或|并',node.label)
+                                                   and full.startswith(node.label))):
+                    if len(full)>24:
+                        raise TeachingDesignError('条件节点需使用完整条件；过长的条件请保留为原文标注。')
+                    if repairs is not None and node.label!=full:
+                        repairs.append({'field':'nodes','id':node.id,'repair':'complete_source_condition',
+                            'from_label':node.label,'to_label':full})
+                    node.label=full;node.kind='condition'
+                    node.source_term=literal_source_name(full,spans[node.source_id]) or node.source_term
     bind_literal_node_terms(draft.nodes,spans,repairs)
     if facts:
         data=draft.model_dump()
         bound=[]
         for value in data['relations']:
-            selection=DesignRelationDraft(**value,label='来源关系',source_id=1)
-            bound.append(bind_fact_relation(selection,draft.nodes,facts).model_dump())
+            selection=DesignRelationDraft(**{**value,'label':value.get('label','来源关系'),'source_id':1})
+            if selection.binding=='semantic':
+                # Fill unambiguous endpoint citations, not an inferred relation.
+                # The meaning/direction still has to pass the independent review.
+                # Small models often select the right objects but omit an ID.
+                supporting=list(selection.supporting_fact_ids)
+                for node in draft.nodes:
+                    if node.id not in (selection.source,selection.target):continue
+                    matches=[fact['id'] for fact in facts if fact['source_id']==node.source_id
+                             and node.label in fact['statement']]
+                    if len(matches)==1 and matches[0] not in [selection.source_fact_id,*supporting]:
+                        supporting.append(matches[0])
+                if len(supporting)>2:
+                    raise TeachingDesignError('关系涉及过多来源事实，请拆分为局部关系。')
+                if supporting!=selection.supporting_fact_ids:
+                    if repairs is not None:
+                        repairs.append({'field':'relations','id':selection.id,'repair':'endpoint_fact_citations',
+                            'from_fact_ids':selection.supporting_fact_ids,'to_fact_ids':supporting,
+                            'reason':'Only bind exact endpoint facts; semantic review must still check the relation.'})
+                    selection.supporting_fact_ids=supporting
+            resolved=bind_fact_relation(selection,draft.nodes,facts)
+            if repairs is not None and resolved.label!=value.get('label'):
+                repairs.append({'field':'relations','id':resolved.id,'repair':'literal_fact_predicate',
+                    'from_label':value.get('label'),'to_label':resolved.label})
+            bound.append(resolved.model_dump())
         data['relations']=bound
         draft=TeachingDesignDraft.model_validate(data)
     if any(item.source_id not in spans for item in [*draft.nodes,*draft.relations]):
@@ -816,7 +1033,15 @@ def resolve_design(draft, spans, repairs=None,facts=None):
                         'from_source_id':key,'to_source_id':nearest[0],'term':term})
                     key=nearest[0]
             item['source_quote']=spans[key]
-            if field=='relations':item['directed']=draft.representation=='process'
+            if field=='relations':
+                item['directed']=draft.representation in {'process','relationship'}
+                if item['binding']=='semantic':
+                    by_id={fact['id']:fact for fact in facts}
+                    selected=[by_id[i] for i in [item['source_fact_id'],*item['supporting_fact_ids']]]
+                    item['supporting_quotes']=list(dict.fromkeys(f['source_quote'] for f in selected[1:]))
+                    item['source_statements']=[f['statement'] for f in selected]
+                    item['condition']=source_condition(selected[0]['statement'])
+                    continue
             if field=='relations' and draft.representation!='comparison':
                 endpoints=[n.source_term for n in draft.nodes if n.id in (item['source'],item['target'])]
                 missing=[term for term in endpoints if normalized(term) not in normalized(spans[key])]
@@ -895,7 +1120,7 @@ def validate_diagram(diagram, source_text=None, *, require_steps=True):
         name=literal_source_name(node.label,node.source_quote)
         if name and normalized(node.source_term)!=normalized(name):
             raise TeachingDesignError('节点名称在原文中明确出现时，source_term必须绑定该名称，不能高亮无关数字或符号：'+node.label)
-    if len({normalized(n.source_term) for n in anchored})!=len(anchored):
+    if not annotated and len({normalized(n.source_term) for n in anchored})!=len(anchored):
         raise TeachingDesignError('不同对象必须有可区分的原文术语，不得用同一个笼统词代替。')
     for relation in diagram.relations:
         terms=[nodes[key].source_term for key in (relation.source,relation.target)]
@@ -913,15 +1138,22 @@ def validate_diagram(diagram, source_text=None, *, require_steps=True):
             raise TeachingDesignError('来源事实包含原文没有的数值。')
     if facts:
         for node in diagram.nodes:
-            if not any(node.label in fact.statement and node.source_quote==fact.source_quote for fact in facts.values()):
+            if not any(fact_covers_node(node,fact.model_dump()) for fact in facts.values()):
                 raise TeachingDesignError(f'节点{node.id}（{node.label}）的名称与所选来源不对应；中文名称必须出现在同一来源事实中，不能重新命名为不同概念。')
         for relation in diagram.relations:
             if relation.source_fact_id is None:
                 raise TeachingDesignError('事实绑定图的连线缺少独立来源事实编号。')
-            candidate=DesignRelationDraft(**relation.model_dump(exclude={'source_quote','source_term','supporting_quotes','directed'}),source_id=1)
+            candidate=DesignRelationDraft(**relation.model_dump(exclude={'source_quote','source_term','supporting_quotes','directed','source_statements','condition'}),source_id=1)
             expected=bind_fact_relation(candidate,diagram.nodes,[fact.model_dump() for fact in facts.values()])
             if relation.label!=expected.label or relation.source_quote!=facts[relation.source_fact_id].source_quote:
                 raise TeachingDesignError('连线主语、谓词和宾语必须与独立来源事实一致，不得改写或交换。')
+            if relation.binding=='semantic':
+                selected=[facts[key] for key in [relation.source_fact_id,*relation.supporting_fact_ids]]
+                if (relation.source_statements!=[fact.statement for fact in selected]
+                        or relation.supporting_quotes!=list(dict.fromkeys(fact.source_quote for fact in selected[1:]))):
+                    raise TeachingDesignError('关系必须完整保留所选来源事实及条件，不能修改或删去补充来源。')
+                if relation.condition!=source_condition(selected[0].statement):
+                    raise TeachingDesignError('关系条件必须绑定完整来源条件，不能省略或改写。')
     if source_text is not None:
         text=normalized(source_text)
         for item in [*diagram.nodes,*diagram.relations,*facts.values()]:
@@ -941,10 +1173,15 @@ def validate_diagram(diagram, source_text=None, *, require_steps=True):
                 raise TeachingDesignError('同一来源事实只能讲解一次，不能用不同焦点重复口播。')
             used_facts.add(step.source_fact_id)
             fact=facts[step.source_fact_id]
-            if any(nodes[key].source_quote!=fact.source_quote or nodes[key].label not in fact.statement
-                   for key in step.focus if key in nodes):
+            context={step.source_fact_id}
+            for key in step.relations:
+                if key in edges and edges[key].binding=='semantic':
+                    context.update([edges[key].source_fact_id,*edges[key].supporting_fact_ids])
+            if any(not any(fact_covers_node(nodes[key],facts[fid].model_dump())
+                           for fid in context) for key in step.focus if key in nodes):
                 raise TeachingDesignError('讲解焦点必须对应当前来源事实中的对象，不能错配其他原文。')
-            if any(edges[key].source_fact_id!=step.source_fact_id for key in step.relations if key in edges):
+            if any(step.source_fact_id not in [edges[key].source_fact_id,*edges[key].supporting_fact_ids]
+                   for key in step.relations if key in edges):
                 raise TeachingDesignError('追踪关系必须对应当前口播的独立来源事实。')
             if step.analogy:check_analogy(step.analogy,[fact.model_dump() for fact in facts.values()])
         if anchored:
@@ -1058,7 +1295,7 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
     instruction=(
         '先分析教学内容再选择表达方式。此任务没有学科白名单。本轮只设计对象与关系，不编写口播，steps=[]。'
         'source_facts是先独立理解原文所得的事实，节点和连线只能表达这些事实及其原文依据，不增加中间推论。'
-        'question、rationale、label用中文；source_term必须保持原文语言，逐字复制英文、中文或符号，不翻译。'
+        'question、rationale用中文；label可保留原文语言的专业名称、符号或被操作字符串，不能截断或为凑中文加上句子动词。source_term保持原文语言，不翻译。'
         'geometry仅用于来源或用户明确给出可计算公式、变量和变化关系的情况；不要凭空编造坐标、斜率或物理路径。'
         'process解释阶段和数据/材料/信息流；relationship解释组成、描述或有原文依据的依赖，不得把描述或相关说成因果；comparison比较方法、条件或结果；'
         'source_figure以原PDF页面和原图为背景逐步讲解，适合实体外观、实验装置或复杂结构。'
@@ -1084,39 +1321,57 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
     phase('独立理解原文事实')
     reading_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','source-reading').replace('teaching-redesign','source-rereading')) if diagnostic_output else None
     facts,reading_cached=source_reading(client,spans,reading_path,ocr=page.ocr)
+    from zhijiang.teaching_graph import (source_propositions,validate_source_propositions,
+        graph_design_schema,design_from_propositions)
+    phase('独立提取来源命题')
+    propositions_path=reading_path.with_name(reading_path.name.replace('reading','propositions')) if reading_path else None
+    propositions=source_propositions(client,facts,propositions_path)
     material_data['source_facts']=facts
+    material_data['source_propositions']=propositions
     material=json.dumps(material_data,ensure_ascii=False)
     structure_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','source-structure').replace('teaching-redesign','source-restructure')) if diagnostic_output else None
     structure_hash=structure_fingerprint(client,material,prompt,force_diagram)
     cached_term_repairs=[]
     cached_structure=load_structure(structure_path,structure_hash,page.text,repairs=cached_term_repairs)
-    for attempt in range(3):
+    for attempt in range(4):
         from zhijiang.agents import GenerationError
         attempts.append({})
         try:
             phase('设计对象与关系')
-            annotation=attempt==2
+            # Without independently bound propositions, a link-free relation
+            # diagram has no valid contract. Request source annotations now.
+            annotation=attempt>=2 or not propositions
             if cached_structure is not None:
                 draft=cached_structure;cached_structure=None
                 attempts[-1]['structure_cached']=True
             else:
-                draft=client.generate(structure_schema(spans,source_annotation=annotation,facts=facts),instruction+
-                '\n中文label只选择source_facts中实际出现的对象名。每条relations只选择source_fact_id和两端编号，不输出label/source_id。'
-                '程序取该事实中两个中文端点之间的原文词语作为谓词；顺序必须为主语→谓词→宾语，中间不可跨标点、不可遗漏否定词或条件。'
-                '被动句、复杂从句或无法直接表达的关系选择比较图或原页标注，不强行改写为箭头。'+
+                schema=graph_design_schema(propositions) if propositions and not annotation else structure_schema(
+                    spans,source_annotation=annotation,facts=facts,propositions=propositions)
+                draft=client.generate(schema,instruction+
+                '\n节点label只选择source_facts中实际出现的对象或操作名称。每条relations选择source_fact_id、两端编号和简短中文label。'
+                '连线只能选择独立source_propositions的source_proposition_id，不写label或事实编号；程序复制主语、谓词、宾语及完整条件。'
+                '两端节点label必须与该命题的subject、object完全相同，方向不能交换。没有命题可选时画比较或原页注释，不连线。'
+                '依据含义确定关系方向，不要求两端在同一句中按字面顺序排列；被动句不要反向，否定不能变肯定，条件不能变必然。'
+                '只有原文明确支持操作先后、材料/信息传递或条件依赖时才画箭头。同页共现不是关系，不同步骤在原文出现的顺序不自动构成流程。'
+                '关系label保留否定和必要条件提示；完整条件由程序在口播中保留。不清楚的关系选择比较图或原页标注。'+
                 ('\n修正依据：'+failures[-1] if failures else '')+
                 ('\n若来源没有直接支持关系，请选择source_figure或comparison并保持relations=[]，保留独立的原文事实，不能为连接所有节点编造连线。' if failures else '')+
                 ('\n前两次设计未通过，本次保留原PDF页面，只为来源事实设计中文注释对象，representation=source_figure，relations=[]；来源和口播含义仍须通过检查。' if annotation else '')+
-                    '\n最后检查：source_term必须是sources原文中的连续片段，绝不能翻译；本轮steps必须为空数组。',material)
+                    '\n使用proposition_ids字段时，只选择1至3个相关来源命题，程序构建全部节点与连线，不输出nodes/relations/steps，不重写端点；'
+                    '其余契约source_term必须逐字来自sources，steps=[]。',material)
             attempts[-1]['draft']=draft.model_dump()
+            if hasattr(draft,'proposition_ids'):
+                draft=design_from_propositions(draft,propositions,facts)
             if draft.representation=='geometry':
                 if force_diagram: raise TeachingDesignError('本次必须重新选择表达方式。')
                 phase('选择可计算几何')
                 return draft,None,failures
             repairs=list(cached_term_repairs) if attempts[-1].get('structure_cached') else []
             if not attempts[-1].get('structure_cached'):
-                draft=resolve_design(draft,spans,repairs,facts)
-            topic_facts=preserve_topic_focus(draft,facts,segment.title)
+                draft=resolve_design(draft,spans,repairs,facts,propositions)
+            bind_annotation_anchors(draft,repairs)
+            validate_source_propositions(draft,propositions)
+            topic_facts=preserve_topic_focus(draft,facts,segment.title,segment.evidence.quote)
             source_examples=prefer_source_example(draft,facts,prompt)
             source_sequence=preserve_source_sequence(draft,facts)
             attempts[-1]['topic_facts']=topic_facts
@@ -1197,6 +1452,10 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
             report['source_sequence']=source_sequence
             report['topic_facts']=topic_facts
             report['reference_repairs']=repairs
+            report['source_propositions']=propositions
+            from zhijiang.teaching_graph import design_digest,knowledge_graph
+            report['reviewed_design_digest']=design_digest(draft)
+            report['knowledge_graph']=knowledge_graph(diagram,segment.evidence.page)
             return draft,report,failures
         except (TeachingDesignError,ValueError,GenerationError) as exc:
             failures.append(str(exc))

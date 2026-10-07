@@ -54,6 +54,7 @@ class GenerationOptions(BaseModel):
     api_key: str = Field(default="", exclude=True)
     prompt: str = Field(default="", max_length=4000)
     animation_mode: AnimationMode = "auto"
+    semantic_thinking: bool = True
 
 
 class SpeechOptions(BaseModel):
@@ -156,21 +157,29 @@ class VisualBeat(BaseModel):
 
 class TeachingNode(BaseModel):
     id: int = Field(ge=1, le=6)
-    label: str = Field(min_length=2, max_length=24)
+    label: str = Field(min_length=2, max_length=48)
     source_quote: str = Field(min_length=8, max_length=300)
     source_term: str = Field(default='',max_length=64)
+    kind: Literal['entity','operation','condition'] = 'entity'
 
 
 class TeachingRelation(BaseModel):
     id: int = Field(ge=1, le=8)
     source: int = Field(ge=1, le=6)
     target: int = Field(ge=1, le=6)
-    label: str = Field(min_length=1, max_length=18)
+    label: str = Field(min_length=1, max_length=32)
     source_quote: str = Field(min_length=8, max_length=300)
     source_term: str = Field(default='',max_length=100)
     supporting_quotes: list[str] = Field(default_factory=list,max_length=2)
     directed: bool = True
     source_fact_id: int | None = Field(default=None,ge=1)
+    # Semantic edges retain all independently read assertions, including
+    # conditions spanning sentences. They still require an itemized review.
+    binding: Literal['extractive', 'semantic'] = 'extractive'
+    supporting_fact_ids: list[int] = Field(default_factory=list,max_length=2)
+    source_proposition_id: int | None = Field(default=None,ge=1)
+    source_statements: list[str] = Field(default_factory=list,max_length=3)
+    condition: str = Field(default='',max_length=120)
 
 
 class TeachingSourceFact(BaseModel):

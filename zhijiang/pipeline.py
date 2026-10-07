@@ -18,7 +18,7 @@ from zhijiang.config import Settings
 from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode, SourceDocument, KnowledgeBundle
 from zhijiang.math_planning import MathAnimationError, math_capabilities, plan_math_lesson, supports_math
 from zhijiang.math_media import render_math_assets
-from zhijiang.visual_planning import plan_general_lesson
+from zhijiang.visual_planning import plan_general_lesson, visual_capabilities
 from zhijiang.visual_media import render_visual_assets
 from zhijiang.teaching_design import prepare_source_assets, TeachingDesignError
 from zhijiang.pdf import PDFError, read_pdf
@@ -67,7 +67,8 @@ class JobProcessor:
         if mode == Mode.DEMO:
             return DemoAgents()
         if options.provider == "ollama":
-            return AIAgents(OllamaClient(options.base_url, options.model), options.prompt)
+            return AIAgents(OllamaClient(options.base_url, options.model,
+                semantic_thinking=options.semantic_thinking), options.prompt)
         return AIAgents(
             OpenAICompatibleClient(
                 options.base_url,
@@ -109,7 +110,7 @@ class JobProcessor:
             progress("解析 PDF", 8)
             source_bytes=(folder/'source.pdf').read_bytes()
             source_hash=hashlib.sha256(source_bytes).hexdigest()
-            document=checkpoint(folder/'parsed-source.json','pdf-v1:'+source_hash,SourceDocument,
+            document=checkpoint(folder/'parsed-source.json','pdf-v2:'+source_hash,SourceDocument,
                 lambda:read_pdf(source_bytes,job['filename'], cache_dir=folder/'parsed-pages',
                     progress=lambda done,total,label:progress(
                         f'解析 PDF（{done}/{total} 页）：{label}', 8 + done * 13 // total)))
@@ -119,19 +120,21 @@ class JobProcessor:
             agents = self._agents(mode, options)
             if isinstance(agents, AIAgents) and isinstance(agents.client, OllamaClient):
                 agents.client.progress = model_progress
-            use_math = mode == Mode.AI and options.animation_mode in {"auto","math"} and supports_math(document)
+            # Special-purpose templates are opt-in. A mixed textbook must keep
+            # all extracted topics and choose an expression for each of them.
+            use_math = mode == Mode.AI and options.animation_mode == "math" and supports_math(document)
             use_visual = mode == Mode.AI and options.animation_mode in {"auto","visual"} and not use_math
             fallback_reason = "当前任务选择基础图示。"
             if options.animation_mode == "math" and not use_math:
                 raise MathAnimationError("数学模式首轮仅支持有足够原文依据的二维线性变换，请使用相关讲义。")
             if use_math or use_visual:
-                capability = math_capabilities()
+                capability = math_capabilities() if use_math else visual_capabilities()
                 if not capability["ready"]:
                     if options.animation_mode in {"math","visual"}:
-                        raise MathAnimationError("请安装 math-animation 依赖和 LaTeX：" + capability["reason"])
+                        raise MathAnimationError("请安装 math-animation 动画依赖" + ("和 LaTeX" if use_math else "") + "：" + capability["reason"])
                     use_math = False
                     use_visual = False
-                    fallback_reason = "数学动画环境未就绪，自动模式使用基础图示：" + capability["reason"]
+                    fallback_reason = "动画环境未就绪，自动模式使用基础图示：" + capability["reason"]
             if use_math:
                 progress("规划数学对象与推理分镜", 25)
                 lesson = plan_math_lesson(agents.client, document, options.prompt, voice_mode,

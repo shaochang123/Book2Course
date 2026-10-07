@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1010" viewBox="0 0 1200 1010" role="img" aria-labelledby="title desc">
-<title id="title">From PDF to lessons across subjects</title><desc id="desc">Source references · Extensible scenes · Shared speech and animation timing. auto: specialist/general; visual: general; math: specialist; basic: basic. Validate domain facts and teaching quality.</desc>
+<title id="title">From PDF to lessons across subjects</title><desc id="desc">Source references · Extensible scenes · Shared speech and animation timing. auto: per-topic general; visual: general; math: specialist; basic: basic. Validate domain facts and teaching quality.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#6EE1CD"/></marker></defs>
 <rect width="1200" height="1010" fill="#091723"/>
 <text x="45" y="53" fill="#F4FAFD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="31" text-anchor="start">From PDF to lessons across subjects</text>
@@ -47,7 +47,7 @@
 <rect x="460" y="695" width="280" height="135" rx="12" fill="#183947" stroke="#58A99F" stroke-width="1.5"/>
 <text x="476" y="724" fill="#6EE1CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="21" text-anchor="start">Narration and rendering</text>
 <text x="476" y="749" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Speech cues → motion</text>
-<text x="476" y="774" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Scenes: Manim + TeX</text>
+<text x="476" y="774" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Manim; TeX for formulas</text>
 <text x="476" y="799" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Basic: Pillow</text>
 <text x="1015" y="688" fill="#F2AC99" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="middle">Failed checks: revise or fail</text>
 <path d="M 600 830 V 855" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
@@ -65,5 +65,5 @@
 <text x="891" y="934" fill="#D4E6EB" font-family="Microsoft YaHei,Arial,sans-serif" font-size="17" text-anchor="start">Page refs and speaker notes</text>
 <path d="M 460 910 H 325" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M 740 910 H 875" fill="none" stroke="#6EE1CD" stroke-width="2.8" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<text x="45" y="992" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">auto: specialist/general; visual: general; math: specialist; basic: basic. Validate domain facts and teaching quality.</text>
+<text x="45" y="992" fill="#ADC2CD" font-family="Microsoft YaHei,Arial,sans-serif" font-size="16" text-anchor="start">auto: per-topic general; visual: general; math: specialist; basic: basic. Validate domain facts and teaching quality.</text>
 </svg>

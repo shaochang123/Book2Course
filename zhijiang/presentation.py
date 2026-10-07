@@ -100,16 +100,6 @@ def _svg_multiline(x: float, top: float, value: str, *, width: int,
                    for index, line in enumerate(lines))
 
 
-def _math_visual_type(segment: LessonSegment) -> str | None:
-    """Only draw a specific mathematical model when the lesson names its facts."""
-    content = " ".join([segment.title, *segment.bullets])
-    if ("概率" in content or "probability" in content.lower()) and re.search(r"(?<!\d)0(?!\d)", content) and re.search(r"(?<!\d)1(?!\d)", content):
-        return "probability_scale"
-    if "样本空间" in content and "结果" in content and "实验" in content:
-        return "sample_space"
-    return None
-
-
 def _diagram_svg(segment: LessonSegment) -> bytes:
     """Source-grounded diagram; relationships only reflect segment.kind."""
     bullets = segment.bullets[:4]
@@ -120,45 +110,7 @@ def _diagram_svg(segment: LessonSegment) -> bytes:
         f'<desc>{_xml_text("；".join(bullets))}</desc>',
         f'<rect width="1200" height="450" rx="24" fill="#{PANEL}"/>',
     ]
-    math_visual = _math_visual_type(segment)
-    if math_visual == "probability_scale":
-        parts.append(_svg_text(600, 88, "概率取值范围", size=31, weight=700))
-        parts.append(f'<path d="M 165 220 L 1035 220" fill="none" stroke="#{ACCENT}" '
-                     'stroke-width="8" stroke-linecap="round"/>')
-        for x, label in ((165, "0"), (1035, "1")):
-            parts.append(f'<circle cx="{x}" cy="220" r="21" fill="#{ACCENT}"/>')
-            parts.append(_svg_text(x, 182, label, size=31, weight=700))
-        if "0.5" in " ".join(bullets) or "1/2" in " ".join(bullets):
-            parts.append(f'<path d="M 600 198 L 600 242" stroke="#{WHITE}" stroke-width="5"/>')
-            parts.append(_svg_text(600, 179, "1/2", size=27))
-        if "不可能" in " ".join(bullets):
-            parts.append(_svg_text(165, 282, "不可能", size=26))
-        if "一定" in " ".join(bullets) or "必然" in " ".join(bullets):
-            parts.append(_svg_text(1035, 282, "一定发生", size=26))
-        captions = bullets[:3]
-        for index, bullet in enumerate(captions):
-            parts.append(_svg_multiline(1200 * (index + 0.5) / len(captions),
-                                        353, bullet, width=44 // len(captions),
-                                        max_lines=2, size=24))
-    elif math_visual == "sample_space":
-        parts.append(f'<circle cx="215" cy="220" r="83" fill="#{PANEL_LIGHT}" '
-                     f'stroke="#{ACCENT}" stroke-width="4"/>')
-        parts.append(_svg_text(215, 230, "随机实验", size=30, weight=700))
-        parts.append(f'<path d="M 310 220 L 445 220" stroke="#{ACCENT}" '
-                     'stroke-width="5"/>')
-        parts.append(f'<path d="M 430 208 L 448 220 L 430 232" fill="none" '
-                     f'stroke="#{ACCENT}" stroke-width="5"/>')
-        parts.append(f'<rect x="470" y="80" width="575" height="290" rx="30" '
-                     f'fill="#{PANEL_LIGHT}" stroke="#{ACCENT}" stroke-width="4"/>')
-        parts.append(_svg_text(755, 126, "样本空间：所有可能结果", size=29, weight=700))
-        for index, x in enumerate((595, 755, 915), start=1):
-            parts.append(f'<circle cx="{x}" cy="233" r="47" fill="#{PANEL}" '
-                         f'stroke="#{LINE}" stroke-width="3"/>')
-            parts.append(_svg_text(x, 243, f"结果 {index}" if index < 3 else "…",
-                                   size=24))
-        parts.append(_svg_text(755, 337, "每个结果都是一次实验的可能输出", size=24,
-                               color=MUTED))
-    elif segment.kind == "process":
+    if segment.kind == "process":
         n = len(bullets)
         gap = 24
         width = min(270, (1080 - gap * (n - 1)) / n)
@@ -269,45 +221,7 @@ def _diagram_png(segment: LessonSegment, output: Path) -> None:
     image = Image.new("RGB", (1200, 450), f"#{PANEL}")
     draw = ImageDraw.Draw(image)
     bullets = segment.bullets[:4]
-    math_visual = _math_visual_type(segment)
-    if math_visual == "probability_scale":
-        _draw_centered(draw, "概率取值范围", 600, 53, _font(31, bold=True),
-                       f"#{WHITE}", 900, 1)
-        draw.line((165, 220, 1035, 220), fill=f"#{ACCENT}", width=8)
-        for x, label in ((165, "0"), (1035, "1")):
-            draw.ellipse((x-21, 199, x+21, 241), fill=f"#{ACCENT}")
-            _draw_centered(draw, label, x, 145, _font(31, bold=True), f"#{WHITE}", 70, 1)
-        if "0.5" in " ".join(bullets) or "1/2" in " ".join(bullets):
-            draw.line((600, 198, 600, 242), fill=f"#{WHITE}", width=5)
-            _draw_centered(draw, "1/2", 600, 145, _font(27), f"#{WHITE}", 100, 1)
-        if "不可能" in " ".join(bullets):
-            _draw_centered(draw, "不可能", 165, 266, _font(26), f"#{WHITE}", 180, 1)
-        if "一定" in " ".join(bullets) or "必然" in " ".join(bullets):
-            _draw_centered(draw, "一定发生", 1035, 266, _font(26), f"#{WHITE}", 180, 1)
-        captions = bullets[:3]
-        for j, bullet in enumerate(captions):
-            _draw_centered(draw, bullet, 1200 * (j + 0.5) / len(captions),
-                           335, _font(24), f"#{WHITE}",
-                           1080 // len(captions) - 30, 2)
-    elif math_visual == "sample_space":
-        draw.ellipse((132, 137, 298, 303), fill=f"#{PANEL_LIGHT}",
-                     outline=f"#{ACCENT}", width=4)
-        _draw_centered(draw, "随机实验", 215, 204, _font(30, bold=True),
-                       f"#{WHITE}", 155, 1)
-        draw.line((310, 220, 445, 220), fill=f"#{ACCENT}", width=5)
-        draw.polygon([(430, 208), (448, 220), (430, 232)], fill=f"#{ACCENT}")
-        draw.rounded_rectangle((470, 80, 1045, 370), radius=30,
-                               fill=f"#{PANEL_LIGHT}", outline=f"#{ACCENT}", width=4)
-        _draw_centered(draw, "样本空间：所有可能结果", 755, 102,
-                       _font(29, bold=True), f"#{WHITE}", 535, 1)
-        for j, x in enumerate((595, 755, 915), start=1):
-            draw.ellipse((x-47, 186, x+47, 280), fill=f"#{PANEL}",
-                         outline=f"#{LINE}", width=3)
-            _draw_centered(draw, f"结果 {j}" if j < 3 else "…", x, 216,
-                           _font(24), f"#{WHITE}", 90, 1)
-        _draw_centered(draw, "每个结果都是一次实验的可能输出", 755, 319,
-                       _font(24), f"#{MUTED}", 520, 1)
-    elif segment.kind == "process":
+    if segment.kind == "process":
         n = len(bullets)
         gap = 24
         width = min(270, (1080 - gap * (n - 1)) / n)
@@ -378,49 +292,7 @@ def _animation_frame(segment: LessonSegment, index: int, total: int, progress: f
     n = len(bullets)
     stage = min(n - 1, int(progress * n))
     phase = _ease(progress * n - stage)
-    math_visual = _math_visual_type(segment)
-    if math_visual == "probability_scale":
-        x0, x1, y = 130, 830, 270
-        draw.line((x0, y, x1, y), fill=f"#{LINE}", width=7)
-        marker = x0 + (x1 - x0) * _ease(progress)
-        draw.line((x0, y, marker, y), fill=f"#{ACCENT}", width=9)
-        for x, label in ((x0, "0"), (x1, "1")):
-            draw.ellipse((x-21, y-21, x+21, y+21), fill=f"#{ACCENT}")
-            _draw_centered(draw, label, x, y-85, _font(32, bold=True),
-                           f"#{WHITE}", 65, 1)
-        if "0.5" in " ".join(bullets) or "1/2" in " ".join(bullets):
-            draw.line((480, y-18, 480, y+18), fill=f"#{WHITE}", width=4)
-            _draw_centered(draw, "1/2", 480, y-82, _font(27),
-                           f"#{WHITE}", 85, 1)
-        draw.ellipse((marker-14, y-14, marker+14, y+14), fill=f"#{WHITE}")
-        draw.line((marker, y+28, marker, y+68), fill=f"#{WHITE}", width=3)
-        _draw_centered(draw, "可能的概率值", marker, y+76, _font(22),
-                       f"#{MUTED}", 190, 1)
-        _draw_centered(draw, bullets[stage], 480, 427, _font(23),
-                       f"#{WHITE}", 820, 2)
-    elif math_visual == "sample_space":
-        draw.ellipse((86, 185, 276, 375), fill=f"#{PANEL_LIGHT}",
-                     outline=f"#{ACCENT}", width=4)
-        _draw_centered(draw, "随机实验", 181, 255, _font(28, bold=True),
-                       f"#{WHITE}", 170, 1)
-        line_end = 445 if progress > 0.25 else 276 + (445-276)*_ease(progress/0.25)
-        draw.line((276, 280, line_end, 280), fill=f"#{ACCENT}", width=6)
-        if progress > 0.25:
-            draw.polygon([(430, 269), (449, 280), (430, 291)], fill=f"#{ACCENT}")
-        if progress > 0.28:
-            draw.rounded_rectangle((465, 175, 882, 385), radius=27,
-                                   fill=f"#{PANEL_LIGHT}", outline=f"#{ACCENT}", width=4)
-            _draw_centered(draw, "样本空间：所有可能结果", 673, 194,
-                           _font(24, bold=True), f"#{WHITE}", 385, 1)
-            for j, x in enumerate((535, 670, 805)):
-                if progress > 0.40 + j*0.17:
-                    draw.ellipse((x-38, 255, x+38, 331), fill=f"#{PANEL}",
-                                 outline=f"#{LINE}", width=3)
-                    _draw_centered(draw, f"结果 {j+1}" if j < 2 else "…", x, 280,
-                                   _font(21), f"#{WHITE}", 70, 1)
-        _draw_centered(draw, bullets[stage], 480, 435, _font(21),
-                       f"#{WHITE}", 820, 1)
-    elif segment.kind == "process":
+    if segment.kind == "process":
         gap = 20
         w = min(206, (836 - gap*(n-1))/n)
         x0 = (960 - (n*w+(n-1)*gap))/2

@@ -28,23 +28,27 @@ class DiagramTeachingScene(Scene):
             if image.width>3.2:image.scale_to_fit_width(3.2)
             self.add(image)
         nodes={};edges={};labels={}
+        conditions=list(dict.fromkeys(edge.condition for edge in diagram.relations if edge.condition))
         for node in diagram.nodes:
             g=layout[node.id]
             box=RoundedRectangle(width=g['width'],height=g['height'],corner_radius=.16,
                 stroke_color=g['color'],stroke_width=2,fill_color='#142F43',fill_opacity=1)
             label=Text(wrap_label(node.label),font='Microsoft YaHei',font_size=25,color=g['color'],line_spacing=.7)
             if label.width>g['width']-.25:label.scale_to_fit_width(g['width']-.25)
+            if label.height>g['height']-.18:label.scale_to_fit_height(g['height']-.18)
             group=VGroup(box,label).move_to(point(g['position']))
             nodes[node.id]=group;self.add(group)
         for relation in diagram.relations:
             g=connections[relation.id]
             line_type=Arrow if relation.directed else Line
             arrow=line_type(point(g['start']),point(g['end']),buff=0,stroke_width=3,color=g['color'])
-            label=Text(relation.label,font='Microsoft YaHei',font_size=17,color='#E5EEF3').move_to(point(g['label']))
+            words=relation.label+(f' [条件{conditions.index(relation.condition)+1}]' if relation.condition else '')
+            label=Text(wrap_label(words,18),font='Microsoft YaHei',font_size=17,color='#E5EEF3').move_to(point(g['label']))
+            if label.width>4.5:label.scale_to_fit_width(4.5)
             backing=Rectangle(width=label.width+.12,height=label.height+.08,fill_color='#081623',fill_opacity=1,stroke_width=0).move_to(label)
             edges[relation.id]=arrow;labels[relation.id]=VGroup(backing,label)
         guide='关系追踪' if diagram.relations else '原文图示高亮'
-        footer=Text(f'PDF 第 {plan.evidence.page} 页 · {guide}表示讲解顺序，非物理模拟',
+        footer=Text(f'PDF 第 {plan.evidence.page} 页 · {guide}表示讲解顺序，非物理模拟'+(' · 条件见逐步讲解' if conditions else ''),
             font='Microsoft YaHei',font_size=17,color='#A7C0CC').move_to([0,-3.65,0]);self.add(footer)
         report=[];caption=None;shown=set();highlight=None
         for i,step in enumerate(diagram.steps):

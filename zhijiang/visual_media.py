@@ -64,6 +64,7 @@ def teaching_summary_svg(scene):
     import base64
     from zhijiang.teaching_layout import layout_diagram,wrap_label
     diagram=scene.diagram;nodes,edges=layout_diagram(diagram)
+    conditions=list(dict.fromkeys(edge.condition for edge in diagram.relations if edge.condition))
     def xy(p):return (600+p[0]*82,330-p[1]*82)
     parts=['<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="675" viewBox="0 0 1200 675" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">',
         '<title>'+html.escape(scene.question)+'</title><desc>'+html.escape(diagram.rationale)+'</desc>',
@@ -81,20 +82,32 @@ def teaching_summary_svg(scene):
         parts.append(f'<path d="M {a[0]} {a[1]} L {b[0]} {b[1]}" stroke="{g["color"]}" stroke-width="3"/>')
         if relation.directed:
             parts.append('<polygon points="'+' '.join(f'{p[0]},{p[1]}' for p in tip)+f'" fill="{g["color"]}" stroke="{g["color"]}" stroke-width="1"/>')
-        label_width=len(relation.label)*17+12
-        parts.append(f'<rect x="{label[0]-label_width/2}" y="{label[1]-16}" width="{label_width}" height="22" fill="#081623"/>')
-        parts.append(f'<text x="{label[0]}" y="{label[1]}" text-anchor="middle" font-size="17" fill="#E5EEF3">{html.escape(relation.label)}</text>')
+        edge_label=relation.label+(f' [条件{conditions.index(relation.condition)+1}]' if relation.condition else '')
+        edge_lines=wrap_label(edge_label,18).splitlines()
+        label_width=max(len(line)*17 for line in edge_lines)+12
+        parts.append(f'<rect x="{label[0]-label_width/2}" y="{label[1]-16}" width="{label_width}" height="{len(edge_lines)*21}" fill="#081623"/>')
+        for i,line in enumerate(edge_lines):
+            parts.append(f'<text x="{label[0]}" y="{label[1]+i*21}" text-anchor="middle" font-size="17" fill="#E5EEF3">{html.escape(line)}</text>')
     for node in diagram.nodes:
         g=nodes[node.id];x,y=xy(g['position']);w,h=g['width']*82,g['height']*82
         parts.append(f'<rect x="{x-w/2}" y="{y-h/2}" width="{w}" height="{h}" rx="12" fill="#142F43" stroke="{g["color"]}" stroke-width="2"/>')
         lines=wrap_label(node.label).splitlines()
+        visual_width=max(sum(.55 if c.isascii() else 1 for c in line) for line in lines)
+        font=min(23,(h-14)/max(1,len(lines))/1.15,(w-20)/max(1,visual_width))
         for i,line in enumerate(lines):
-            parts.append(f'<text x="{x}" y="{y+8+(i-(len(lines)-1)/2)*27}" text-anchor="middle" font-size="23" fill="{g["color"]}">{html.escape(line)}</text>')
+            parts.append(f'<text x="{x}" y="{y+font/3+(i-(len(lines)-1)/2)*font*1.15}" text-anchor="middle" font-size="{font}" fill="{g["color"]}">{html.escape(line)}</text>')
     # Keep the static teaching summary readable. The full labeled analogy is
     # retained in the movie and speaker notes, rather than crowding the footer.
-    summary=diagram.steps[-1].source_statement or diagram.steps[-1].narration
-    for i,line in enumerate(wrap_label(summary,54).splitlines()):
-        parts.append(f'<text x="45" y="{555+i*27}" font-size="20" fill="#E5EEF3">{html.escape(line)}</text>')
+    if conditions:
+        lines=[line for index,condition in enumerate(conditions,1)
+               for line in wrap_label(f'条件{index}：{condition}',64).splitlines()]
+        font_size=min(18,96/max(1,len(lines)))
+        for i,line in enumerate(lines):
+            parts.append(f'<text x="45" y="{538+i*(font_size+3)}" font-size="{font_size}" fill="#E5EEF3">{html.escape(line)}</text>')
+    else:
+        summary=diagram.steps[-1].source_statement or diagram.steps[-1].narration
+        for i,line in enumerate(wrap_label(summary,54).splitlines()):
+            parts.append(f'<text x="45" y="{555+i*27}" font-size="20" fill="#E5EEF3">{html.escape(line)}</text>')
     guide='原文关系图' if diagram.relations else '原文图示讲解'
     parts.append(f'<text x="45" y="650" font-size="18" fill="#A7C0CC">PDF 第 {scene.evidence.page} 页 · {guide} · 动效表示解释顺序，非物理模拟</text></svg>')
     return ''.join(parts)

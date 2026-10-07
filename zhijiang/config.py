@@ -18,6 +18,7 @@ class Settings:
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+    ollama_semantic_thinking: bool = True
     tts_base_url: str = ""
     tts_api_key: str = ""
     tts_model: str = ""
@@ -41,6 +42,7 @@ class Settings:
             llm_base_url=value("ZHIJIANG_LLM_BASE_URL"),
             llm_api_key=value("ZHIJIANG_LLM_API_KEY"),
             llm_model=value("ZHIJIANG_LLM_MODEL"),
+            ollama_semantic_thinking=value("ZHIJIANG_OLLAMA_SEMANTIC_THINKING", "true").lower() not in {"false","0","off","no"},
             tts_base_url=value("ZHIJIANG_TTS_BASE_URL"),
             tts_api_key=value("ZHIJIANG_TTS_API_KEY"),
             tts_model=value("ZHIJIANG_TTS_MODEL"),

@@ -16,7 +16,7 @@ from zhijiang.config import Settings
 from zhijiang.models import GenerationOptions, JobStatus, Mode, SpeechOptions, VoiceMode
 from zhijiang.models import AnimationMode
 from zhijiang.math_planning import math_capabilities
-from zhijiang.visual_planning import PRIMITIVES, CHECKERS, DOMAIN_VALIDATORS
+from zhijiang.visual_planning import PRIMITIVES, CHECKERS, DOMAIN_VALIDATORS, visual_capabilities
 from zhijiang.pdf import PDFError, validate_pdf
 from zhijiang.pipeline import JobProcessor, JobRunner
 from zhijiang.storage import JobStore
@@ -39,6 +39,7 @@ def model_options(settings: Settings, provider: str, base_url: str, model: str,
             model=(model or settings.llm_model).strip(),
             api_key=api_key.strip() if customized else settings.llm_api_key,
             prompt=prompt.strip(),
+            semantic_thinking=settings.ollama_semantic_thinking,
         )
     except ValueError as exc:
         raise HTTPException(400, "模型提供方只支持 Ollama 或兼容接口。") from exc
@@ -108,8 +109,9 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             "tts_model": settings.tts_model,
             "tts_voice": settings.tts_voice,
             "demo_notice": "演示模式的知识选择和讲稿由确定性规则生成，并非 AI 生成。",
+            "ollama_semantic_thinking": settings.ollama_semantic_thinking,
             "math_animation": math_capabilities(),
-            "visual_animation": {**math_capabilities(), "subject_restriction": None,
+            "visual_animation": {**visual_capabilities(), "subject_restriction": None,
                 "topics": None, "primitives": list(PRIMITIVES),
                 "representations": ['geometry','process','relationship','comparison','source_figure'],
                 "numeric_checks": sorted(CHECKERS), "domain_validators": sorted(DOMAIN_VALIDATORS),
@@ -141,8 +143,10 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         if mode == Mode.DEMO and animation_mode in {"math","visual"}:
             raise HTTPException(400, "数学推演需要选择真实 AI 模式。")
         options.animation_mode = animation_mode if mode == Mode.AI else "basic"
-        if options.animation_mode in {"math","visual"} and not math_capabilities()["ready"]:
-            raise HTTPException(400, "数学动画环境未就绪：" + math_capabilities()["reason"])
+        if options.animation_mode in {"math","visual"} and not (
+                math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
+            capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
+            raise HTTPException(400, "教学动画环境未就绪：" + capability["reason"])
         voice_options = speech_options(settings, tts_base_url, tts_model, tts_voice,
                                        tts_api_key) if voice_mode == VoiceMode.AI else SpeechOptions()
         external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
@@ -268,8 +272,10 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 llm_api_key or (options.api_key if same_destination else ""),
                 ("" if replace_settings else options.prompt) if custom_prompt is None else custom_prompt)
             options.animation_mode = animation_mode or store.get_options(job_id).animation_mode
-            if options.animation_mode in {"math", "visual"} and not math_capabilities()["ready"]:
-                raise HTTPException(400, "教学动画环境未就绪：" + math_capabilities()["reason"])
+            if options.animation_mode in {"math", "visual"} and not (
+                    math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
+                capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
+                raise HTTPException(400, "教学动画环境未就绪：" + capability["reason"])
         else:
             options = GenerationOptions(animation_mode="basic")
         voice_options = store.get_speech_options(job_id)

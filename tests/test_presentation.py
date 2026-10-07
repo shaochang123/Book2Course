@@ -74,8 +74,9 @@ def test_pptx_embeds_svg_and_animation_with_notes(tmp_path: Path) -> None:
         svg_text = [archive.read(name).decode("utf-8") for name in svg_parts]
         for value in svg_text:
             ET.fromstring(value)
-        assert any("样本空间：所有可能结果" in value for value in svg_text)
-        assert any("概率取值范围" in value for value in svg_text)
+        assert any("样本空间包含所有可能结果" in value for value in svg_text)
+        assert any("概率在 0 到 1 之间" in value for value in svg_text)
+        assert not any("结果 1" in value or "可能的概率值" in value for value in svg_text)
         assert any("&lt;A &amp; B&gt;" in value for value in svg_text)
 
         drawing_ns = "http://schemas.microsoft.com/office/drawing/2016/SVG/main"

@@ -179,6 +179,7 @@ def test_auto_falls_back_but_strict_mode_fails(tmp_path, sample_pdf, monkeypatch
         presentation_renderer=lambda l,p:p.write_bytes(b'pptx'))
     monkeypatch.setattr('zhijiang.pipeline.supports_math',lambda _:True)
     monkeypatch.setattr('zhijiang.pipeline.math_capabilities',lambda:{'ready':False,'reason':'missing manim'})
+    monkeypatch.setattr('zhijiang.pipeline.visual_capabilities',lambda:{'ready':False,'reason':'missing manim'})
     def job(mode):
         return store.create('source.pdf',Mode.AI,VoiceMode.SYSTEM,True,False,sample_pdf,
                             GenerationOptions(provider='ollama',base_url='http://localhost',model='test',animation_mode=mode))

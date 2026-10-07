@@ -183,6 +183,8 @@ def test_annotation_review_keeps_phrase_role_and_rejects_wrong_meaning(represent
         def generate(self,schema,instruction,material):
             if schema.__name__=='SourceFactsDraft':
                 return schema.model_validate({'facts':[{'source_id':1,'statement':source}]})
+            if schema.__name__=='SourcePropositionsDraft':
+                return schema.model_validate({'propositions':[]})
             if schema.__name__=='TeachingDesignDraft':
                 chosen='source_figure' if 'representation=source_figure' in instruction else representation
                 return schema.model_validate({'representation':chosen,
@@ -295,6 +297,10 @@ def test_diagram_steps_do_not_borrow_unrelated_source_facts():
             'statement':'另一个实验描述的是不同的对象与研究结论。'}]
     selected=diagram_source_facts(d,facts)
     assert [fact['id'] for fact in selected]==[1]
+    # An incomplete diagram now fails coverage before a narration call.
+    with pytest.raises(TeachingDesignError,match='对象没有对应'):
+        script_schema(d,selected)
+    d.representation='source_figure';d.nodes=d.nodes[:1];d.relations=[]
     with pytest.raises(ValidationError):
         script_schema(d,selected).model_validate({'steps':[{'fact_id':2,'focus':[1],'relations':[]}]})
 
@@ -406,7 +412,9 @@ def test_scene_checkpoint_revalidates_source_and_input(tmp_path):
     semantic={'approved':True,'issues':[]}
     for name,ids in [('node_checks',[1,2,3]),('relation_checks',[1,2]),('step_checks',[1,2,3])]:
         semantic[name]=[{'id':key,'supported':True,'source_meaning':'原文描述控制与记录之间的具体关系。','reason':'候选保留原文关系与适用条件，没有添加保证。'} for key in ids]
-    path=tmp_path/'scene.json';save_planned_scene(path,'input-a',scene,{'semantic_review':semantic})
+    from zhijiang.teaching_graph import design_digest
+    path=tmp_path/'scene.json';save_planned_scene(path,'input-a',scene,
+        {'semantic_review':semantic,'reviewed_design_digest':design_digest(scene.diagram)})
     assert load_planned_scene(path,'input-a',document,segment)[0].diagram==scene.diagram
     assert load_planned_scene(path,'input-b',document,segment) is None
     document.pages[0].text='A control signal synchronizes. Unrelated text replaces the relation evidence.'
@@ -490,11 +498,13 @@ def test_planner_does_not_publish_unbound_claims_in_heading_or_rationale():
         def generate(self,schema,instruction,material):
             if schema.__name__=='SourceFactsDraft':
                 return schema.model_validate({'facts':[{'source_id':1,'statement':'记录的观测数据仅支持训练目标，不保证所有任务成功。'}]})
+            if schema.__name__=='SourcePropositionsDraft':
+                return schema.model_validate({'propositions':[{'subject':'观测数据','predicate':'仅支持',
+                    'object':'训练目标','fact_ids':[1],'subject_source_term':'observations',
+                    'object_source_term':'training objective'}]})
             if schema.__name__=='TeachingDesignDraft':
                 return schema.model_validate({'representation':'relationship','rationale':'数据必然保证所有任务成功，已经完全证明这一普遍结果。','question':'数据为什么必然保证所有任务成功？',
-                    'nodes':[{'id':1,'label':'观测数据','source_id':1,'source_term':'observations'},
-                             {'id':2,'label':'训练目标','source_id':1,'source_term':'training objective'}],
-                    'relations':[{'id':1,'source':1,'target':2,'source_fact_id':1}],'steps':[]})
+                    'proposition_ids':[1]})
             if schema.__name__=='TeachingScriptDraft':
                 return schema.model_validate({'steps':[{'fact_id':1,'analogy':'','focus':[1,2],'relations':[1]}]})
             candidate=json.loads(material)['design']
@@ -819,13 +829,16 @@ def test_ocr_fact_reading_records_unbound_calculations_without_accepting_them(tm
     assert saved['facts']==[] if all_bad else len(saved['facts'])==1
 
 
-def test_empty_chinese_label_catalog_is_rejected_before_schema_construction():
+def test_original_language_labels_are_allowed_but_empty_catalog_is_rejected():
     from zhijiang.teaching_design import structure_schema
     spans={1:'Observed data describes the initial state.'}
-    with pytest.raises(TeachingDesignError,match='中文对象'):
-        structure_schema(spans,facts=[{'id':1,'source_id':1,'source_quote':spans[1],
-            'statement':'Observed data describes the initial state.'}])
-    with pytest.raises(TeachingDesignError,match='中文对象'):structure_schema(spans,facts=[])
+    schema=structure_schema(spans,facts=[{'id':1,'source_id':1,'source_quote':spans[1],
+        'statement':'Observed data描述当前initial state，保留完整名称。'}])
+    draft=schema.model_validate({'representation':'source_figure','question':'怎样理解原始术语？',
+        'rationale':'保留原语言对象名称，在原页核对其对应含义。',
+        'nodes':[{'id':1,'label':'Observed data','source_term':'Observed data','source_id':1}]})
+    assert draft.nodes[0].label=='Observed data'
+    with pytest.raises(TeachingDesignError,match='对象'):structure_schema(spans,facts=[])
     with pytest.raises(TeachingDesignError,match='来源片段'):structure_schema({})
 
 
