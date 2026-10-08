@@ -26,7 +26,7 @@ class JobStatus(StrEnum):
 
 
 VisualKind = Literal["concept", "formula", "process"]
-AnimationMode = Literal["auto", "math", "visual", "basic"]
+AnimationMode = Literal["auto", "math", "visual", "geometry", "basic"]
 MathSceneKind = Literal["linearity", "basis", "plane", "projection", "composition"]
 
 
@@ -72,13 +72,13 @@ class KnowledgePoint(BaseModel):
 
 
 class KnowledgeBundle(BaseModel):
-    points: list[KnowledgePoint] = Field(min_length=3)
+    points: list[KnowledgePoint] = Field(min_length=1)
 
 
 class CourseOutline(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     objective: str = Field(min_length=8, max_length=240)
-    point_titles: list[str] = Field(min_length=3)
+    point_titles: list[str] = Field(min_length=1)
 
 
 class MathParameters(BaseModel):
@@ -127,6 +127,7 @@ class SceneObject(BaseModel):
     end: list[str] = Field(default_factory=list, max_length=2)
     vertices: list[list[str]] = Field(default_factory=list, max_length=128)
     expression: str = Field(default="", max_length=240)
+    parametric_expression: list[str] = Field(default_factory=list,max_length=2)
     domain: list[float] = Field(default_factory=lambda: [-2, 2], min_length=2, max_length=2)
     radius: str = Field(default="0.15", max_length=80)
     text: str = Field(default="", max_length=80)
@@ -153,6 +154,12 @@ class VisualBeat(BaseModel):
     show: list[str] = Field(default_factory=list)
     hide: list[str] = Field(default_factory=list)
     calculations: list[SceneCalculation] = Field(default_factory=list, max_length=4)
+
+
+class GeometryConstraint(BaseModel):
+    kind: Literal['on_function','on_circle','equal_distance','equal_length','equal_area','perpendicular','parallel','same_start']
+    objects: list[str] = Field(min_length=2,max_length=3)
+    source_quote: str = Field(min_length=8,max_length=300)
 
 
 class TeachingNode(BaseModel):
@@ -216,6 +223,7 @@ class VisualScenePlan(BaseModel):
     objects: list[SceneObject] = Field(min_length=2, max_length=24)
     beats: list[VisualBeat] = Field(min_length=1, max_length=12)
     checks: list[SceneCheck] = Field(default_factory=list, max_length=16)
+    geometry_constraints: list[GeometryConstraint] = Field(default_factory=list,max_length=12)
     domain_data: dict[str, str] = Field(default_factory=dict)
     domain_validators: list[str] = Field(default_factory=list, max_length=12)
     x_range: list[float] = Field(default_factory=lambda: [-5, 5], min_length=2, max_length=2)
@@ -242,7 +250,7 @@ class LessonSegment(BaseModel):
 class Lesson(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     objective: str = Field(min_length=8, max_length=240)
-    segments: list[LessonSegment] = Field(min_length=3)
+    segments: list[LessonSegment] = Field(min_length=1)
     mode: Mode
     voice_mode: VoiceMode
     notice: str

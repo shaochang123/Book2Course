@@ -49,6 +49,18 @@ def make_client(tmp_path):
     return TestClient(app), app.state.store
 
 
+def test_geometry_mode_rejects_demo_and_missing_tex(tmp_path,sample_pdf,monkeypatch):
+    client,store=make_client(tmp_path)
+    monkeypatch.setattr('zhijiang.main.visual_capabilities',lambda:{'ready':True,'geometry_ready':False,'geometry_reason':'缺少 latex'})
+    with client:
+        for mode,expected in [('demo','真实 AI'),('ai','latex')]:
+            response=client.post('/api/jobs',files={'file':('source.pdf',sample_pdf,'application/pdf')},
+                data={'mode':mode,'rights_confirmed':'true','voice_mode':'system','animation_mode':'geometry',
+                      'llm_provider':'ollama','llm_base_url':'http://127.0.0.1:11434','llm_model':'test-model'})
+            assert response.status_code==400
+            assert expected in response.json()['detail']
+
+
 def test_api_upload_result_video_and_delete(tmp_path, sample_pdf):
     client, store = make_client(tmp_path)
     with client:

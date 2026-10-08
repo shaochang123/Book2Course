@@ -19,13 +19,14 @@ def visual_summary_svg(scene) -> str:
     if scene.diagram:
         return teaching_summary_svg(scene)
     state = verify_visual_scene(scene)['states'][-1]
+    from zhijiang.visual_coordinates import EuclideanViewport
+    viewport=EuclideanViewport(scene.x_range,scene.y_range,1060,430,(600,310),flip_y=True)
     def xy(p):
-        return [60+1080*(p[0]-scene.x_range[0])/(scene.x_range[1]-scene.x_range[0]),
-                405-310*(p[1]-scene.y_range[0])/(scene.y_range[1]-scene.y_range[0])]
-    parts=['<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">',
+        return viewport.point(*p)
+    parts=['<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">',
            '<title>'+html.escape(scene.domain)+'</title><desc>'+html.escape(scene.question)+'</desc>',
-           '<rect width="1200" height="500" fill="#10283A"/>',
-           '<defs><clipPath id="plot"><rect x="50" y="85" width="1100" height="330"/></clipPath></defs>',
+           '<rect width="1200" height="675" fill="#10283A"/>',
+           '<defs><clipPath id="plot"><rect x="50" y="85" width="1100" height="450"/></clipPath></defs>',
            '<g clip-path="url(#plot)">']
     if scene.axes:
         for p,q in [([scene.x_range[0],0],[scene.x_range[1],0]),([0,scene.y_range[0]],[0,scene.y_range[1]])]:
@@ -35,7 +36,7 @@ def visual_summary_svg(scene) -> str:
         if obj.id not in state['visible']: continue
         geometry=object_geometry(obj,state['parameters']); pts=[xy(p) for p in geometry['points']]; color=obj.color
         if obj.kind in {'dot','circle'}:
-            r=geometry['radius']*1080/(scene.x_range[1]-scene.x_range[0])
+            r=geometry['radius']*viewport.scale
             if obj.kind=='dot': r=min(9,max(3,r))
             parts.append(f'<circle cx="{pts[0][0]}" cy="{pts[0][1]}" r="{r}" fill="{color}" fill-opacity="{1 if obj.kind=="dot" else 0.2}" stroke="{color}" stroke-width="3"/>')
         elif obj.kind=='label':
@@ -53,10 +54,10 @@ def visual_summary_svg(scene) -> str:
                 parts.append(f'<polygon points="{points}" fill="{color}" stroke="{color}" stroke-width="1"/>')
     parameter_label=', '.join(f'{key}={value:.4g}' for key,value in list(state['parameters'].items())[:5])
     calculation_label=' · '.join(f"{c['label'][:12]}={c['value']:.5g}" for c in state['calculations'][:2])
-    parts+=['</g>','<rect width="1200" height="78" fill="#10283A"/>','<rect y="420" width="1200" height="80" fill="#10283A"/>',f'<text x="50" y="50" font-size="28" fill="#F4F7F9">{html.escape(scene.question[:38])}</text>',
-            f'<text x="50" y="440" font-size="19" fill="#6DE2C0">{html.escape(parameter_label)}</text>',
-            f'<text x="680" y="440" font-size="19" fill="#FFA458">{html.escape(calculation_label)}</text>',
-            f'<text x="50" y="467" font-size="19" fill="#AEC4D0">{html.escape(scene.domain)} · PDF 第 {scene.evidence.page} 页 · 示意与计算检查，领域解释需复核</text>','</svg>']
+    parts+=['</g>','<rect width="1200" height="78" fill="#10283A"/>','<rect y="540" width="1200" height="135" fill="#10283A"/>',f'<text x="50" y="50" font-size="28" fill="#F4F7F9">{html.escape(scene.question[:38])}</text>',
+            f'<text x="50" y="570" font-size="19" fill="#6DE2C0">{html.escape(parameter_label)}</text>',
+            f'<text x="50" y="602" font-size="19" fill="#FFA458">{html.escape(calculation_label)}</text>',
+            f'<text x="50" y="642" font-size="19" fill="#AEC4D0">{html.escape(scene.domain)} · PDF 第 {scene.evidence.page} 页 · 示意与计算检查，领域解释需复核</text>','</svg>']
     return ''.join(parts)
 
 

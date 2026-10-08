@@ -140,13 +140,15 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             raise HTTPException(400, "请先确认拥有资料使用权。")
         options = model_options(settings, llm_provider, llm_base_url, llm_model,
                                 llm_api_key, custom_prompt) if mode == Mode.AI else GenerationOptions()
-        if mode == Mode.DEMO and animation_mode in {"math","visual"}:
+        if mode == Mode.DEMO and animation_mode in {"math","visual","geometry"}:
             raise HTTPException(400, "数学推演需要选择真实 AI 模式。")
         options.animation_mode = animation_mode if mode == Mode.AI else "basic"
-        if options.animation_mode in {"math","visual"} and not (
+        if options.animation_mode in {"math","visual","geometry"} and not (
                 math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
             capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
             raise HTTPException(400, "教学动画环境未就绪：" + capability["reason"])
+        if options.animation_mode=='geometry' and not visual_capabilities().get('geometry_ready'):
+            raise HTTPException(400, "数学对象推演环境未就绪：" + visual_capabilities().get('geometry_reason','缺少 TeX'))
         voice_options = speech_options(settings, tts_base_url, tts_model, tts_voice,
                                        tts_api_key) if voice_mode == VoiceMode.AI else SpeechOptions()
         external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
@@ -259,7 +261,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             raise HTTPException(409, "只有失败任务可以重新生成。")
         mode = mode or Mode(job["mode"])
         voice_mode = voice_mode or VoiceMode(job["voice_mode"])
-        if mode == Mode.DEMO and animation_mode in {"math", "visual"}:
+        if mode == Mode.DEMO and animation_mode in {"math", "visual", "geometry"}:
             raise HTTPException(400, "教学过程与数学推演需要选择真实 AI 模式。")
         options = store.get_options(job_id)
         if mode == Mode.AI:
@@ -272,10 +274,12 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 llm_api_key or (options.api_key if same_destination else ""),
                 ("" if replace_settings else options.prompt) if custom_prompt is None else custom_prompt)
             options.animation_mode = animation_mode or store.get_options(job_id).animation_mode
-            if options.animation_mode in {"math", "visual"} and not (
+            if options.animation_mode in {"math", "visual", "geometry"} and not (
                     math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
                 capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
                 raise HTTPException(400, "教学动画环境未就绪：" + capability["reason"])
+            if options.animation_mode=='geometry' and not visual_capabilities().get('geometry_ready'):
+                raise HTTPException(400, "数学对象推演环境未就绪：" + visual_capabilities().get('geometry_reason','缺少 TeX'))
         else:
             options = GenerationOptions(animation_mode="basic")
         voice_options = store.get_speech_options(job_id)

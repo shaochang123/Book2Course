@@ -28,15 +28,20 @@ class GeneralTeachingScene(Scene):
         config.background_color = '#081623'
         self.camera.background_color = '#081623'
         params = dict(plan.parameters)
+        from zhijiang.visual_coordinates import EuclideanViewport
+        viewport=EuclideanViewport(plan.x_range,plan.y_range,10.6,4.3,(0,.35))
         def point(x, y):
-            return np.array([-5.3+10.6*(x-plan.x_range[0])/(plan.x_range[1]-plan.x_range[0]),
-                             -1.8+4.3*(y-plan.y_range[0])/(plan.y_range[1]-plan.y_range[0]), 0])
+            return np.array([*viewport.point(x,y),0])
         text_templates = {}
+        # Keep authored object order in both SVG and movie, independently of
+        # hash/set iteration and of show/hide insertion order. Coincident
+        # strokes (e.g. an arc on a circle) otherwise disappear nondeterministically.
+        object_layers={obj.id:5+i/(len(plan.objects)+1) for i,obj in enumerate(plan.objects)}
         def make(obj):
             g = object_geometry(obj, params)
             pts = [point(*p) for p in g['points']]
             if obj.kind in {'dot', 'circle'}:
-                radius = g['radius']*10.6/(plan.x_range[1]-plan.x_range[0])
+                radius = g['radius']*viewport.scale
                 if obj.kind=='dot': radius=min(0.1,max(0.035,radius))
                 value = (Dot(radius=radius, color=obj.color) if obj.kind == 'dot' else
                          Circle(radius=radius, color=obj.color, fill_opacity=0.16)).move_to(pts[0])
@@ -48,13 +53,13 @@ class GeneralTeachingScene(Scene):
                              Line(pts[0],pts[-1],color=obj.color))
             elif obj.kind == 'polygon':
                 value = Polygon(*pts,color=obj.color,fill_opacity=0.2)
-            elif obj.kind == 'curve':
+            elif obj.kind in {'curve','parametric_curve'}:
                 value = VMobject(color=obj.color).set_points_as_corners(pts)
             else:
                 if obj.id not in text_templates:
                     text_templates[obj.id] = Text(obj.text,font='Microsoft YaHei',font_size=25,color=obj.color)
                 value = text_templates[obj.id].copy().move_to(pts[0])
-            return value.set_z_index(5)
+            return value.set_z_index(object_layers[obj.id])
         if plan.axes:
             axes = VGroup(Line(point(plan.x_range[0],0),point(plan.x_range[1],0),color='#698CA5'),
                           Line(point(0,plan.y_range[0]),point(0,plan.y_range[1]),color='#698CA5'))
@@ -77,9 +82,9 @@ class GeneralTeachingScene(Scene):
         self.add(title,question,footer)
         # Keep a stable container identity while allowing a collapsed dot to
         # become an Arrow/Line with the correct geometry methods again.
-        objects = {obj.id: VGroup(make(obj)).set_z_index(5) for obj in plan.objects}
+        objects = {obj.id: VGroup(make(obj)).set_z_index(object_layers[obj.id]) for obj in plan.objects}
         visible = {obj.id for obj in plan.objects if obj.visible}
-        self.add(*(objects[key] for key in visible))
+        self.add(*(objects[obj.id] for obj in plan.objects if obj.id in visible))
         caption = None
         report = []
         for i,(before,after,target_visible) in enumerate(states(plan)):
@@ -117,6 +122,11 @@ class GeneralTeachingScene(Scene):
                 alpha = tracker.get_value()
                 params.update({key:before[key]+alpha*(after[key]-before[key]) for key in before})
                 check_domain_state(plan,params)
+                if plan.geometry_constraints:
+                    from zhijiang.visual_geometry_checks import check_geometry_constraints,check_geometry_visibility
+                    measured_geometry={obj.id:object_geometry(obj,params) for obj in plan.objects}
+                    check_geometry_visibility(plan,measured_geometry,visible)
+                    check_geometry_constraints(plan,measured_geometry,params)
                 for check in plan.checks:
                     if not CHECKERS[check.checker](evaluate(check.expression,params),check.expected,check.tolerance):
                         raise VisualSceneError('实际连续过程违反声明的领域关系：'+check.expression)

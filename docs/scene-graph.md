@@ -60,7 +60,7 @@
 | `evidence` / `simplifications` | 原文依据与示意条件；计算检查不能代替领域事实核查 |
 | `narration_binding` | 程序设置 `computed`，数值由参数与计算生成；旧数据默认空值继续兼容 |
 
-表达式只允许数字、已声明参数、`x`（曲线变量）、`pi`、`e`、四则、有限幂及 `sin/cos/tan/sqrt/exp/log/abs/min/max`。模型分镜的数值容差固定为程序控制的 `1e-6`，不能放宽容差绕过错误计算。禁止 Python 代码、属性访问、导入、网络或模型自写 SVG/TeX。LaTeX 由受限数学 AST 转换生成。
+表达式只允许数字、已声明参数、`x`（曲线变量）、`pi`、`e`、四则、有限幂及 `sin/cos/tan/asin/acos/atan/atan2/sqrt/exp/log/abs/min/max`。模型分镜的数值容差固定为程序控制的 `1e-6`，不能放宽容差绕过错误计算。禁止 Python 代码、属性访问、导入、网络或模型自写 SVG/TeX。LaTeX 由受限数学 AST 转换生成。
 
 ### 扩展规则
 
@@ -88,6 +88,21 @@ my_domain_rule = "my_course_rules:check_scene"
 ```
 
 报告分别记录计算与几何、来源、关键帧、完整媒体播放、人工听感和 PowerPoint 放映。缺少相应检查时不能标为全部通过。
+
+
+### 数学对象模式与坐标
+
+`geometry` 显式要求通用数学对象，不允许图示回退。图形规划读取完整引用页；知识点与引文仍来自自动提取。公式或图形信息丢失时需要对照 PDF，不能把计算检查当作原文读取成功。
+
+`parametric_curve` 使用两个受限 `parametric_expression` 和 `domain`；其中 `x` 是路径参数，区别于 `curve` 的横坐标。SVG 与 Manim 共用 `EuclideanViewport`，保持同等单位的长度与角度。一般坐标轴仍使用原文或例子的变量范围。
+
+规划器在对象阶段检查是否引用声明参数，必要时请求 `MotionParameterBindings` 对已有字段作符号绑定。`VisualSequenceDraft.parameter_changes` 使用声明名称的变更列表，程序恢复执行字段 `parameters`；旧课程 JSON 仍兼容。点的显示半径属于标记样式，不算数学运动；实际位置、圆半径或曲线变化才算。
+
+每步记录可见对象实际位移与方向是否改变，提供给审稿。没有方向变化的伸缩不能配“旋转”口播。这是部分动作一致性检查，不能证明旋转中心、角度、极限、面积关系及全部数学解释正确。相关回归见 `tests/test_geometry_contract.py`，实际教材见[数学验证](math-level-validation-2026-10.md)。
+
+
+
+严格数学场景的 `geometry_constraints` 从来源编号绑定现有对象：测量曲线/圆周归属、相等距离/长度/面积及垂直、平行、共起点。规划采样与渲染每帧都执行，并拒绝窗口外的可见点及标签锚点；曲线可裁切，标签尺寸尚未全面检查。缓存包含规范化场景摘要，修改对象或约束使旧批准失效。关系绑定仍可漏项或误判，不等于全部数学证明。
 
 ## English
 
@@ -132,7 +147,7 @@ Restricted expression and geometry checks include five interpolation states. Act
 
 The program sets `narration_binding=computed` for new model scenes: qualitative prose describes objects and operations, while verified parameters/calculations generate numeric speech. Unbound literal digits and common Chinese numeric assertions are rejected before audio synthesis. New storyboards draft 3–5 steps with 12–100 characters of qualitative speech per step; the output constraint also bounds prose length to avoid exhausting the local model's token budget within one string. The older scene contract remains readable. This is not a proof of all qualitative meanings.
 
-Expressions allow numbers, declared parameters, the curve variable `x`, constants `pi/e`, arithmetic, bounded powers, and `sin/cos/tan/sqrt/exp/log/abs/min/max`. Model-drafted checks use a program-controlled `1e-6` tolerance; a model cannot loosen it to approve wrong calculations. Python code, attribute access, imports, networking, and model-authored SVG/TeX are rejected. Trusted AST conversion generates LaTeX.
+Expressions allow numbers, declared parameters, the curve variable `x`, constants `pi/e`, arithmetic, bounded powers, and `sin/cos/tan/asin/acos/atan/atan2/sqrt/exp/log/abs/min/max`. Model-drafted checks use a program-controlled `1e-6` tolerance; a model cannot loosen it to approve wrong calculations. Python code, attribute access, imports, networking, and model-authored SVG/TeX are rejected. Trusted AST conversion generates LaTeX.
 
 ### Extensions
 
@@ -143,3 +158,11 @@ Extend the object contract, geometry computation, Manim construction, and SVG ex
 ### Validation
 
 `build_general_examples.py` provides authored regression models for secant limits, probability partitions, projectile motion and energy, atom rearrangement, and enzyme processes, all using one executor. These exercise rendering and declared relations; real model planning is tested separately with PDF uploads. Use `verify_teaching_artifacts.py` for generic or specialized job artifacts. Keep calculation/geometry, source review, key frames, playback, listening, and PowerPoint slideshow results separate.
+
+### Mathematical objects and coordinates
+
+`geometry` explicitly requires mathematical objects and rejects diagram fallbacks. Planning reads the complete cited page; extracted topics and citations still require review, especially when vector formulas are missing from PDF text. `parametric_curve` takes two restricted `parametric_expression` strings and a `domain`; its `x` is the path parameter. Both renderers use the same equal-unit `EuclideanViewport`.
+
+Layout checks require a declared parameter to drive geometry; constrained `MotionParameterBindings` can bind existing object fields. Step `parameter_changes` use declared names and are converted to execution parameters. Cosmetic marker size is not mathematical motion. Review receives measured displacement and direction changes; stretching cannot be narrated as rotation. These partial checks do not prove rotation centers, angles, areas, limits, or all mathematical claims. See [textbook validation](math-level-validation-2026-10.md).
+
+Strict mathematical scenes bind `geometry_constraints` from source IDs to existing objects: function/circle membership, equal distances/lengths/areas, perpendicular/parallel lines and common origins. Planning samples and every rendered frame are measured; visible point and label anchors outside the coordinate window are rejected. Curves may be clipped and label extents are not fully checked. Canonical scene digests invalidate approval when objects or constraints change. Relation binding can still be incomplete or wrong; this is not a universal mathematical proof.

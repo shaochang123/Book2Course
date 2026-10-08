@@ -72,7 +72,7 @@ fileInput.addEventListener("change", () => { if (fileInput.files.length) $("#fil
 form.querySelectorAll('input[type="radio"]').forEach((input) => input.addEventListener("change", updateConsent));
 $("#llm-provider").addEventListener("change", updateConsent);
 $("#animation-mode").addEventListener("change", () => {
-  if (["math","visual"].includes($("#animation-mode").value)) form.querySelector('input[name="mode"][value="ai"]').checked = true;
+  if (["math","visual","geometry"].includes($("#animation-mode").value)) form.querySelector('input[name="mode"][value="ai"]').checked = true;
   updateConsent();
 });
 $("#llm-base-url").addEventListener("input", updateConsent);

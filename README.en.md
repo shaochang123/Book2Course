@@ -39,6 +39,7 @@ Set `ZHIJIANG_LLM_MODEL` to an installed model, start Ollama, and restart the we
 | --- | --- |
 | `auto` | AI default; selects source-based relations, processes, comparisons, annotations or geometry. Falls back to basic diagrams with a reason if the environment is unavailable. |
 | `visual` | General scenes; fails explicitly when source or execution checks cannot pass. |
+| `geometry` | General 2-D mathematical objects; requires TeX and fails explicitly without relation-graph or page-highlight fallback. |
 | `math` | Specialized 2-D linear transformations; requires suitable sources and TeX. |
 | `basic` | Basic bullet diagrams; used by deterministic demo mode. |
 
@@ -67,6 +68,10 @@ Qualitative diagrams start with independent source reading and propositions. Sub
 
 Qualitative scenes first retrieve required evidence from the current and adjacent input pages and review the title's scope, then bind facts to narration. Reading is no longer limited to three sentences around a citation. The program preserves complete inline italic foreign-language examples; source annotations zoom into the current evidence at each step. See the [Agent and model capability audit](docs/agent-model-capability-2026-10.md) for evidence and remaining issues.
 
+Mathematical object mode plans geometry from the complete cited page, including function and parametric curves (arcs and closed paths). SVG and video use equal coordinate units. Parameter changes bind to declared variables; measured direction changes are checked against rotation narration. These checks are not mathematical proofs. Short sources in AI mode may produce one supported topic without filling three segments. Mathematical object mode batches all eligible excerpts, preventing a title-word filter from hiding late definitions; topic selection can still be wrong. Repeated invalid scenes fail explicitly after three identical candidates.
+
+Mathematical object mode also binds source relations to actual objects. Planning samples and rendered frames measure curve membership, distances, lengths, areas and perpendicular/parallel relations, and check that visible point and label anchors stay in the coordinate window. Models can still omit or misbind relations; these partial checks do not guarantee every mathematical claim. Local mathematical planning uses simple JSON decoding with full program-side contract validation; model code is never executed.
+
 ## Tests and reproduction
 
 ```powershell
@@ -81,10 +86,13 @@ AI samples require a running local model; deterministic samples do not. Document
 
 Selected textbook pages from linguistics, economics, sociology and database design produced 22 SVG/narrated clips, 4 MP4s and 4 PPTX files. Media checks passed; teaching quality was partial. These inputs informed debugging, so this is not an independent blind test or proof of full-book coverage. See [textbook validation](docs/generalization-validation-2026-10.md).
 
+See [four-level mathematics validation](docs/math-level-validation-2026-10.md) for selected pages, SVGs and actual animation assessment. The tested textbooks have not met full teaching-quality acceptance; successful media exports have also contained wrong geometry. Reproduce with `python -m scripts.verify_math_textbooks`; [the source manifest](examples/math-level-sources.json) records sources and pages. Flowcharts, page highlights and fading text cards do not pass as mathematical demonstrations.
+
 ## Current limitations
 
 - One sequential local queue; one PDF produces one lesson. Upload limit: 200 MB, with no fixed page or target-duration limit. Long books increase processing time and size.
 - OCR does not guarantee recovery of complex formulas, tables or layout. No manual formula-confirmation interface exists.
+- PDFs with readable prose can still store formulas as graphics. Automatic OCR does not supplement all formulas on these mixed pages; compare mathematical output with the original. Strict mathematical mode can also fail on model planning or expressions.
 - Each qualitative scene uses one source page and may reselect an adjacent input page. Missing title requirements or explanations requiring joint evidence across pages fail explicitly. Scope and semantic reviews can still be wrong and do not guarantee factual correctness.
 - The website displays courses and sources but has no project list, knowledge selection/editor, script editor or human approval/publishing workflow.
 - PPTX titles, source labels and notes are editable; SVG paths are not separate PowerPoint shapes. General/specialized clips include speech; basic embedded clips are silent, while the full video includes speech.

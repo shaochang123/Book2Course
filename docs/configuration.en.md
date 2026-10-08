@@ -109,3 +109,11 @@ $env:ZHIJIANG_TTS_VOICE = "alloy"
 ```
 
 The web page asks for additional consent before sending extracted text or narration to an external service. Speech and text API keys stay in server process memory only while the job runs; retrying a failed external speech job requires entering the speech key again. Do not commit API keys to the repository.
+
+## General mathematical object mode
+
+`geometry` is available in real AI mode and requires TeX and general animation dependencies. It plans 2-D objects, function curves and parametric curves from the complete cited page, without flowchart, highlight or fading-card fallback. Expressions bind to declared parameters; SVG and video share equal coordinate units. Model planning can fail, and successful execution still needs source and visual review. Graphical formulas on mixed prose/formula pages are not fully recovered by automatic OCR. See [mathematics validation](math-level-validation-2026-10.md).
+
+Local Ollama calls in this mode use simple JSON decoding with full program-side structure, variable and source validation. Source relations bind to actual geometry and are measured during planning samples and rendered frames. Visible point and label anchors outside the coordinate window are rejected. Numeric scene caches require matching digests and renewed checks, rather than trusting old model approval. Omitted or misbound relations remain a limitation.
+
+Mathematical tests record the actual digests, quantization and settings for `qwen3.5:9b` and `qwen2.5:7b`. The local 8 GB GPU experienced long output stalls under heavy load. Serial execution and recorded model changes support diagnosis but do not establish a capability ranking. The application does not automatically rewrite `.env.local` or download models; select an installed text-generation model rather than an embedding model.

@@ -50,6 +50,7 @@ Book2Course/
 | [长教材续跑](long-textbook-progress.md) | 扫描教材进度、OCR 与分批缓存，记录当时状态。 |
 | [通用场景验证](general-scene-validation.md) | 开发者预写的五领域执行器回归，不是自动规划效果。 |
 | [数学动画验证](math-animation-validation.md) | 专用二维线性变换的计算、渲染和口播检查。 |
+| [四个学段数学教材](math-level-validation-2026-10.md) | 八组选页的自动数学对象规划、SVG、实际中间帧和失败；定性图示不算数学演示通过。 |
 
 逐次报告是历史证据，不随文档整理改写为“全部通过”。当前汇总和复现入口见[验证与验收](验证与验收.md)。
 

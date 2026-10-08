@@ -120,17 +120,20 @@ class JobProcessor:
             agents = self._agents(mode, options)
             if isinstance(agents, AIAgents) and isinstance(agents.client, OllamaClient):
                 agents.client.progress = model_progress
+                agents.client.prefer_json=options.animation_mode=='geometry'
             # Special-purpose templates are opt-in. A mixed textbook must keep
             # all extracted topics and choose an expression for each of them.
             use_math = mode == Mode.AI and options.animation_mode == "math" and supports_math(document)
-            use_visual = mode == Mode.AI and options.animation_mode in {"auto","visual"} and not use_math
+            use_visual = mode == Mode.AI and options.animation_mode in {"auto","visual","geometry"} and not use_math
             fallback_reason = "当前任务选择基础图示。"
             if options.animation_mode == "math" and not use_math:
                 raise MathAnimationError("数学模式首轮仅支持有足够原文依据的二维线性变换，请使用相关讲义。")
             if use_math or use_visual:
                 capability = math_capabilities() if use_math else visual_capabilities()
+                if options.animation_mode=='geometry' and not capability.get('geometry_ready'):
+                    raise MathAnimationError('数学对象推演需要 TeX：'+capability.get('geometry_reason','缺少 TeX'))
                 if not capability["ready"]:
-                    if options.animation_mode in {"math","visual"}:
+                    if options.animation_mode in {"math","visual","geometry"}:
                         raise MathAnimationError("请安装 math-animation 动画依赖" + ("和 LaTeX" if use_math else "") + "：" + capability["reason"])
                     use_math = False
                     use_visual = False
@@ -143,12 +146,15 @@ class JobProcessor:
                 progress("提取知识点", 22)
                 # A failed diagram should not repeat a successful OCR/extraction.
                 # Input or model/prompt changes invalidate the analysis cache.
-                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v4',
+                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v7',
                     'source':source_hash,'mode':mode,'options':options.model_dump()},sort_keys=True).encode()).hexdigest()
                 fingerprint=hashlib.sha256(('quantity-binding-v1:'+batch_fingerprint).encode()).hexdigest()
                 bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
                     lambda:agents.extract_knowledge(document, cache_dir=folder/'knowledge-batches',
                         cache_fingerprint=batch_fingerprint,
+                        complete_sources=options.animation_mode=='geometry',
+                        teaching_preference=(options.prompt+' 只选择需要数学对象推演的核心数学知识与必要条件，不选人物历史背景或泛泛回顾。'
+                            if options.animation_mode=='geometry' else options.prompt),
                         progress=lambda done,total,label:progress(
                             f'提取知识点（{done}/{total} 批）：{label}',22 + done * 15 // total))
                         if isinstance(agents,AIAgents) else agents.extract_knowledge(document))
@@ -159,7 +165,8 @@ class JobProcessor:
                         progress=lambda done,total,label:progress(f'{label}（{done}/{total} 页）',38+done*4//total))
                     lesson=plan_general_lesson(agents.client,bundle,document,options.prompt,voice_mode,
                         progress,draft_output=folder/'visual-planning.json',
-                        source_assets=source_assets,pdf_path=folder/'source.pdf')
+                        source_assets=source_assets,pdf_path=folder/'source.pdf',
+                        geometry_only=options.animation_mode=='geometry')
                 else:
                     outline = agents.plan(bundle)
                     progress("编写讲稿与分镜", 53)

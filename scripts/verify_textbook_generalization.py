@@ -33,6 +33,8 @@ def main():
     parser.add_argument('--pages',required=True,help='Original PDF page numbers, for example 18,19,20')
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--model')
+    parser.add_argument('--prompt',default='',help='Shared teaching preference; record any guidance supplied')
+    parser.add_argument('--geometry',action='store_true',help='Require mathematical objects; reject diagram fallback')
     parser.add_argument('--render',action='store_true')
     parser.add_argument('--no-thinking',action='store_true',help='Disable optional Ollama thinking, using server-advertised controls only')
     args=parser.parse_args();settings=Settings.from_env();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
@@ -43,7 +45,8 @@ def main():
     # Inputs are saved before model planning to make selection/re-runs auditable.
     source_hash=hashlib.sha256(args.pdf.read_bytes()).hexdigest()
     manifest={'source_pdf':str(args.pdf.resolve()),'sha256':source_hash,'pages':numbers,
-              'model':args.model or settings.llm_model,'prompt':'','authored_scene':False,
+              'model':args.model or settings.llm_model,'prompt':args.prompt,'authored_scene':False,
+              'geometry_required':args.geometry,
               'semantic_thinking':not args.no_thinking,'parser':'pdf-pages-v2'}
     (out/'input.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     (out/'parsed-source.json').write_text(document.model_dump_json(indent=2),encoding='utf-8')
@@ -59,12 +62,14 @@ def main():
                 bundle=KnowledgeBundle.model_validate(saved['bundle']);validate_knowledge(document,bundle)
         if bundle is None:
             bundle=agents.extract_knowledge(document,cache_dir=out/'knowledge-batches',cache_fingerprint=fingerprint,
+                teaching_preference=(args.prompt+' 只选择需要数学对象推演的核心数学知识与必要条件，不选人物历史背景或泛泛回顾。' if args.geometry else args.prompt),
                 progress=lambda done,total,phase:print(phase,done,total,flush=True))
             validate_knowledge(document,bundle)
             path.write_text(json.dumps({'fingerprint':fingerprint,'bundle':bundle.model_dump()},ensure_ascii=False,indent=2),encoding='utf-8')
         print('Knowledge points:',[point.title for point in bundle.points],flush=True)
-        lesson=plan_general_lesson(client,bundle,document,'',VoiceMode.SYSTEM,
-            lambda phase,*_:print(phase,flush=True),draft_output=out/'visual-planning.json',source_assets=assets,pdf_path=args.pdf)
+        lesson=plan_general_lesson(client,bundle,document,args.prompt,VoiceMode.SYSTEM,
+            lambda phase,*_:print(phase,flush=True),draft_output=out/'visual-planning.json',source_assets=assets,pdf_path=args.pdf,
+            geometry_only=args.geometry)
         validate_lesson(document,lesson)
         for index,segment in enumerate(lesson.segments,1):
             folder=out/'visual'/f'scene-{index:02d}';folder.mkdir(parents=True,exist_ok=True)

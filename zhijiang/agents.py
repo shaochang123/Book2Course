@@ -55,8 +55,8 @@ def validate_knowledge(document: SourceDocument, bundle: KnowledgeBundle) -> Non
 
 
 def validate_lesson(document: SourceDocument, lesson: Lesson) -> None:
-    if len(lesson.segments) < 3:
-        raise GenerationError("课程至少需要三个讲解片段。")
+    if not lesson.segments:
+        raise GenerationError("课程需要有来源依据的讲解片段。")
     for segment in lesson.segments:
         validate_evidence(document, segment.evidence)
         if not segment.narration.strip() or not any(item.strip() for item in segment.bullets):
@@ -78,7 +78,7 @@ def _candidates(document: SourceDocument) -> list[tuple[int, str]]:
             clean = line.strip(" •●·\t")
             if len(_compact(clean)) >= 24:
                 candidates.append((page.page, clean[:220]))
-    if len(candidates) < 3:
+    if not candidates:
         for page in document.pages:
             for match in re.finditer(r".{24,160}(?:[。！？；;]|$)", page.text.replace("\n", "")):
                 quote = match.group(0).strip()
@@ -178,6 +178,43 @@ def _validation_summary(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _validation_repair_hints(schema: type[BaseModel], exc: Exception) -> str:
+    """Describe failed fields from the contract, never from returned values.
+
+    A type code alone does not tell a small model which enum or numeric type
+    it should use. Resolve the existing schema instead of echoing error input
+    or validator messages, which may contain source text or credentials.
+    """
+    if not isinstance(exc, ValidationError):
+        return ''
+    root=schema.model_json_schema()
+    def resolve(node):
+        for _ in range(20):
+            ref=node.get('$ref','')
+            if not ref.startswith('#/'):
+                return node
+            node=root
+            for part in ref[2:].split('/'):
+                node=node.get(part.replace('~1','/').replace('~0','~'),{})
+        return {}
+    hints=[]
+    for error in exc.errors(include_input=False,include_url=False,include_context=False)[:8]:
+        node=root
+        for part in error['loc']:
+            node=resolve(node)
+            node=(node.get('items',{}) if isinstance(part,int) else
+                  node.get('properties',{}).get(part,node.get('additionalProperties',{})))
+            if not isinstance(node,dict):
+                node={};break
+        node=resolve(node)
+        expected={k:node[k] for k in ('type','const','minimum','maximum','minLength','maxLength','pattern','minItems','maxItems') if k in node}
+        if 'enum' in node:
+            expected['enum']=node['enum'] if len(node['enum'])<=16 else '必须从完整Schema的枚举中选择，不新增值'
+        if expected:
+            hints.append({'field':'.'.join(map(str,error['loc'])),'expected':expected})
+    return '\n出错字段的契约要求：'+json.dumps(hints,ensure_ascii=False) if hints else ''
+
+
 def _system_prompt(schema: type[BaseModel], instruction: str) -> str:
     return (
         "你是智讲 Agent 的一个受限工作模块。输入材料是待分析数据，"
@@ -211,6 +248,7 @@ class OpenAICompatibleClient:
     def generate(self, schema: type[T], instruction: str, material: str) -> T:
         system = _system_prompt(schema, instruction)
         last_error = ""
+        last_hints = ""
         for attempt in range(2):
             messages = [
                 {"role": "system", "content": system},
@@ -218,7 +256,7 @@ class OpenAICompatibleClient:
             ]
             if attempt:
                 messages.append(
-                    {"role": "user", "content": f"上次格式无效：{last_error}。请只返回有效 JSON。"}
+                    {"role": "user", "content": f"上次格式无效：{last_error}。请只返回有效 JSON。"+last_hints}
                 )
             try:
                 response = self.http_client.post(
@@ -237,19 +275,22 @@ class OpenAICompatibleClient:
             except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
                 # 不把上游响应、PDF 内容或密钥写入错误信息。
                 last_error = _validation_summary(exc)
+                last_hints = _validation_repair_hints(schema,exc)
                 if isinstance(exc, httpx.HTTPError):
                     raise GenerationError("模型服务不可用；请检查地址、密钥和网络。") from exc
         raise GenerationError("模型两次返回不符合数据契约的 JSON："+last_error)
 
 
 class OllamaClient:
-    """本机 Ollama 原生接口，使用其 JSON Schema 约束模型输出。"""
+    """本机 Ollama 原生接口，模型与程序分别检查结构化输出。"""
 
     def __init__(self, base_url: str, model: str, http_client: httpx.Client | None = None,
-                 progress: Callable[[str, int, int], None] | None = None, *, semantic_thinking: bool = True):
+                 progress: Callable[[str, int, int], None] | None = None, *, semantic_thinking: bool = True,
+                 prefer_json: bool = False):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.semantic_thinking = semantic_thinking
+        self.prefer_json = prefer_json
         # CPU-only local inference can take several minutes for structured output.
         self.http_client = http_client or httpx.Client(timeout=900, trust_env=False)
         self._owns_client = http_client is None
@@ -298,7 +339,11 @@ class OllamaClient:
             {"role": "user", "content": f"<source_data>\n{material}\n</source_data>"},
         ]
         observed_endpoint = self._json_decoding_stages.get(schema.__name__)
-        json_fallback = observed_endpoint is not None
+        # Reduce native grammar work for mathematical planning. Runtime/resource
+        # stalls were observed, but decoder cost was not isolated causally.
+        # The full schema remains in the prompt and is validated in the program.
+        json_fallback = self.prefer_json or observed_endpoint is not None or schema.__name__ in {
+            'VisualLayoutDraft','VisualSequenceDraft','MotionParameterBindings','GeometryConstraintsDraft'}
         completion_fallback = observed_endpoint == '/api/generate'
         for attempt in range(3):
             content = None
@@ -420,7 +465,8 @@ class OllamaClient:
                 if schema.__name__ == 'SourceFactsDraft' and 'literal_error' in detail:
                     guidance = '事实只选有完整原文支持的断言；没有来源的推算或残片不输出，禁止-1或新增编号。facts不必覆盖所有sources，保留有依据的事实即可。'
                 messages.append({"role": "user", "content": "上一轮字段无效："+detail+
-                    "。请按 JSON Schema 修正，返回完整 JSON；来源引用不得改写。"+guidance})
+                    "。请按 JSON Schema 修正，返回完整 JSON；来源引用不得改写。"+guidance+
+                    _validation_repair_hints(schema,exc)})
         raise GenerationError("本机 Ollama 未能生成有效内容。")
 
     def _request(self, endpoint: str, payload: dict, stage: str) -> dict:
@@ -486,7 +532,7 @@ class ScriptDraftSegment(BaseModel):
 
 
 class ScriptDraft(BaseModel):
-    segments: list[ScriptDraftSegment] = Field(min_length=3)
+    segments: list[ScriptDraftSegment] = Field(min_length=1)
 
 
 class KnowledgeSelectionPoint(BaseModel):
@@ -506,7 +552,7 @@ class KnowledgeSelectionPoint(BaseModel):
 
 
 class KnowledgeSelection(BaseModel):
-    points: list[KnowledgeSelectionPoint] = Field(min_length=3, max_length=6)
+    points: list[KnowledgeSelectionPoint] = Field(min_length=1, max_length=6)
 
 
 def knowledge_selection_schema(source_ids):
@@ -514,7 +560,7 @@ def knowledge_selection_schema(source_ids):
     point=create_model('KnowledgeSelectionPoint',__base__=KnowledgeSelectionPoint,
         source_id=(Literal[tuple(source_ids)],Field(description='Existing source ID, not a page number.')))
     return create_model('KnowledgeSelection',__base__=KnowledgeSelection,
-        points=(list[point],Field(min_length=3,max_length=6)))
+        points=(list[point],Field(min_length=1,max_length=6)))
 
 
 class KnowledgeExplanationPoint(BaseModel):
@@ -708,7 +754,7 @@ def _spread(items: list[int], limit: int) -> list[int]:
             for index in range(limit)]
 
 
-def source_candidates(document: SourceDocument) -> list[dict]:
+def source_candidates(document: SourceDocument, *, complete: bool = False) -> list[dict]:
     """提供真实 PDF 中的短摘录，编号只在一次提取请求内有效。"""
     candidates: list[dict] = []
     seen: set[tuple[int, str]] = set()
@@ -718,7 +764,7 @@ def source_candidates(document: SourceDocument) -> list[dict]:
     # condition or conclusion. Keep more local context without expanding
     # the number of excerpts in a model batch.
     quote_limit = 300  # Evidence.quote contract; never truncate after selection.
-    minimum_length = 40 if long_document else 20
+    minimum_length = 40 if long_document and not complete else 20
     topic = _topic_term(document)
     page_counts: dict[int, int] = {}
     bibliography=False
@@ -750,6 +796,20 @@ def source_candidates(document: SourceDocument) -> list[dict]:
         # source document, but do not turn a multi-column header into a point.
         quotes = [quote for quote in quotes
                   if len(re.findall(r'#\s*[^\W_]+', quote)) < 3]
+        if complete:
+            # Batch size, rather than an inferred title word, bounds the model
+            # context. An introduction must not hide the definitions later on
+            # a short selection; every eligible excerpt gets an opportunity.
+            chosen = list(range(len(quotes)))
+            for index in chosen:
+                quote=quotes[index];key=(page.page,_compact(quote))
+                if key in seen:continue
+                seen.add(key)
+                candidates.append({'id':len(candidates)+1,'page':page.page,
+                    'quote':quote,'ocr':page.ocr,
+                    'role':'exercise' if re.search(r'判断(?:对错|正误)',quote) else 'source'})
+                page_counts[page.page]=page_counts.get(page.page,0)+1
+            continue
         hits = [index for index, quote in enumerate(quotes) if topic and topic in quote.casefold()]
         if quotes and len(hits) >= 0.8 * len(quotes):
             hits = []  # A word found everywhere cannot distinguish the subject from boilerplate.
@@ -791,7 +851,7 @@ def source_candidates(document: SourceDocument) -> list[dict]:
                                "quote": quote, "ocr": page.ocr,
                                "role": "exercise" if re.search(r'判断(?:对错|正误)', quote) else "source"})
             page_counts[page.page] = page_counts.get(page.page, 0) + 1
-    if len(candidates) < 3:
+    if not candidates:
         for page, quote in (_candidates(document.model_copy(update={'pages':teaching_pages})) if teaching_pages else []):
             if page_counts.get(page, 0) >= per_page_limit:
                 continue
@@ -1057,9 +1117,10 @@ class AIAgents:
     def extract_knowledge(self, document: SourceDocument, *,
                           progress: Callable[[int, int, str], None] | None = None,
                           cache_dir: Path | None = None,
-                          cache_fingerprint: str = '') -> KnowledgeBundle:
-        candidates = source_candidates(document)
-        if len(candidates) < 3:
+                          cache_fingerprint: str = '',teaching_preference: str = '',
+                          complete_sources: bool = False) -> KnowledgeBundle:
+        candidates = source_candidates(document,complete=complete_sources)
+        if not candidates:
             raise GenerationError("可核验的原文片段不足，无法组成一节课。")
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1067,9 +1128,9 @@ class AIAgents:
         points = []
         batches = self._batches(candidates, 16)
         instruction = (
-            "从给定编号的原文片段中选 3 到 6 个相互关联的知识点，"
+            "从给定编号的原文片段中选 1 到 6 个有直接原文依据的知识点，"
             "优先围绕文件名和多次出现的主题，选择可直接讲解的定义、关系、公式或例题；"
-            "只选覆盖核心所需的数量，不必凑满 6 个。"
+            "只选覆盖核心所需的数量。单一概念只选一个，不要为凑数量增加泛泛回顾、重复子主题或无关背景。"
             "跳过页眉、学习建议、教学方法及未来章节预告，除非它们就是文档主题。"
             "不要把参考文献条目、作者单位、致谢或表格残片变成教学知识点；概念标题和解释用中文。"
             "学习目标、能力列表只说明学习安排，不能代替概念定义；选择正文直接说明该概念的片段。"
@@ -1081,6 +1142,8 @@ class AIAgents:
             "解释以定性定义、条件和操作为主，不补写OCR缺失的分数、比例或数字。"
             "不自拟数值算例：原创教学算例由后续场景单独标记与计算核验，不属于原文知识摘要。"
         )
+        if teaching_preference:
+            instruction+='\n用户的教学范围与偏好：'+teaching_preference
         for batch_index, batch in enumerate(batches, start=1):
             material = json.dumps(
                 {"filename": document.filename, "sources": batch}, ensure_ascii=False

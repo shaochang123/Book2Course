@@ -14,6 +14,38 @@ from zhijiang.agents import source_candidates
 from zhijiang.pdf import read_pdf
 
 
+@pytest.mark.parametrize('provider',['ollama','compatible'])
+def test_format_retry_supplies_enum_and_numeric_contract_without_echoing_input(provider):
+    from typing import Literal
+    from pydantic import BaseModel
+    from zhijiang.agents import OpenAICompatibleClient
+    class Draft(BaseModel):
+        kind: Literal['concept','formula','process']
+        value: float
+        note: str
+    requests=[]
+    def handler(request):
+        if request.url.path=='/api/show':
+            return httpx.Response(200,json={})
+        body=json.loads(request.content);requests.append(body)
+        if len(requests)==1:
+            result={'kind':'definition','value':'pi/4','note':'PRIVATE_RESPONSE_TOKEN'}
+        else:
+            feedback=body['messages'][-1]['content']
+            assert all(v in feedback for v in ['concept','formula','process','number'])
+            assert 'PRIVATE_RESPONSE_TOKEN' not in feedback
+            assert 'PRIVATE_SOURCE_TOKEN' not in feedback
+            result={'kind':'concept','value':.785,'note':'已修正数据类型'}
+        content=json.dumps(result)
+        return httpx.Response(200,json=({'message':{'content':content}} if provider=='ollama'
+            else {'choices':[{'message':{'content':content}}]}))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=(OllamaClient('http://localhost:11434','local',http_client,prefer_json=True)
+                if provider=='ollama' else OpenAICompatibleClient('https://model.invalid/v1','api-secret','remote',http_client))
+        result=client.generate(Draft,'遵循现有数据契约','PRIVATE_SOURCE_TOKEN')
+        assert result.kind=='concept' and result.value==.785 and len(requests)==2
+
+
 @pytest.mark.parametrize('stage',['TopicSourceScope','TopicScopeReview'])
 @pytest.mark.parametrize('enabled',[True,False])
 def test_topic_scope_stages_follow_semantic_thinking_configuration(stage,enabled):

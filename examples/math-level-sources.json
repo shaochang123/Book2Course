@@ -1,0 +1,131 @@
+{
+  "selected_on": "2026-10-08",
+  "scope": "八组选页覆盖四个教育阶段，不代表各学段完整课程或整本书验收。",
+  "high_school_note": "Precalculus 为高中先修数学内容，也用于高校；Virtual Virginia 的 9–12 年级 Precalculus 课程选用 OpenStax。不是中国课程标准对照。",
+  "high_school_source": "https://virtualvirginia.org/course/pre-calculus/",
+  "planner_input": "Only PDF text/page numbers plus the same shared preference. No authored scene, object coordinates or topic-specific storyboard.",
+  "cases": [
+    {
+      "id": "primary-angles",
+      "level": "primary",
+      "title": "IM Grade 4 Unit 7 Lesson 5: What is an Angle?",
+      "url": "https://im.kendallhunt.com/k5/teachers/grade-4/unit-7/lesson-5/preparation.html",
+      "pdf_url": "https://cms-assets.illustrativemathematics.org/f27m060rp9v43d1cyx9fvlirp011",
+      "local_pdf": "data/math-levels/primary-angles.pdf",
+      "sha256": "8d51d893769012a6eabb399566ecb85768021d90c42cbc8c1d951d9ba883976a",
+      "pdf_pages": [
+        5
+      ],
+      "license": "CC BY 4.0; names/logos excluded",
+      "author": "Illustrative Mathematics / Open Up Resources",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "primary-fractions",
+      "level": "primary",
+      "title": "IM Grade 5 Unit 2 Lesson 1: Share Sandwiches",
+      "url": "https://im.kendallhunt.com/k5/teachers/grade-5/unit-2/lesson-1/preparation.html",
+      "pdf_url": "https://cms-assets.illustrativemathematics.org/anfxkaqkg85nui7qjyd9fgqci01h",
+      "local_pdf": "data/math-levels/primary-fractions.pdf",
+      "sha256": "1bf33ac86e4acf7dc15ae2afa1b82fa5642136cf646878acc97fb5735a8e1307",
+      "pdf_pages": [
+        3
+      ],
+      "license": "CC BY 4.0; names/logos excluded",
+      "author": "Illustrative Mathematics / Open Up Resources",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "middle-triangle",
+      "level": "middle",
+      "title": "IM Accelerated 7 Unit 1 Lesson 13: Adding the Angles in a Triangle",
+      "url": "https://im.kendallhunt.com/MS_ACC/teachers/2/1/13/preparation.html",
+      "pdf_url": "https://cms-assets.illustrativemathematics.org/gm7tgg9slpwmtio23dx0seu8g5uf",
+      "local_pdf": "data/math-levels/middle-triangle.pdf",
+      "sha256": "614e8aec6c61c7eb1d5b8e9234bab44aadcb0cde72a5e17c5cdb319c07938f83",
+      "pdf_pages": [
+        3
+      ],
+      "license": "CC BY 4.0; names/logos excluded",
+      "author": "Illustrative Mathematics / Open Up Resources",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "middle-pythagoras",
+      "level": "middle",
+      "title": "IM Grade 8 Unit 8 Lesson 6: Finding Side Lengths of Triangles",
+      "url": "https://im.kendallhunt.com/MS/teachers/3/8/6/preparation.html",
+      "pdf_url": "https://cms-assets.illustrativemathematics.org/uld6wnkzo4co6i7he5p6s5xy5m1o",
+      "local_pdf": "data/math-levels/middle-pythagoras-actual.pdf",
+      "sha256": "b1853e4b5cc4a8711e35e4f046e41bfd51f400a309eec2a30d728c49932b3226",
+      "pdf_pages": [
+        6,
+        7
+      ],
+      "license": "CC BY 4.0; names/logos excluded",
+      "author": "Illustrative Mathematics / Open Up Resources",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "high-parabola",
+      "level": "high",
+      "title": "OpenStax Precalculus 2e, section 10.3",
+      "url": "https://openstax.org/books/precalculus-2e/pages/10-3-the-parabola",
+      "pdf_url": "https://assets.openstax.org/oscms-prodcms/media/documents/precalculus-2e_-_WEB.pdf",
+      "local_pdf": "data/math-levels/high.pdf",
+      "sha256": "4b7018778433d2c125229a35315cf70e0813cbaacb04118b7265baae625372b5",
+      "pdf_pages": [
+        1053
+      ],
+      "license": "CC BY-NC-SA 4.0",
+      "author": "OpenStax / contributing authors",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "high-logarithm",
+      "level": "high",
+      "title": "OpenStax Precalculus 2e, section 4.3",
+      "url": "https://openstax.org/books/precalculus-2e/pages/4-3-logarithmic-functions",
+      "pdf_url": "https://assets.openstax.org/oscms-prodcms/media/documents/precalculus-2e_-_WEB.pdf",
+      "local_pdf": "data/math-levels/high.pdf",
+      "sha256": "4b7018778433d2c125229a35315cf70e0813cbaacb04118b7265baae625372b5",
+      "pdf_pages": [
+        442
+      ],
+      "license": "CC BY-NC-SA 4.0",
+      "author": "OpenStax / contributing authors",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "university-polar",
+      "level": "university",
+      "title": "OpenStax Calculus Volume 2, section 7.3",
+      "url": "https://openstax.org/books/calculus-volume-2/pages/7-3-polar-coordinates",
+      "pdf_url": "https://assets.openstax.org/oscms-prodcms/media/documents/calculus-volume-2_-_WEB.pdf",
+      "local_pdf": "data/math-levels/university.pdf",
+      "sha256": "f6ac06038088711766e5b664a8114c8fcb0b7b88cfb38e92bbaf56ba2df43f4a",
+      "pdf_pages": [
+        575,
+        578
+      ],
+      "license": "CC BY-NC-SA 4.0",
+      "author": "OpenStax / contributing authors",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    },
+    {
+      "id": "university-taylor",
+      "level": "university",
+      "title": "OpenStax Calculus Volume 2, section 6.3",
+      "url": "https://openstax.org/books/calculus-volume-2/pages/6-3-taylor-and-maclaurin-series",
+      "pdf_url": "https://assets.openstax.org/oscms-prodcms/media/documents/calculus-volume-2_-_WEB.pdf",
+      "local_pdf": "data/math-levels/university.pdf",
+      "sha256": "f6ac06038088711766e5b664a8114c8fcb0b7b88cfb38e92bbaf56ba2df43f4a",
+      "pdf_pages": [
+        507
+      ],
+      "license": "CC BY-NC-SA 4.0",
+      "author": "OpenStax / contributing authors",
+      "license_note": "原 PDF 与生成媒体留在被忽略的本地 data/；不上传教材、商标或模型权重。"
+    }
+  ]
+}
