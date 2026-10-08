@@ -71,11 +71,20 @@ def teaching_summary_svg(scene):
         '<rect width="1200" height="675" fill="#081623"/>',
         '<text x="600" y="40" text-anchor="middle" font-size="25" fill="#F4F7F9">'+html.escape(scene.question)+'</text>']
     if diagram.source_asset:
+        from io import BytesIO
+        from zhijiang.source_detail import (source_detail,fit_size,PREVIEW_CENTER,PREVIEW_SIZE,DETAIL_CENTER)
         from PIL import Image
-        with Image.open(diagram.source_asset) as image:ratio=image.width/image.height
-        height=min(400,262/ratio);width=height*ratio
+        with Image.open(diagram.source_asset) as image:width,height=fit_size(image.size,PREVIEW_SIZE)
+        width*=82;height*=82;center=xy(PREVIEW_CENTER)
         raw=base64.b64encode(Path(diagram.source_asset).read_bytes()).decode('ascii')
-        parts.append(f'<image x="{210.5-width/2}" y="{309.5-height/2}" width="{width}" height="{height}" xlink:href="data:image/png;base64,{raw}"/>')
+        parts.append(f'<image x="{center[0]-width/2}" y="{center[1]-height/2}" width="{width}" height="{height}" xlink:href="data:image/png;base64,{raw}"/>')
+        detail=source_detail(diagram,diagram.steps[-1].focus)
+        parts.append('<text x="133" y="510" text-anchor="middle" font-size="14" fill="#A7C0CC">原页定位 · 右侧放大依据</text>')
+        if detail:
+            buffer=BytesIO();detail['image'].save(buffer,format='PNG')
+            raw=base64.b64encode(buffer.getvalue()).decode('ascii')
+            width,height=[value*82 for value in detail['size']];center=xy(detail['center'])
+            parts.append(f'<image data-source-focus="{detail["focus"]}" x="{center[0]-width/2}" y="{center[1]-height/2}" width="{width}" height="{height}" xlink:href="data:image/png;base64,{raw}"/>')
     for relation in diagram.relations:
         g=edges[relation.id];a,b=xy(g['start']),xy(g['end']);label=xy(g['label'])
         angle=math.atan2(b[1]-a[1],b[0]-a[0]);tip=[b]+[[b[0]-10*math.cos(angle+d),b[1]-10*math.sin(angle+d)] for d in [-.42,.42]]

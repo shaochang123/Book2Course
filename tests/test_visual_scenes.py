@@ -201,6 +201,13 @@ def test_source_coverage_repair_keeps_only_authoritative_ids(sample_pdf):
     doc=read_pdf(sample_pdf,'sample.pdf');bundle=DemoAgents().extract_knowledge(doc)
     class Client:
         def generate(self,schema,instruction,material):
+            if schema.__name__=='TopicSourceScope':
+                import json
+                data=json.loads(material)
+                chosen=data['sources'][0];key=chosen['id']
+                return schema.model_validate({'topic_term':chosen['text'][:2],'source_ids':[key],'reason':'当前页面完整支持当前教学对象的来源范围。','missing':[]})
+            if schema.__name__=='TopicScopeReview':
+                return schema.model_validate({'reason':'所选原文覆盖当前标题的全部对象与限定范围。','missing':[]})
             if schema.__name__=='SourceFactsDraft':
                 import json
                 source_id=json.loads(material)['sources'][0]['id']
@@ -303,6 +310,13 @@ def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkey
     class Client:
         count=3
         def generate(self,schema,instruction,material):
+            if schema.__name__=='TopicSourceScope':
+                import json
+                data=json.loads(material)
+                chosen=data['sources'][0];key=chosen['id']
+                return schema.model_validate({'topic_term':chosen['text'][:2],'source_ids':[key],'reason':'当前页面完整支持当前教学对象的来源范围。','missing':[]})
+            if schema.__name__=='TopicScopeReview':
+                return schema.model_validate({'reason':'所选原文覆盖当前标题的全部对象与限定范围。','missing':[]})
             if schema.__name__=='SourceFactsDraft':
                 import json
                 source_id=json.loads(material)['sources'][0]['id']

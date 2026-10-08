@@ -65,6 +65,8 @@ The index and main product documents are in Chinese; configuration and animation
 
 Qualitative diagrams start with independent source reading and propositions. Subjects, predicates, objects and conditions form knowledge relations. Models select source IDs; the program binds quotations and shares SVG/animation layouts. Parametric geometry uses restricted expressions and numeric checks; model code is never executed. See [architecture and API](docs/架构与接口.md).
 
+Qualitative scenes first retrieve required evidence from the current and adjacent input pages and review the title's scope, then bind facts to narration. Reading is no longer limited to three sentences around a citation. The program preserves complete inline italic foreign-language examples; source annotations zoom into the current evidence at each step. See the [Agent and model capability audit](docs/agent-model-capability-2026-10.md) for evidence and remaining issues.
+
 ## Tests and reproduction
 
 ```powershell
@@ -83,6 +85,7 @@ Selected textbook pages from linguistics, economics, sociology and database desi
 
 - One sequential local queue; one PDF produces one lesson. Upload limit: 200 MB, with no fixed page or target-duration limit. Long books increase processing time and size.
 - OCR does not guarantee recovery of complex formulas, tables or layout. No manual formula-confirmation interface exists.
+- Each qualitative scene uses one source page and may reselect an adjacent input page. Missing title requirements or explanations requiring joint evidence across pages fail explicitly. Scope and semantic reviews can still be wrong and do not guarantee factual correctness.
 - The website displays courses and sources but has no project list, knowledge selection/editor, script editor or human approval/publishing workflow.
 - PPTX titles, source labels and notes are editable; SVG paths are not separate PowerPoint shapes. General/specialized clips include speech; basic embedded clips are silent, while the full video includes speech.
 - Restricted 2-D scenes and source-relation tracing are supported. Complex 3-D mechanisms, cross-chapter reasoning, fact proofs, separate SRT/VTT subtitles and course ZIP export are not implemented.

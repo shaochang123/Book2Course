@@ -14,6 +14,23 @@ from zhijiang.agents import source_candidates
 from zhijiang.pdf import read_pdf
 
 
+@pytest.mark.parametrize('stage',['TopicSourceScope','TopicScopeReview'])
+@pytest.mark.parametrize('enabled',[True,False])
+def test_topic_scope_stages_follow_semantic_thinking_configuration(stage,enabled):
+    from pydantic import create_model
+    schema=create_model(stage,reason=(str,...))
+    def handler(request):
+        if request.url.path=='/api/show':
+            return httpx.Response(200,json={'thinking':{'values':[True,False],'default':False}})
+        payload=json.loads(request.content)
+        assert payload['think'] is enabled
+        assert payload['options']['num_predict']==4096
+        return httpx.Response(200,json={'message':{'content':'{"reason":"原文覆盖当前范围"}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','installed-model',http_client,semantic_thinking=enabled)
+        assert client.generate(schema,'核对教学范围','source').reason=='原文覆盖当前范围'
+
+
 def test_local_config_and_environment_precedence(tmp_path, monkeypatch):
     config = tmp_path / ".env.local"
     config.write_text(

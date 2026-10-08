@@ -4,6 +4,14 @@
 
 Detailed reference moved from the project README. See the [implementation status](实现状态与路线图.md) (Chinese) for current scope. Machine versions and validation results are specific to their linked reports.
 
+### Title scope and source readability (2026-10-08)
+
+Qualitative scenes retrieve assertions from the current and adjacent input pages, then separately review operations, negation, conditions and explicit counts. The original citation stays in diagnostics and does not bias scope selection. One scene uses one source page; missing requirements or necessary joint evidence across pages cause an explicit failure. Every selected required fact must be narrated; this is not full-book coverage.
+
+Complete multiword inline italic examples are extracted from PDF font boundaries. The program fills their exact object names while the model supplies Chinese explanation; no subject-specific examples are built in. OCR lacks reliable typography and does not use this protection. Source annotation scenes retain a page map and zoom into uniquely matched evidence at each step. Lost font-boundary spaces are handled through exact character sequences, not word-bag guesses; ambiguous locations never produce invented crops.
+
+Scope, reading and planning caches use new versions and coverage checks. Foreign-language text PDFs retain source numeric tokens during translation; quantitative OCR remains strict. Token presence does not establish units, roles, conclusions or correct calculations. Semantic and human review are still needed. See the [capability audit](agent-model-capability-2026-10.md) for actual outcomes and failures.
+
 ### PPT production skills
 
 The following repository Codex skills help refine PPT content and assets. Web jobs generate a PPTX with built-in templates and do not invoke these skills automatically. Invoke them by name in a Codex task for this project:

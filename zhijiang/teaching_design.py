@@ -258,7 +258,7 @@ def bind_fact_relation(relation,nodes,facts):
     return relation
 
 
-def scanned_fact_issues(statement,source_quote):
+def scanned_fact_issues(statement,source_quote,*,ocr=True):
     """OCR exercise questions are not established numerical assertions.
 
     Layout may have lost a denominator even when all statement digits occur in
@@ -266,6 +266,19 @@ def scanned_fact_issues(statement,source_quote):
     """
     from zhijiang.agents import source_number_issues
     problems=source_number_issues(statement,source_quote)
+    # A foreign-language text PDF cannot literally contain its Chinese
+    # translation. Retain the numeric-token check, while leaving meaning,
+    # quantity roles and units to the explicit source review. OCR continues
+    # to require literal quantitative clauses because its layout can be lost.
+    from zhijiang.agents import _NUMBER
+    written_quantity=re.search(r'[二三四五六七八九十百千万]+(?:分之|个|种|次|倍|秒|小时|天|美元|米|度)',statement)
+    if (written_quantity and not re.search(r'[\u4e00-\u9fff]',source_quote)):
+        problems.append('外文来源的数值必须保留原数字，不能用中文数词绕过来源绑定。')
+    if (not ocr and not re.search(r'[\u4e00-\u9fff]',source_quote)
+            and _NUMBER.findall(statement)
+            and not set(_NUMBER.findall(statement))-set(_NUMBER.findall(source_quote))
+            and not written_quantity):
+        problems=[issue for issue in problems if not issue.startswith('未逐字绑定的定量表述：')]
     if (re.search(r'[?？]',source_quote) and
             (statement.endswith(('?','？')) or re.search(r'多少[^，。！？?]{0,6}[。！？?]$',statement))):
         problems.append('尚未作答的数量问题不是来源事实；OCR数值与原页版式仍需核对。')
@@ -301,7 +314,7 @@ def select_literal_source_facts(client,spans,repairs=None):
     return facts
 
 
-def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
+def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None,literals=None,feedback=''):
     """Read source without seeing a candidate explanation or user style prompt.
 
     This separates comprehension from persuasive narration and avoids a reviewer
@@ -313,10 +326,23 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
     # The complete container and source IDs must decode correctly. Each optional
     # record then passes the full statement contract independently, so a short
     # question cannot discard a valid definition in the same response.
-    fact=create_model('SourceFactRecord',
-        source_id=(Literal[tuple(spans)],Field(description='只选输入来源编号；没有完整原文依据的事实不输出，禁止-1或自拟编号。')),
-        statement=(str,Field(min_length=1,max_length=120,pattern=r'^[^\r\n]{1,120}$',
-            description='完整中文说明句，以中文句号结束；无依据或未作答的问题不输出。')))
+    records=[];prefixes={}
+    for key in spans:
+        prefix='原文中的'+ '、'.join('“'+value+'”' for value in (literals or {}).get(key,[])) if (literals or {}).get(key) else ''
+        if len(prefix)>108:raise TeachingDesignError('当前原文示例超过单条事实长度，请拆分知识点以保留完整示例。')
+        prefixes[key]=prefix
+        # The program fills the exact source object; the model only supplies
+        # its Chinese predicate. Requiring a small model/server to regenerate
+        # literal typography was both unnecessary and unreliable.
+        field='continuation' if prefix else 'statement'
+        pattern=(r'^[^A-Za-z\r\n]{3,'+str(119-len(prefix))+r'}[。！？]$'
+            if prefix else r'^[^\r\n]{1,120}$')
+        records.append(create_model('SourceFactRecord_'+str(key),
+            source_id=(Literal[key],Field(description='引用当前原文编号。')),
+            **{field:(str,Field(min_length=1,max_length=120-len(prefix),pattern=pattern,
+                description='literal_prefix由程序填入；continuation只用中文说明这个原文对象的动作/结论，不重复或翻译对象名称，以中文句号结束。'
+                if prefix else '完整中文说明句，以中文句号结束。'))}))
+    fact=Union[tuple(records)] if len(records)>1 else records[0]
     schema=create_model('SourceFactsDraft',
         facts=(list[fact],Field(min_length=1,max_length=8)))
     instruction=(
@@ -331,8 +357,11 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
         '忽略作者、机构、参考文献、纯表头及无法理解的截断片段。source_id选择当前编号，statement为12至120字的完整中文句子，以中文句号结束；不能照抄英文或截断词尾。'
         'facts不要求覆盖每个sources条目，只选择清楚的原文断言。不得输出自行推算的结果，不得使用-1或虚构编号。无法绑定完整原文的内容不进入事实数组，不凑条数。')
     try:
-        result=client.generate(schema,instruction,
-            json.dumps({'sources':[{'id':key,'text':text} for key,text in spans.items()]},ensure_ascii=False))
+        result=client.generate(schema,instruction+
+            '\nprotected_literals来自PDF行内斜体的完整示例。有literal_prefix的来源只输出continuation：用中文续写该原文对象的谓语，不重述、翻译或截短主语，不写拉丁字母。literal_prefix由程序原样回填。其他来源输出statement。'+
+            ('\n修正：'+feedback if feedback else ''),
+            json.dumps({'sources':[{'id':key,'text':text,'protected_literals':(literals or {}).get(key,[]),'literal_prefix':prefixes[key]}
+                for key,text in spans.items()]},ensure_ascii=False))
     except GenerationError as exc:
         if not (ocr and '返回不符合数据契约的 JSON' in str(exc)):
             raise
@@ -345,14 +374,19 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
         raise
     facts=[];seen=set()
     for record in result.facts:
-        try:item=SourceFactDraft.model_validate(record.model_dump())
+        data=record.model_dump()
+        if 'continuation' in data:
+            data={'source_id':record.source_id,'statement':prefixes[record.source_id]+data['continuation']}
+        try:item=SourceFactDraft.model_validate(data)
         except ValidationError as exc:
             if rejections is not None:
                 issues=[f"{'.'.join(map(str,error['loc']))}:{error['type']}" for error in exc.errors()]
-                rejections.append({'source_id':record.source_id,'statement':record.statement,'issues':issues})
+                rejections.append({'source_id':record.source_id,'statement':data['statement'],'issues':issues})
             continue
         if item.source_id not in spans:raise TeachingDesignError('来源事实引用了不存在的片段。')
-        if problems := scanned_fact_issues(item.statement,spans[item.source_id]):
+        from zhijiang.teaching_scope import literal_issues
+        if problems := (scanned_fact_issues(item.statement,spans[item.source_id],ocr=ocr)+
+                literal_issues(item.statement,(literals or {}).get(item.source_id,[]))):
             if rejections is not None:
                 rejections.append({'source_id':item.source_id,'statement':item.statement,'issues':problems})
             continue  # Reject this optional assertion, not the course topic.
@@ -367,15 +401,17 @@ def extract_source_facts(client,spans,*,ocr=False,rejections=None,repairs=None):
     return facts
 
 
-def source_reading_fingerprint(client,spans,ocr=False):
-    return hashlib.sha256(json.dumps({'version':'ocr-source-reading-v4' if ocr else 'source-reading-v2','spans':spans,
+def source_reading_fingerprint(client,spans,ocr=False,literals=None,required_sources=()):
+    return hashlib.sha256(json.dumps({'version':'source-reading-v8','spans':spans,'ocr':ocr,
+        'literals':literals or {},'required_sources':list(required_sources),
         'semantic_thinking':getattr(client,'semantic_thinking',True),
         'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model','')},sort_keys=True).encode()).hexdigest()
 
 
-def source_reading(client,spans,path=None,*,ocr=False):
+def source_reading(client,spans,path=None,*,ocr=False,literals=None,required_sources=()):
     """Cache unapproved comprehension drafts; every design still gets reviewed."""
-    fingerprint=source_reading_fingerprint(client,spans,ocr)
+    from zhijiang.teaching_scope import literal_issues
+    fingerprint=source_reading_fingerprint(client,spans,ocr,literals,required_sources)
     if path:
         try:
             saved=json.loads(path.read_text(encoding='utf-8'))
@@ -385,7 +421,8 @@ def source_reading(client,spans,path=None,*,ocr=False):
             kept=[];rejections=list(saved.get('rejected_facts',[]))
             for fact in facts:
                 fact['statement']=SourceFactDraft.model_validate(fact).statement
-                if problems:=scanned_fact_issues(fact['statement'],spans.get(fact['source_id'],'')):
+                if problems:=(scanned_fact_issues(fact['statement'],spans.get(fact['source_id'],''),ocr=ocr)+
+                        literal_issues(fact['statement'],(literals or {}).get(fact['source_id'],[]))):
                     rejection={'source_id':fact['source_id'],'statement':fact['statement'],'issues':problems}
                     if rejection not in rejections:rejections.append(rejection)
                     continue
@@ -396,12 +433,22 @@ def source_reading(client,spans,path=None,*,ocr=False):
                     path.write_text(json.dumps({**saved,'facts':kept,'rejected_facts':rejections,
                         'status':'draft_requires_semantic_review' if kept else 'rejected_requires_source_review'},
                         ensure_ascii=False,indent=2),encoding='utf-8')
-                if kept:return kept,True
-                raise TeachingDesignError('缓存事实未通过OCR数值引用检查，需核对原页。')
+                if kept and not set(required_sources)-{fact['source_id'] for fact in kept}:return kept,True
         except (OSError,ValueError,KeyError):pass
     rejections=[];repairs=[]
     try:
-        facts=extract_source_facts(client,spans,ocr=ocr,rejections=rejections,repairs=repairs)
+        feedback='必须忠实翻译这些标题所需来源编号：'+str(list(required_sources)) if required_sources else ''
+        for attempt in range(2):
+            try:
+                facts=extract_source_facts(client,spans,ocr=ocr,rejections=rejections,repairs=repairs,
+                    literals=literals,feedback=feedback)
+                missing=set(required_sources)-{fact['source_id'] for fact in facts}
+                if not missing:break
+                feedback='遗漏标题所需来源编号：'+str(sorted(missing))+'。'+str(rejections[-3:])
+            except TeachingDesignError as exc:
+                feedback=str(exc)+'。'+str(rejections[-3:])
+                if not literals and not required_sources:raise
+            if attempt==1:raise TeachingDesignError('原文理解未覆盖教学范围或改写了原文示例：'+feedback)
     except TeachingDesignError:
         if path:
             path.write_text(json.dumps({'fingerprint':fingerprint,'facts':[],
@@ -580,13 +627,14 @@ def citation_fact_ids(facts,quote):
                 and normalized(fact['source_quote']) in key)]
 
 
-def preserve_topic_focus(draft,facts,topic,quote=''):
+def preserve_topic_focus(draft,facts,topic,quote='',required_sources=()):
     """Bind the current question to its most specific sourced Chinese phrase.
 
     Phrase frequency discounts generic words across the local readings; no
     discipline glossary or topic-name routing is used. Synonyms still need review.
     """
-    citation_ids=citation_fact_ids(facts,quote)
+    citation_ids=([f['id'] for key in required_sources for f in facts if f['source_id']==key]
+        if required_sources else citation_fact_ids(facts,quote))
     if citation_ids:
         selected=diagram_source_facts(draft,facts)
         missing=set(citation_ids)-{fact['id'] for fact in selected}
@@ -1258,13 +1306,29 @@ def prepare_source_assets(pdf_path, output_dir, document, *, progress=None):
     return catalog
 
 
+def quote_rects(page,quote):
+    """Locate an exact quote despite whitespace lost at PDF font boundaries."""
+    import pymupdf
+    rects=page.search_for(quote)
+    words=page.get_text('words');text='';offsets=[]
+    for word in words:
+        start=len(text);text+=normalized(word[4]);offsets.append((start,len(text),word))
+    needle=normalized(quote)
+    matches=[match.start() for match in re.finditer(re.escape(needle),text)] if needle else []
+    if len(matches)>1:return []
+    if rects:return rects
+    if len(matches)!=1:return []
+    start=matches[0];end=start+len(needle)
+    return [pymupdf.Rect(word[:4]) for left,right,word in offsets if left<end and right>start]
+
+
 def attach_source_regions(diagram, asset, pdf_path, page_number):
     import pymupdf
     diagram.source_asset=asset['path']
     with pymupdf.open(pdf_path) as pdf:
         page=pdf[page_number-1]
         for node in diagram.nodes:
-            rects=page.search_for(node.source_quote)
+            rects=quote_rects(page,node.source_quote)
             if not rects and node.source_term:
                 candidates=page.search_for(node.source_term)
                 # An ambiguous repeated keyword is not a located source region.
@@ -1277,18 +1341,14 @@ def attach_source_regions(diagram, asset, pdf_path, page_number):
                                                      box.x1/page.rect.width,box.y1/page.rect.height]
 
 
-def plan_teaching_representation(client, segment, document, prompt, *, force_diagram=False,diagnostic_output=None,on_phase=None):
-    page=next(p for p in document.pages if p.page==segment.evidence.page)
-    # Full source page provides context that a short citation alone cannot carry.
-    spans=source_spans(page.text)
-    if not spans:
-        raise TeachingDesignError('当前来源页只有零碎符号或短标签，缺少可核对的说明文字；请核对OCR或提供包含定义与条件的页面。')
-    # Ground the design in the cited local context, rather than handing a small
-    # model every unrelated formula on a dense page. Review still sees the page.
-    from difflib import SequenceMatcher
-    citation=normalized(segment.evidence.quote)
-    anchor=max(spans,key=lambda key:SequenceMatcher(None,citation,normalized(spans[key]),autojunk=False).find_longest_match().size)
-    spans={key:value for key,value in spans.items() if abs(key-anchor)<=3}
+def plan_teaching_representation(client, segment, document, prompt, *, force_diagram=False,diagnostic_output=None,on_phase=None,pdf_path=None):
+    from zhijiang.teaching_scope import select_topic_sources,source_literals
+    if on_phase:on_phase('检索标题所需来源与范围')
+    scope_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','topic-scope').replace('teaching-redesign','topic-rescope')) if diagnostic_output else None
+    scope=select_topic_sources(client,segment,document,scope_path)
+    page=next(p for p in document.pages if p.page==scope['page'])
+    spans=scope['sources']
+    literals=source_literals(pdf_path,page.page,spans) if not page.ocr else {}
     facts=[]
     material_data={'topic':segment.title,'citation':segment.evidence.model_dump(),
                    'sources':[{'id':key,'text':text} for key,text in spans.items()]}
@@ -1320,7 +1380,8 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
             diagnostic_output.write_text(json.dumps({'sources':spans,'source_facts':facts,'phase':name,'attempts':attempts},ensure_ascii=False,indent=2),encoding='utf-8')
     phase('独立理解原文事实')
     reading_path=diagnostic_output.with_name(diagnostic_output.name.replace('teaching-design','source-reading').replace('teaching-redesign','source-rereading')) if diagnostic_output else None
-    facts,reading_cached=source_reading(client,spans,reading_path,ocr=page.ocr)
+    facts,reading_cached=source_reading(client,spans,reading_path,ocr=page.ocr,
+        literals=literals,required_sources=scope['source_ids'])
     from zhijiang.teaching_graph import (source_propositions,validate_source_propositions,
         graph_design_schema,design_from_propositions)
     phase('独立提取来源命题')
@@ -1371,7 +1432,7 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
                 draft=resolve_design(draft,spans,repairs,facts,propositions)
             bind_annotation_anchors(draft,repairs)
             validate_source_propositions(draft,propositions)
-            topic_facts=preserve_topic_focus(draft,facts,segment.title,segment.evidence.quote)
+            topic_facts=preserve_topic_focus(draft,facts,segment.title,segment.evidence.quote,scope['source_ids'])
             source_examples=prefer_source_example(draft,facts,prompt)
             source_sequence=preserve_source_sequence(draft,facts)
             attempts[-1]['topic_facts']=topic_facts
@@ -1451,6 +1512,8 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
             report['source_examples']=source_examples
             report['source_sequence']=source_sequence
             report['topic_facts']=topic_facts
+            report['topic_scope']=scope
+            report['protected_literals']=literals
             report['reference_repairs']=repairs
             report['source_propositions']=propositions
             from zhijiang.teaching_graph import design_digest,knowledge_graph
@@ -1466,6 +1529,13 @@ def plan_teaching_representation(client, segment, document, prompt, *, force_dia
 
 
 def compile_teaching_scene(draft, segment, report, *, source_assets=None, pdf_path=None, source_text=''):
+    from zhijiang.models import Evidence
+    scope=report.get('topic_scope')
+    if scope:
+        # Switch to the actually taught page only after successful validation;
+        # the original retrieval citation stays in the scope audit record.
+        first_quote=next(iter(scope['sources'].values()))
+        segment.evidence=Evidence(page=scope['page'],quote=first_quote,ocr=scope['ocr'])
     diagram=TeachingDiagram.model_validate(draft.model_dump(exclude={'question'}))
     if diagram.representation=='source_figure' and source_assets and pdf_path:
         attach_source_regions(diagram,source_assets[segment.evidence.page],pdf_path,segment.evidence.page)

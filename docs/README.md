@@ -14,6 +14,7 @@
 | 改进图示和动画 | [教学图示与动画](教学图示与动画.md) / [English](animations.en.md) → [通用场景契约](scene-graph.md) |
 | 开发与对接 API | [架构与接口](架构与接口.md) → [测试目录](../tests) |
 | 复现与评估 | [演示操作说明](Demo_操作说明.md) → [验证与验收](验证与验收.md) |
+| 判断 Agent / 模型限制 | [能力诊断与修复](agent-model-capability-2026-10.md) |
 | 查开发过程和组件来源 | [AI Coding 全过程](AI_Coding_全过程.md) → [第三方来源与许可](第三方来源与许可.md) |
 
 ## 仓库目录职责

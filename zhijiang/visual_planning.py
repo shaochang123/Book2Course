@@ -502,7 +502,7 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
     source_digest=hashlib.sha256(pdf_path.read_bytes()).hexdigest() if pdf_path else document.model_dump_json()
     for index, segment in enumerate(lesson.segments):
         cache_path=draft_output.with_name(f'planned-scene-{index+1:02d}.json') if pedagogical_design and draft_output else None
-        fingerprint=hashlib.sha256(json.dumps({'version':'teaching-design-v20','source':source_digest,
+        fingerprint=hashlib.sha256(json.dumps({'version':'teaching-design-v22','source':source_digest,
             'semantic_thinking':getattr(client,'semantic_thinking',True),
             'endpoint':getattr(client,'base_url',''),'model':getattr(client,'model',''),
             'prompt':prompt,'topic':segment.title,'evidence':segment.evidence.model_dump(),
@@ -513,17 +513,18 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
                 from zhijiang.teaching_design import cached_source_examples_covered,cached_source_sequence_covered,cached_topic_focus_covered,normalized
                 try:
                     reading=json.loads(cache_path.with_name(f'source-reading-{index+1:02d}.json').read_text(encoding='utf-8'))
-                    source_page=next(page.text for page in document.pages if page.page==segment.evidence.page)
+                    source_page=next(page.text for page in document.pages if page.page==cached[0].evidence.page)
                     facts=reading['facts']
                     if (not all(normalized(fact['source_quote']) in normalized(source_page) for fact in facts)
                             or not cached_source_examples_covered(cached[0],facts,prompt)
                             or not cached_source_sequence_covered(cached[0],facts)
-                            or not cached_topic_focus_covered(cached[0],facts,segment.title)):
+                            or (not cached[1].get('topic_scope') and not cached_topic_focus_covered(cached[0],facts,segment.title))):
                         cached=None
                 except (OSError,ValueError,KeyError):cached=None
             if cached:
                 scene,review=cached
                 segment.visual_scene=scene;segment.narration=' '.join(b.narration for b in scene.beats)
+                segment.evidence=scene.evidence
                 drafts.append({'segment_index':index,'cached':True,'scene':scene.model_dump()})
                 reviews.append({**review,'segment_index':index,'cached':True})
                 progress(f'复用已核验分镜（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments))
@@ -532,13 +533,14 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
             progress(f'分析教学表达（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments))
             diagnostic=draft_output.with_name(f'teaching-design-{index+1:02d}.json') if draft_output else None
             design,report,design_errors=plan_teaching_representation(client,segment,document,prompt,diagnostic_output=diagnostic,
+                pdf_path=pdf_path,
                 force_diagram=not visual_capabilities()['geometry_ready'],
                 on_phase=lambda name:progress(f'{name}（{index+1}/{len(lesson.segments)}）：{segment.title}',54+index*10//len(lesson.segments)))
             drafts.append({'segment_index':index,'teaching_design':design.model_dump(),'rejected_designs':design_errors})
             if draft_output:
                 draft_output.write_text(json.dumps(drafts,ensure_ascii=False,indent=2),encoding='utf-8')
             if design.representation!='geometry':
-                page=next(p for p in document.pages if p.page==segment.evidence.page)
+                page=next(p for p in document.pages if p.page==report.get('topic_scope',{}).get('page',segment.evidence.page))
                 scene=compile_teaching_scene(design,segment,report,source_assets=source_assets,pdf_path=pdf_path,source_text=page.text)
                 scene.verification=verify_visual_scene(scene)
                 segment.visual_scene=scene
@@ -643,8 +645,9 @@ def plan_visual_scenes(client, lesson: Lesson, document, prompt: str, progress, 
             # animate invented coordinates or abort every other course segment.
             progress(f'重新设计教学表达：{segment.title}',54+index*10//len(lesson.segments))
             design,report,errors=plan_teaching_representation(client,segment,document,prompt,force_diagram=True,
+                pdf_path=pdf_path,
                 diagnostic_output=draft_output.with_name(f'teaching-redesign-{index+1:02d}.json') if draft_output else None)
-            page=next(p for p in document.pages if p.page==segment.evidence.page)
+            page=next(p for p in document.pages if p.page==report.get('topic_scope',{}).get('page',segment.evidence.page))
             scene=compile_teaching_scene(design,segment,report,source_assets=source_assets,pdf_path=pdf_path,source_text=page.text)
             scene.verification=verify_visual_scene(scene)
             drafts.append({'segment_index':index,'teaching_design':design.model_dump(),'geometry_failure':last_error,'rejected_designs':errors})
@@ -682,9 +685,13 @@ def load_planned_scene(path, fingerprint, document, segment):
         review=saved['review']
         if review.get('semantic_review',review).get('approved') is not True:return None
         scene=VisualScenePlan.model_validate(saved['scene'])
-        if scene.evidence!=segment.evidence:return None
+        if scene.evidence!=segment.evidence and not review.get('topic_scope'):return None
         validate_evidence(document,scene.evidence)
         if scene.diagram:
+            if review.get('topic_scope'):
+                from zhijiang.teaching_scope import validate_cached_scope
+                if not validate_cached_scope(scene,review['topic_scope'],document,segment,review.get('protected_literals')):
+                    return None
             from zhijiang.teaching_graph import design_digest,validate_source_propositions
             if review.get('reviewed_design_digest')!=design_digest(scene.diagram):
                 return None

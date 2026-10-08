@@ -181,6 +181,8 @@ def test_annotation_review_keeps_phrase_role_and_rejects_wrong_meaning(represent
     reviews=[]
     class Client:
         def generate(self,schema,instruction,material):
+            if schema.__name__=='TopicSourceScope':
+                return schema.model_validate({'topic_term':'一个数','source_ids':[1],'reason':'当前来源完整支持这个知识点的定义与条件。','missing':[]})
             if schema.__name__=='SourceFactsDraft':
                 return schema.model_validate({'facts':[{'source_id':1,'statement':source}]})
             if schema.__name__=='SourcePropositionsDraft':
@@ -496,6 +498,8 @@ def test_planner_does_not_publish_unbound_claims_in_heading_or_rationale():
     segment=LessonSegment(title='观测与目标',kind='concept',narration='说明观测数据与原文训练目标之间的限定关系。',bullets=['观测与目标'],evidence=Evidence(page=1,quote=source))
     class Client:
         def generate(self,schema,instruction,material):
+            if schema.__name__=='TopicSourceScope':
+                return schema.model_validate({'topic_term':'observations','source_ids':[1],'reason':'当前来源完整支持这个知识点的对象与关系。','missing':[]})
             if schema.__name__=='SourceFactsDraft':
                 return schema.model_validate({'facts':[{'source_id':1,'statement':'记录的观测数据仅支持训练目标，不保证所有任务成功。'}]})
             if schema.__name__=='SourcePropositionsDraft':

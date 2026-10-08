@@ -8,6 +8,7 @@ from manim import (Scene,Text,VGroup,RoundedRectangle,Rectangle,Arrow,Line,Dot,I
 from zhijiang.models import VisualScenePlan
 from zhijiang.visual_planning import verify_visual_scene
 from zhijiang.teaching_layout import layout_diagram,wrap_label
+from zhijiang.source_detail import (source_detail,fit_size,PREVIEW_CENTER,PREVIEW_SIZE,DETAIL_CENTER)
 
 
 class DiagramTeachingScene(Scene):
@@ -24,9 +25,12 @@ class DiagramTeachingScene(Scene):
         self.add(title,question)
         image=None
         if diagram.source_asset:
-            image=ImageMobject(diagram.source_asset).scale_to_fit_height(4.9).move_to([-4.75,.25,0])
-            if image.width>3.2:image.scale_to_fit_width(3.2)
+            image=ImageMobject(diagram.source_asset)
+            width,height=fit_size((image.width,image.height),PREVIEW_SIZE)
+            image.stretch_to_fit_width(width).stretch_to_fit_height(height).move_to([*PREVIEW_CENTER,0])
             self.add(image)
+            self.add(Text('原页定位 · 右侧放大依据',font='Microsoft YaHei',font_size=14,
+                color='#A7C0CC').move_to([-5.7,-2.1,0]))
         nodes={};edges={};labels={}
         conditions=list(dict.fromkeys(edge.condition for edge in diagram.relations if edge.condition))
         for node in diagram.nodes:
@@ -50,7 +54,7 @@ class DiagramTeachingScene(Scene):
         guide='关系追踪' if diagram.relations else '原文图示高亮'
         footer=Text(f'PDF 第 {plan.evidence.page} 页 · {guide}表示讲解顺序，非物理模拟'+(' · 条件见逐步讲解' if conditions else ''),
             font='Microsoft YaHei',font_size=17,color='#A7C0CC').move_to([0,-3.65,0]);self.add(footer)
-        report=[];caption=None;shown=set();highlight=None
+        report=[];caption=None;shown=set();highlight=None;detail_image=None
         for i,step in enumerate(diagram.steps):
             timing=data['timing'][i]
             if caption:self.remove(caption)
@@ -64,6 +68,12 @@ class DiagramTeachingScene(Scene):
                 if key not in shown:
                     animations.extend([Create(edges[key]),FadeIn(labels[key])]);shown.add(key)
             if highlight:self.remove(highlight);highlight=None
+            if detail_image:self.remove(detail_image);detail_image=None
+            detail=source_detail(diagram,step.focus)
+            if detail:
+                detail_image=ImageMobject(np.array(detail['image']))
+                detail_image.stretch_to_fit_width(detail['size'][0]).stretch_to_fit_height(detail['size'][1])
+                detail_image.move_to([*detail['center'],0]);self.add(detail_image)
             if image:
                 boxes=[]
                 for key in step.focus:
@@ -89,6 +99,7 @@ class DiagramTeachingScene(Scene):
             report.append({'step':i+1,'rendered_seconds':float(self.time),'passed':True,
                 'representation':diagram.representation,'focus':step.focus,'relations':step.relations,
                 'nodes':layout,'connections':connections,'source_regions':diagram.source_regions,
+                'source_detail':{key:value for key,value in detail.items() if key!='image'} if detail else None,
                 'checks':[{'kind':'relation_endpoints','passed':True,'relation':key,
                            'maximum_coordinate_error':float(max(np.linalg.norm(edges[key].get_start()-point(connections[key]['start'])),
                                                                np.linalg.norm(edges[key].get_end()-point(connections[key]['end']))))}

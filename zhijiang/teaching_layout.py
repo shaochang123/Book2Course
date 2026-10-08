@@ -11,8 +11,14 @@ def layout_diagram(diagram):
     ids=[n.id for n in diagram.nodes]; count=len(ids)
     has_source=bool(diagram.source_asset and diagram.representation=='source_figure')
     if has_source:
-        positions=[(x,y) for y in (1.7,0,-1.7) for x in (0.1,4.0)]
-        width,height=3.1,1.05
+        if not diagram.relations:
+            # A compact annotation strip leaves the actual source large enough
+            # to read; the original page remains visible as a context map.
+            width,height=min(2.8,9.2/count-.18),.62
+            positions=[(.85+(i-(count-1)/2)*(width+.18),2.15) for i in range(count)]
+        else:
+            positions=[(x,y) for y in (1.7,0,-1.7) for x in (0.1,4.0)]
+            width,height=3.1,1.05
     elif count<=3:
         xs=(0,) if count==1 else ((-2.6,2.6) if count==2 else (-4.2,0,4.2))
         positions=[(x,.45) for x in xs];width,height=3.15,1.15
