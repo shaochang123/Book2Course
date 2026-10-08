@@ -1,27 +1,56 @@
-# 智讲 Agent Demo 操作说明
+# 演示与复现操作说明
 
-## 提交文件
+当前入口见[使用指南](使用指南.md)，实测证据见[验证与验收](验证与验收.md)。`demo/` 中的已有视频为九月首版输出，不代表当前图示、OCR 或泛化效果；本轮文档整理不重建这些媒体。
 
-可直接播放的真实模型产品 Demo 是 `demo/zhijiang_ollama_demo.mp4`，配套来源为 `examples/binary_search_original.pdf`，结构化课程结果为 `demo/zhijiang_ollama_lesson.json`。另提供无需模型的 `demo/zhijiang_demo.mp4` 作为确定性工程演示。提交包由 `scripts/build_submission.py` 生成，内含两项必需材料：产品说明书及独立 AI Coding 附件、产品 Demo 视频。讲义为本届原创内容；主视频的讲稿由本机 Ollama `qwen2.5:7b` 生成，声音来自 Windows 中文系统语音，**不是 AI 配音**。
+## 1. 当前网页演示
 
-## 本地网站复现流程
+1. 从仓库根目录启动 `python -m uvicorn zhijiang.main:app --host 127.0.0.1 --port 8765`。
+2. 打开网页，上传 `examples/binary_search_original.pdf`，选择演示模式和系统语音，确认资料使用权。
+3. 观察进度、完成后的课程目标与逐段讲稿，展开原文页码和摘录。
+4. 播放视频，下载 MP4 和 PPTX，核对讲者备注和来源。
+5. 真实 AI 演示需要先启动本机模型并填入实际模型名；可用 `auto` 展示当前按内容规划的图示。
+6. 使用真实发生的失败任务展示错误和“使用原 PDF 重新生成”；不制造假的成功或审核记录。
+7. 演示本地删除和终端 `Ctrl+C` 关闭服务。
 
-1. 按仓库 README 安装依赖，运行 `python -m uvicorn zhijiang.main:app --host 127.0.0.1 --port 8765`，打开 `http://127.0.0.1:8765`。
-2. 上传 `examples/binary_search_original.pdf`，保持“确定性演示模式”与“Windows 中文系统语音”。勾选资料使用权确认并点击“生成一节课”。
-3. 观察任务从 PDF 解析、知识提取、课程规划、讲稿与分镜、来源核验、配音直到视频合成。完成后播放 MP4，展开讲稿片段，核对第 1、2 页的原文摘录。
-4. 试用“下载 MP4”与“删除本地任务与资料”。删除后原 PDF 与结果从本地任务目录移除。
-5. 如果任务失败，可点击“使用原 PDF 重新生成”；任务会保留原资料和授权确认，并清除上次失败状态。选择外部服务时仍须满足外部发送同意条件。
+当前不演示项目列表、知识点编辑、讲稿修改或人工审核，因为没有这些操作入口。参考文档 UI 是设计示意，不能用作运行截图。
 
-复制 `.env.local.example` 为 `.env.local`，确认本机 Ollama 运行且装有 `qwen2.5:7b`，重启网站即可选“本机 Ollama 真实 AI 模式”。本机调用不发送资料到外部服务；如果改用远程模型或远程语音服务，页面才会要求额外同意。该模式结果仍需人工检查，切勿把演示模式的确定性脚本描述为真实模型输出。
+## 2. 原创样例重新生成
 
-## 验收记录
+```powershell
+.\.venv\Scripts\python scripts\generate_sample_pdf.py
+.\.venv\Scripts\python scripts\build_demo.py
+.\.venv\Scripts\python scripts\build_ollama_demo.py
+```
 
-开发机：Windows、Python 3.13.9。2026 年 9 月 25 日运行 `python -m pytest`，**21 项通过**。本机 Ollama 真实模式从原创示例生成 4 个讲解片段，页码引文可核对；当前主 Demo 视频时长 **3 分 18 秒**，1280×720，H.264 视频和 AAC 中文系统语音，FFmpeg 完整解码返回 0。另用用户上传的 56 页教材在本机重试原失败任务，成功生成约 2 分 23 秒的视频，该资料不进入参赛包。确定性演示另生成 6 段、2 分 13 秒的视频；浏览器视频元素报告该演示视频时长 133.044 秒且已加载。未做线上模型效果声明。
+第一个命令重建原创 PDF；第二个使用确定性规则；第三个调用当前本机 Ollama。运行前确认模型配置与系统中文语音。脚本会覆盖 `demo/` 对应文件；更新这些文件后要记录实际模型、提交、来源和媒体检查，不沿用九月时长。
 
-## 提交前核对
+九月已有 `zhijiang_ollama_demo.mp4` 的文本由 `qwen2.5:7b` 生成，配音为 Windows 系统语音，4 段、约 3 分 18 秒。备用 `zhijiang_demo.mp4` 为确定性规则，6 段、约 2 分 13 秒。历史细节见[归档操作说明](archive/2026-09/Demo_操作说明.md)。二者不标称 AI 配音。
 
-- 两项材料都上传：产品说明书（含独立 AI Coding 附件）与产品 Demo。
-- AI Coding 工具名称为 OpenAI Codex，其需求、架构、编码、测试、调试和文档用途有独立过程记录。
-- 示例 PDF 为本届原创；依赖、FFmpeg 和系统语音来源已列示。
-- 演示视频、页面与文字中的“演示模式 / AI 模式 / 系统语音 / AI 配音”标签一致。
-- 以赛事平台要求的格式，在 2026 年 10 月 23 日 24:00（中国时间）前完成提交。
+## 3. 不预写分镜的教材验证
+
+根据[来源清单](../examples/holdout-sources.json)取得相同版本、核对哈希，保存到忽略提交的 `data/holdout/`。使用空提示词运行生产模块：
+
+```powershell
+.\.venv\Scripts\python -m scripts.verify_textbook_generalization --pdf data\holdout\linguistics.pdf --pages 172,173,175 --output data\holdout\linguistics-verify --model qwen3.5:9b --no-thinking --render
+```
+
+该命令使用实际已安装的本机模型和系统配音。其他三领域页码、命令、失败记录、缓存协议与教学缺陷见[教材验证](generalization-validation-2026-10.md)。它检验选页的模型/渲染链路，不检验网页队列，也不是整书或独立盲测。
+
+## 4. 技术检查与录屏
+
+```powershell
+.\.venv\Scripts\python -m pytest
+.\.venv\Scripts\python scripts\verify_teaching_artifacts.py --job-dir data\jobs\你的任务ID
+```
+
+录屏从真实页面开始。长生成过程可剪辑等待时间，但保留任务 ID、模式、模型和实际状态，并注明剪辑。展示输入、讲稿、页码、真实视频播放与下载；把技术检查、人工内容复核、未测试项分别说明。不要把开发者预写的场景用于声称模型对未知教材的泛化。
+
+## 5. 当前文档与历史包
+
+```powershell
+.\.venv\Scripts\python scripts\build_documents.py
+```
+
+导出当前项目说明到 `output/pdf/`。文档源文件为[产品说明书](产品说明书.md)，不调用模型、不生成课程。
+
+九月 `submission/` 包保持历史版本。旧 `build_submission.py` 固定读取归档说明与九月媒体，不作为当前发布入口，见[归档说明](archive/2026-09/README.md)。

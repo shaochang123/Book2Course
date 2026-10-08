@@ -1,4 +1,4 @@
-"""把说明书、独立 AI Coding 报告和 Demo 打成可审阅的参赛材料包。"""
+"""重建九月历史材料包；当前项目文档使用 build_documents.py。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "submission"
+ARCHIVE_DOCS = ROOT / "docs" / "archive" / "2026-09"
 FONT = Path("C:/Windows/Fonts/simhei.ttf")
 
 
@@ -94,10 +95,10 @@ def export_pdf(source: Path, target: Path) -> None:
 def main() -> None:
     OUT.mkdir(exist_ok=True)
     mapping = {
-        "01_智讲Agent_产品说明书.pdf": ROOT / "docs" / "产品说明书.md",
-        "01A_智讲Agent_AI_Coding全过程.pdf": ROOT / "docs" / "AI_Coding_全过程.md",
-        "附件_演示操作说明.pdf": ROOT / "docs" / "Demo_操作说明.md",
-        "附件_第三方来源与许可.pdf": ROOT / "docs" / "第三方来源与许可.md",
+        "01_智讲Agent_产品说明书.pdf": ARCHIVE_DOCS / "产品说明书.md",
+        "01A_智讲Agent_AI_Coding全过程.pdf": ARCHIVE_DOCS / "AI_Coding_全过程.md",
+        "附件_演示操作说明.pdf": ARCHIVE_DOCS / "Demo_操作说明.md",
+        "附件_第三方来源与许可.pdf": ARCHIVE_DOCS / "第三方来源与许可.md",
     }
     for filename, source in mapping.items():
         export_pdf(source, OUT / filename)

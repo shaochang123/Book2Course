@@ -10,3 +10,5 @@ data/
 .env.*.local
 dist/
 build/
+output/pdf/
+tmp/pdfs/
