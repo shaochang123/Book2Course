@@ -15,9 +15,9 @@ from typing import Literal
 
 
 class SourceProposition(BaseModel):
-    subject: str = Field(min_length=2,max_length=48)
+    subject: str = Field(min_length=1,max_length=48)
     predicate: str = Field(min_length=1,max_length=32)
-    object: str = Field(min_length=2,max_length=48)
+    object: str = Field(min_length=1,max_length=48)
     fact_ids: list[int] = Field(min_length=1,max_length=3)
     subject_source_term: str = Field(default='',max_length=64)
     object_source_term: str = Field(default='',max_length=64)
@@ -32,7 +32,7 @@ def complete_graph_label(label):
     """
     text=label.strip();words=re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?",text.lower())
     if text.lower() in {'i','we','you','he','she','it','they','this','that','these','those',
-                         '我','我们','你','你们','他','她','它','他们','这些','那些','这','那'}:
+                         '我','我们','你','你们','他','她','它','他们','她们','它们','自己','其','这些','那些','这','那'}:
         return False
     if re.match(r'^(?:这|那)(?:些|个|组|种|一)',text):return False
     if words and re.fullmatch(r'[\x00-\x7f]+',text) and words[-1] in {
@@ -94,13 +94,13 @@ def _checked_propositions(items,facts):
     return kept,rejected
 
 
-def source_propositions(client,facts,path: Path | None=None):
+def source_propositions(client,facts,path: Path | None=None,*,compact=False):
     """Read relations before seeing any diagram, label choices, or user style.
 
     These drafts constrain the later design; they are not proof of entailment.
     Accepted designs still receive full-page itemized source review.
     """
-    fingerprint=hashlib.sha256(json.dumps({'version':'source-propositions-v5','facts':facts,
+    fingerprint=hashlib.sha256(json.dumps({'version':'source-propositions-compact-v1' if compact else 'source-propositions-v5','facts':facts,
         'provider':getattr(client,'base_url',''),'model':getattr(client,'model',''),
         'semantic_thinking':getattr(client,'semantic_thinking',True)},
         ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -113,7 +113,8 @@ def source_propositions(client,facts,path: Path | None=None):
         except (ValueError,OSError,KeyError):pass
     proposition=create_model('SourcePropositionDraft',__base__=SourceProposition,
         fact_ids=(list[Literal[tuple(f['id'] for f in facts)]],Field(min_length=1,max_length=3)))
-    schema=create_model('SourcePropositionsDraft',propositions=(list[proposition],Field(max_length=8)))
+    schema=create_model('SlideSourcePropositionsDraft' if compact else 'SourcePropositionsDraft',
+        propositions=(list[proposition],Field(max_length=4 if compact else 8)))
     result=client.generate(schema,
         '独立阅读sources，提取原文明确断言的主语、谓词、宾语三元命题，不做教学设计。'
         '你没有候选图。subject/object复制statement中的完整实体、操作名称或原语言术语，predicate用中文忠实保留否定、可能、范围和条件提示。'

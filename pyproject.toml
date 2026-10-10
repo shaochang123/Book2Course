@@ -15,6 +15,7 @@ dependencies = [
   "pypdf>=5,<7",
   "Pillow>=11,<13",
   "resvg_py==0.5.0",
+  "jieba>=0.42.1,<1",
   "python-pptx>=1.0.2,<2",
   "imageio-ffmpeg>=0.6,<1",
   "httpx>=0.28,<1",
@@ -28,7 +29,6 @@ dependencies = [
 math-animation = [
   "manim==0.21.0",
   "sympy>=1.14,<2",
-  "jieba>=0.42.1,<1",
   "pymupdf>=1.24,<2",
 ]
 test = [

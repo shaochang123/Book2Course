@@ -261,6 +261,22 @@ def test_teaching_semantic_review_uses_qwen3_deliberation():
         assert not review.approved
 
 
+@pytest.mark.parametrize('stage',['DeckClosingReview','DeckRouteReview','SlideSourcePropositionsDraft'])
+def test_compact_story_stages_use_bounded_native_schema(stage):
+    from pydantic import create_model
+    schema=create_model(stage,point_1=(bool,...),issues=(str,''))
+    def handler(request):
+        if request.url.path=='/api/show':
+            return httpx.Response(200,json={'thinking':{'values':[True,False],'default':False}})
+        body=json.loads(request.content)
+        assert body['think'] is False and isinstance(body['format'],dict)
+        assert body['options']['num_predict']==2048
+        return httpx.Response(200,json={'message':{'content':'{"point_1":true,"issues":""}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://127.0.0.1:11434','local',http_client,semantic_thinking=True,prefer_json=True)
+        assert client.generate(schema,'审核结尾','完整来源').point_1
+
+
 def test_schema_repair_identifies_field_without_echoing_sensitive_input(sample_pdf):
     bundle=DemoAgents().extract_knowledge(read_pdf(sample_pdf,'original.pdf'))
     calls=[]

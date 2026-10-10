@@ -229,6 +229,12 @@ class JobProcessor:
             lesson.deck_plan = plan_deck(lesson, options.ppt_template,
                 agents.client if isinstance(agents, AIAgents) else None,
                 output=folder/'presentation-plan.json', use_illustrations=options.use_illustrations)
+            from zhijiang.slide_story import enrich_visual_story
+            progress('设计简洁图示、学习路线与结尾', 70)
+            enrich_visual_story(lesson, agents.client if isinstance(agents,AIAgents) else None,
+                                folder=folder/'slide-story')
+            (folder/'presentation-plan.json').write_text(
+                json.dumps(lesson.deck_plan,ensure_ascii=False,indent=2),encoding='utf-8')
             self.store.save_lesson(job_id, lesson)
             self.store.set_progress(job_id, "合成配音", 73)
             speech = self._speech(voice_mode, self.store.get_speech_options(job_id))

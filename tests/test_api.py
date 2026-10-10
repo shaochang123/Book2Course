@@ -384,6 +384,37 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
     captions = CaptionReply(pages=[{'segment_id':i,'sentence_ids':[1]}
                                   for i in range(1,len(lesson.segments)+1)])
     replies = [selection, outline, script_draft, captions, ReviewResult(approved=True), director]
+    from zhijiang.slide_story import SlideVisualDraft, VisualItem, DeckNavigation, RouteGroup
+    class VisualReviewReply(BaseModel):
+        item_1: bool = True
+        context_complete: bool = True
+        representation_faithful: bool = True
+        issues: str = ''
+    for s in lesson.segments:
+        # Select a literal noun from the synthetic retained script. The new
+        # real pipeline must execute compact planning and semantic review.
+        text=speech_sentences(s.narration)[0]
+        import jieba.posseg
+        label=next(token.word for token in jieba.posseg.cut(text)
+                   if len(token.word)>=2 and token.flag.startswith(('n','v')))
+        replies.extend([SlideVisualDraft(representation='key_idea',items=[
+            VisualItem(label=label,caption='核对原文中的说明',sentence_id=1)]),VisualReviewReply()])
+    class NavigationReply(BaseModel):
+        cut_after: list[int]
+        theme_1: str
+        theme_2: str
+        theme_3: str
+        theme_4: str
+        closing_points: list[dict]
+    class ClosingReviewReply(BaseModel):
+        point_1: str='knowledge_conclusion'
+        issues: str='原文要点是明确的知识结论'
+    class RouteReviewReply(BaseModel):
+        group_1: str='faithful_summary'
+        issues: str='本组实际的原文讲解与主题一致'
+    first=replies[6].items[0]
+    replies.extend([NavigationReply(cut_after=[],theme_1='理解原文',theme_2='理解原文',theme_3='理解原文',theme_4='理解原文',
+        closing_points=[{'segment_id':1,'sentence_id':1,'label':first.label}]),RouteReviewReply(),ClosingReviewReply()])
     transport = httpx.MockTransport(
         lambda _: httpx.Response(
             200, json={"choices": [{"message": {"content": replies.pop(0).model_dump_json()}}]}

@@ -61,9 +61,11 @@ The website offers **Dark Presentation, Paper Explainer, Academic Classroom, and
 
 New jobs share their template, body layout and illustrations between PPT and the complete MP4. Mathematical scenes retain their continuous motion inside an aspect-preserving viewport. Titles use approximately 36–44 pt and body text at least 24 pt; long text is paginated. Sources, mode and technical labels remain in notes and on the website. Old jobs without `ppt_template` retain `classic`; new website jobs default to `paper`. Arbitrary uploaded PPTX masters are not supported. See [course director and PPT templates](docs/课程导演与PPT模板.md).
 
-Key sentences stay together whenever possible. Extra narration fragments appear only when space allows; complete narration stays in speaker notes, avoiding mostly empty continuation slides.
+New jobs separate speech from screen content. Full narration stays in notes and on the website; compact object labels, example tables, comparisons, sourced arrows and concept diagrams take its place on screen. Every shortened assertion and connector is bound to a complete script sentence and reviewed for conditions, negation and direction. Crowded diagrams change composition. Existing mathematical SVGs and continuous scenes retain priority.
 
-Before ordinary AI slides are laid out, captions are checked against the narration verbatim. For unbound captions, the model selects existing complete sentence IDs and the program inserts the original text, avoiding a second paraphrase that reverses a condition, negation or relationship. Continuous mathematical scenes retain their verified expressions. This constraint does not establish that the narration itself is correct.
+Ordinary AI captions are first grounded in complete narration sentences, then a separate stage designs compact visuals. Full sentences are review evidence, not mandatory screen text. Independently read propositions restore knowledge diagrams; explicit fields and values can become example tables. Unsupported arrows are rejected and recorded. Model review does not establish that the narration itself is correct. Chinese candidate boundaries use `jieba`, now a core dependency; ordinary slides do not require the math-animation extra.
+
+The agent groups the roadmap into at most four consecutive learning themes (at least two for five or more passages, and three for twelve or more) and checks each theme against its actual passages, then independently selects and reviews complete knowledge statements for the ending instead of listing every slide title. Both PPT and new complete videos include a cover and ending. Videos hold the cover for 3 seconds and the ending for 5 seconds with intentional silence, without repeating narration. Existing generated files remain accessible.
 
 ## Searchable teaching illustrations
 
@@ -90,6 +92,7 @@ Creation and retry APIs accept `use_illustrations`, enabled by default; omitted 
 | [Architecture and API](docs/架构与接口.md) | Actual modules, contracts, endpoints, states and caches. |
 | [Implementation status and roadmap](docs/实现状态与路线图.md) | Reference design, implemented, partial and planned capabilities. |
 | [Validation and acceptance](docs/验证与验收.md) | Automated, media and teaching-quality evidence. |
+| [Compact visuals and closing acceptance](docs/画面修复验收-2026-10.md) | Visual regression repair, grouped roadmap, bookends and cross-domain media. |
 | [Illustration and shared-page acceptance](docs/素材库验收-2026-10.md) | Actual visual/media results for eight inputs, repairs and remaining limits. |
 | [AI Coding record](docs/AI_Coding_全过程.md) | Actual Codex use, feedback, fixes and commits. |
 | [Sources and licenses](docs/第三方来源与许可.md) | Dependencies, models and source documents. |

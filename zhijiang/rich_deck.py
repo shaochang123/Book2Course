@@ -18,6 +18,25 @@ from zhijiang.visual_assets import AssetCatalog
 from zhijiang.page_media import narrated_pages, scene_on_page, media_fingerprint, clip_duration
 
 
+def story_illustration_bindings(visual, refs, narration):
+    from zhijiang.caption_grounding import speech_sentences
+    sentences=speech_sentences(narration);bindings={}
+    for ref in refs:
+        if not ref.anchor_text:continue
+        direct=[i for i,item in enumerate(visual['items'])
+                if ref.anchor_text in item['label']+' '+item.get('caption','')]
+        # A graph node denotes its named entity. A different entity mentioned
+        # in the same support sentence must not become this node's portrait.
+        candidates=direct
+        if not candidates and visual['representation'] not in {'process','relationship'}:
+            candidates=[i for i,item in enumerate(visual['items'])
+                if ref.anchor_text in sentences[item['sentence_id']-1]]
+        for i in candidates:
+            if i not in bindings:
+                bindings[i]=ref;break
+    return bindings
+
+
 def wrap_lines(text, width, size=24):
     draw = ImageDraw.Draw(Image.new('RGB', (1,1)))
     font = _font(round(size*96/72))
@@ -144,6 +163,11 @@ def render_shared_deck(lesson, output, *, audio_files=None):
     import resvg_py
     output = Path(output); output.parent.mkdir(parents=True, exist_ok=True)
     template = get_template(lesson.ppt_template); plan = lesson.deck_plan
+    story=plan.get('visual_story',{})
+    navigation=story.get('navigation')
+    if navigation:
+        from zhijiang.slide_story import DeckNavigation, validate_navigation
+        validate_navigation(DeckNavigation.model_validate(navigation),lesson)
     if plan.get('template_id') != template.id:
         raise PresentationError('PPT 模板与版式规划不一致。')
     choices = [DeckPageChoice.model_validate(item) for item in plan.get('pages', [])]
@@ -204,12 +228,17 @@ def render_shared_deck(lesson, output, *, audio_files=None):
     th = len(title_lines)*59*1.25/96+.15
     cover.text(lesson.title,(left,1.45,10.6,th),size=44,min_size=44,bold=True)
     y = max(3.8,1.45+th+.3)
-    objective_parts = text_pages([lesson.objective],10.6,6.95-y,24)
+    cover_text=' · '.join(g['label'] for g in navigation['groups']) if navigation else lesson.objective
+    objective_parts = text_pages([cover_text],10.6,6.95-y,24)
     for text in objective_parts[0]:
         h = len(text.splitlines())*40/96+.1
         cover.text(text,(left,y,10.6,h),size=24); y += h
     cover.slide.notes_slide.notes_text_frame.text = lesson.objective+'\n'+lesson.notice+'\n'+json.dumps(
         lesson.animation_report.get('source_attribution',{}),ensure_ascii=False)
+    if navigation:
+        refs=next((c.asset_refs for c in choices if c.asset_refs),[])
+        if refs:asset(cover,refs[0],(left,5.1,1.05,1.05))
+        cover.text('从问题出发，理解概念与实例',(left+1.35,5.35,8.9,.9),size=26,min_size=26)
     cover.save_preview()
     for group in objective_parts[1:]:
         page=new('objective'); body_y=header(page,'学习目标')
@@ -222,9 +251,21 @@ def render_shared_deck(lesson, output, *, audio_files=None):
         question.rect((left,body_y,10.8,4.9),template.panel,rounded=True)
         question.text('\n'.join(part),(left+.3,body_y+.35,10.3,4.4),size=32,min_size=32,bold=True)
         _notes(question.slide,hook,animation=False); question.save_preview()
-    for group in text_pages([f'{i:02d}  {s.title}' for i,s in enumerate(lesson.segments,1)],10.5,5.0):
+    if navigation:
+        route_labels=[g['label'] for g in navigation['groups']]
+    else:
+        # Legacy exports also avoid a last roadmap page with one dangling title.
+        size=max(1,(len(lesson.segments)+2)//3)
+        route_labels=[lesson.segments[i].title for i in range(0,len(lesson.segments),size)]
+    for group in text_pages(route_labels,10.5,5.0):
         page=new('roadmap'); y=header(page,'这节课的路线')
-        write_captions(page,group,left,y,10.7,len(group)); page.save_preview()
+        for i,label in enumerate(group):
+            row_y=y+.2+i*1.25
+            page.rect((left,row_y,.8,.75),template.accent,rounded=True)
+            page.text(str(i+1),(left+.23,row_y+.11,.45,.55),size=26,color=template.background,bold=True)
+            page.text(label,(left+1.1,row_y+.08,9.2,.85),size=30,min_size=30,bold=True)
+        page.slide.notes_slide.notes_text_frame.text=json.dumps(navigation or {'groups':route_labels},ensure_ascii=False)
+        page.save_preview()
     for choice in choices:
         index=choice.segment_id; segment=lesson.segments[index-1]
         computed = bool(segment.math_scene or segment.visual_scene or index in lesson.animation_report.get('prepared_scenes',[]))
@@ -232,9 +273,15 @@ def render_shared_deck(lesson, output, *, audio_files=None):
         probe_height = len(wrap_lines(segment.title,PAGE_W-left-.75,template.title_size))*round(template.title_size*96/72)*1.25/96+.12
         body_y=max(1.6,.38+probe_height+.2); body_h=6.8-body_y
         refs=choice.asset_refs
-        semantic=bool(choice.visual_groups) and not computed
+        story_visual=story.get('visuals',{}).get(str(index),{}).get('visual') if not computed else None
+        if story_visual:
+            from zhijiang.slide_story import SlideVisualDraft, validate_visual
+            validate_visual(SlideVisualDraft.model_validate(story_visual),segment)
+        semantic=bool(choice.visual_groups) and not computed and not story_visual
         specs=[]
-        if semantic:
+        if story_visual:
+            groups=[[]]
+        elif semantic:
             details={item['id']:item['text'] for item in visual_details(segment)}
             for group_id,(group,box) in enumerate(zip(choice.visual_groups,semantic_panels(choice,left,body_y,body_h)),1):
                 bound=[ref for ref in refs if ref.group_id==group_id]
@@ -281,7 +328,26 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             def compose(page, reveal):
                 nonlocal viewport
                 header(page,segment.title)
-                if semantic:
+                if story_visual:
+                    from zhijiang.story_svg import visual_svg
+                    bindings=story_illustration_bindings(story_visual,refs,segment.narration)
+                    # Pictures sit beside their own object/example. They do not
+                    # float in the title bar or replace the main teaching graph.
+                    record_art=story_visual['representation']=='table' and bool(bindings)
+                    width=PAGE_W-left-.75-(1.4 if record_art else 0)
+                    box=(left,body_y,width,body_h-.1)
+                    svg,node_boxes=visual_svg(story_visual,template,round(width*96),round(box[3]*96),
+                                             reveal=reveal,art_slots=bindings)
+                    path=media/f'story-{index}-{reveal}.png'
+                    path.write_bytes(resvg_py.svg_to_bytes(svg_string=svg.decode(),font_family='Microsoft YaHei'))
+                    picture(page,path,box,svg)
+                    for art_index,(ni,ref) in enumerate(bindings.items()):
+                        if ni>=reveal:continue
+                        x,y,w,h=node_boxes[ni]
+                        art_box=(left+width+.12,body_y+.4+art_index*1.2,1.05,1.05) if record_art else (
+                            left+(x+w-80)/96,body_y+(y+16)/96,.65,.65)
+                        asset(page,ref,art_box)
+                elif semantic:
                     for gi,spec in enumerate(active_specs):
                         x,y,w,h=spec['box']
                         # Images and their original object names are within the
@@ -331,11 +397,16 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                     path=media/f'card-{index}-{group_number}-{reveal}.png'
                     path.write_bytes(resvg_py.svg_to_bytes(svg_string=svg.decode(),font_family='Microsoft YaHei'))
                     picture(page,path,viewport_box,svg)
-            reveal_count=len(active_specs) if semantic else max(len(group),len(refs),1)
+            reveal_count=len(story_visual['items']) if story_visual else len(active_specs) if semantic else max(len(group),len(refs),1)
             page=new('content',index); compose(page,reveal_count)
             notes(page,segment,choice); page.save_preview(); body_numbers.append(page.number)
             pages[-1].update(layout=choice.layout,asset_ids=[ref.asset_id for ref in refs],part=group_number+1,
                              composition=choice.composition,illustration_regions=getattr(page,'asset_regions',[]))
+            if story_visual:
+                pages[-1].update(representation=story_visual['representation'],
+                    displayed_characters=sum(len(item['label'])+len(item['caption']) for item in story_visual['items'])+
+                        len(story_visual['context'])+sum(len(e['label']) for e in story_visual['links']),
+                    relation_count=len(story_visual['links']))
             if computed:
                 states.append(previews/f'page-{page.number:03d}.png')
             else:
@@ -374,14 +445,58 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                 poster_frame_image=str(poster),mime_type='video/mp4')
             _notes(animation.slide,segment,animation=True)
             animation.preview=Image.open(poster).convert('RGB'); animation.save_preview()
-    for group in text_pages([f'{i:02d}  {s.title}' for i,s in enumerate(lesson.segments,1)],10.5,5):
-        recap=new('recap'); y=header(recap,'回顾：你能解释了吗？')
-        write_captions(recap,group,left,y,10.7,len(group)); recap.save_preview()
+    if navigation:
+        from zhijiang.story_svg import visual_svg
+        recap=new('ending');y=header(recap,'带走这些核心结论')
+        chosen=navigation['takeaway_ids'];items=[]
+        for i in chosen:
+            v=story.get('visuals',{}).get(str(i),{}).get('visual')
+            if v:
+                # The closing repeats reviewed assertions, never just a page
+                # title such as "带走三句话". Conditions remain in the caption.
+                item=dict(max(v['items'],key=lambda item:len(item['label'])+len(item['caption'])))
+                if v.get('links'):
+                    edge=v['links'][0]
+                    item=dict(v['items'][edge['source']-1])
+                    item['caption']=edge['label']+' → '+v['items'][edge['target']-1]['label']
+                if v.get('context'):item['caption']+=(('；' if item['caption'] else '')+v['context'])
+            else:
+                s=lesson.segments[i-1]
+                item={'label':s.title[:16],'caption':s.bullets[0]}
+            items.append(item)
+        if story.get('closing_points'):
+            items=[{'label':p['label'],'caption':p['text']} for p in story['closing_points']]
+        closing={'representation':'table' if story.get('closing_points') else
+                 'comparison' if len(items)>1 else 'key_idea','items':items,'links':[],'context':''}
+        svg,_=visual_svg(closing,template,round((PAGE_W-left-.75)*96),round((6.8-y)*96))
+        path=media/'ending.png';path.write_bytes(resvg_py.svg_to_bytes(svg_string=svg.decode(),font_family='Microsoft YaHei'))
+        picture(recap,path,(left,y,PAGE_W-left-.75,6.8-y),svg)
+        recap.slide.notes_slide.notes_text_frame.text='\n\n'.join(
+            lesson.segments[i-1].narration+'\n'+lesson.segments[i-1].evidence.model_dump_json() for i in chosen)
+        recap.save_preview()
+    else:
+        recap=new('ending');y=header(recap,'回顾：你能解释了吗？')
+        group=[s.title for s in lesson.segments[-3:]]
+        write_captions(recap,group,left,y,10.7,len(group));recap.save_preview()
+    bookends=[]
+    if story:
+        import wave
+        for kind,duration in story.get('bookend_seconds',{}).items():
+            num=next(p['page'] for p in pages if p['kind']==kind)
+            silence=media/f'{kind}-silence.wav'
+            with wave.open(str(silence),'wb') as audio:
+                audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(24000)
+                audio.writeframes(b'\x00\x00'*round(duration*24000))
+            clip=media/f'{kind}.mp4'
+            narrated_pages([previews/f'page-{num:03d}.png'],silence,clip)
+            bookends.append({'kind':kind,'page':num,'duration':duration,'clip':clip.relative_to(root).as_posix(),
+                             'audio':'intentional_silence_no_repeated_narration'})
     with tempfile.TemporaryDirectory(prefix='shared-ppt-',dir=root) as temp:
         raw=Path(temp)/'base.pptx'; final=Path(temp)/'final.pptx'
         deck.save(raw); _patch_svg_parts(raw,final,svgs); os.replace(final,output)
     manifest={'version':2,'template_id':template.id,'asset_catalog_fingerprint':catalog.fingerprint,
               'preview_type':'native-layout-review-not-powerpoint-render','pages':pages,'segments':segments,
+              'bookends':bookends,
               'media_fingerprint':media_fingerprint(lesson,audio_files)}
     (previews/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     return manifest

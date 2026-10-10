@@ -82,10 +82,11 @@ def inspect(folder, lesson):
         '-vn','-f','s16le','-ar','24000','-ac','1','-'],capture_output=True,check=True,timeout=900)
     decoded_seconds=len(decoded_audio.stdout)/(24000*2)
     video_seconds=clip_duration(video)
-    assert abs(decoded_seconds-audio_seconds)<max(.5,len(lesson.segments)*.08), '成片配音时长与完整源讲稿不符。'
+    bookend_seconds=sum(b['duration'] for b in manifest.get('bookends',[]))
+    assert abs(decoded_seconds-audio_seconds-bookend_seconds)<max(.5,len(lesson.segments)*.08), '成片配音时长与完整源讲稿及封面结尾停留不符。'
     # Compare actual decoded frames to the final shared page of ordinary segments.
     # Continuous scenes have independent motion checks in the media regressions.
-    comparisons=[]; frames=[]; cursor=0.
+    comparisons=[]; frames=[]; cursor=sum(b['duration'] for b in manifest.get('bookends',[]) if b['kind']=='cover')
     for item in manifest['segments']:
         index=item['segment_id']; segment=lesson.segments[index-1]
         duration=clip_duration(folder/item['clip'])
@@ -109,6 +110,18 @@ def inspect(folder, lesson):
             draw.text((x+10,y+365),f'Segment {item["segment_id"]} / actual video frame',fill='black')
         contact.save(folder/f'video-review-{sheet}.png')
         contact.save(folder/f'review-{sheet}.png')
+    bookend_comparisons=[]
+    for item in manifest.get('bookends',[]):
+        timestamp=item['duration']/2 if item['kind']=='cover' else video_seconds-item['duration']/2
+        raw=subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(),'-v','error','-ss',str(timestamp),
+            '-i',str(video),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],
+            capture_output=True,check=True).stdout
+        frame=Image.frombytes('RGB',(1280,720),raw)
+        with Image.open(folder/'presentation-preview'/f'page-{item["page"]:03d}.png') as expected:
+            error=float(abs(np.asarray(frame).astype(float)-np.asarray(expected).astype(float)).mean())
+            assert error<5, f'{item["kind"]} PPT 与视频画面不一致：{error:.2f}'
+        frame.save(folder/f'video-{item["kind"]}.png')
+        bookend_comparisons.append({'kind':item['kind'],'mean_pixel_error':round(error,3)})
     selected=[r['asset_id'] for p in lesson.deck_plan['pages'] for r in p.get('asset_refs',[])]
     result={'template':lesson.ppt_template,'model':lesson.deck_plan['model'], 'planner':lesson.deck_plan['planner'],
             'segments':len(lesson.segments),'slides':len(Presentation(ppt).slides), 'svg_parts':len(svgs),
@@ -116,6 +129,8 @@ def inspect(folder, lesson):
             'full_video_decoded':True,'pptx_zip_valid':True,'powerpoint_application_playback':'not_performed',
             'video_seconds':round(video_seconds,2),'source_audio_seconds':round(audio_seconds,3),
             'decoded_audio_seconds':round(decoded_seconds,3),'source_audio_rms':rms,
+            'bookend_seconds':bookend_seconds,
+            'bookend_frame_comparisons':bookend_comparisons,
             'ordinary_frame_comparisons':comparisons,'narration_uses_per_segment':1,
             'pptx_sha256':hashlib.sha256(ppt.read_bytes()).hexdigest(),
             'mp4_sha256':hashlib.sha256(video.read_bytes()).hexdigest()}

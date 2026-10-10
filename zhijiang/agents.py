@@ -384,7 +384,9 @@ class OllamaClient:
             'VisualLayoutDraft','VisualSequenceDraft','MotionParameterBindings','GeometryConstraintsDraft'}
         if schema.__name__ in {'MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}:
             json_fallback=self.prefer_json or observed_endpoint is not None
-        if schema.__name__ in {'DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection'}:
+        if schema.__name__ in {'DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection',
+                              'SlideVisualDraft','SlideLinkSelection','SlideVisualReview','SlideExampleTable',
+                              'SourcePropositionsDraft','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview'}:
             json_fallback = observed_endpoint is not None
         completion_fallback = observed_endpoint == '/api/generate'
         budget_multiplier=1
@@ -417,6 +419,8 @@ class OllamaClient:
                     payload['options'].update(num_ctx=16384, num_predict=3072)
                 if schema.__name__ in {'DeckIllustrationPlacement','ScriptCaptionSelection'}:
                     payload['options'].update(num_ctx=8192,num_predict=512)
+                if schema.__name__ in {'SlideVisualDraft','SlideLinkSelection','SlideVisualReview','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview'}:
+                    payload['options'].update(num_ctx=16384,num_predict=2048)
                 if self.num_gpu is not None:
                     payload['options']['num_gpu']=self.num_gpu
                 if thinking is not None:

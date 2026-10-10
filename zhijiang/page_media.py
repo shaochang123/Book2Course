@@ -11,7 +11,7 @@ import imageio_ffmpeg
 
 def media_fingerprint(lesson, audio_files):
     from zhijiang.visual_assets import AssetCatalog
-    digest = hashlib.sha256(('shared-pages-v9-complete-context'+lesson.model_dump_json()).encode())
+    digest = hashlib.sha256(('shared-pages-v14-picture-object-binding'+lesson.model_dump_json()).encode())
     digest.update(AssetCatalog().fingerprint.encode())
     for audio in audio_files:
         if Path(audio).is_file():
@@ -108,8 +108,11 @@ def render_shared_video(lesson, audio_files, output):
         data = json.loads(manifest.read_text(encoding='utf-8'))
     if len(data['segments']) != len(lesson.segments):
         raise PresentationError('共享视频片段未覆盖课程。')
-    clips = [output.parent/item['clip'] for item in data['segments']]
+    bookends=data.get('bookends',[])
+    clips = [output.parent/item['clip'] for item in bookends if item['kind']=='cover']
+    clips += [output.parent/item['clip'] for item in data['segments']]
+    clips += [output.parent/item['clip'] for item in bookends if item['kind']=='ending']
     concatenate_pages(clips, output)
     (output.parent/'video-timeline.json').write_text(json.dumps({'template_id': lesson.ppt_template,
-        'segments': data['segments'], 'narration_uses_per_segment': 1,
+        'segments': data['segments'], 'bookends':bookends,'narration_uses_per_segment': 1,
         'visual_source': 'shared-native-slide-layout'}, ensure_ascii=False, indent=2), encoding='utf-8')
