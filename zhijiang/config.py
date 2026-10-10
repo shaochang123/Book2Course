@@ -19,10 +19,14 @@ class Settings:
     llm_api_key: str = ""
     llm_model: str = ""
     ollama_semantic_thinking: bool = True
+    ollama_num_gpu: int | None = None
+    ollama_thinking_level: str = ""
     tts_base_url: str = ""
     tts_api_key: str = ""
     tts_model: str = ""
     tts_voice: str = "alloy"
+    tts_timeout_seconds: int = 300
+    default_voice_mode: str = "system"
     system_voice: str = "Microsoft Huihui Desktop"
 
     @classmethod
@@ -43,17 +47,21 @@ class Settings:
             llm_api_key=value("ZHIJIANG_LLM_API_KEY"),
             llm_model=value("ZHIJIANG_LLM_MODEL"),
             ollama_semantic_thinking=value("ZHIJIANG_OLLAMA_SEMANTIC_THINKING", "true").lower() not in {"false","0","off","no"},
+            ollama_num_gpu=int(value("ZHIJIANG_OLLAMA_NUM_GPU")) if value("ZHIJIANG_OLLAMA_NUM_GPU") else None,
+            ollama_thinking_level=value("ZHIJIANG_OLLAMA_THINKING_LEVEL"),
             tts_base_url=value("ZHIJIANG_TTS_BASE_URL"),
             tts_api_key=value("ZHIJIANG_TTS_API_KEY"),
             tts_model=value("ZHIJIANG_TTS_MODEL"),
             tts_voice=value("ZHIJIANG_TTS_VOICE", "alloy"),
+            tts_timeout_seconds=max(30, min(3600, int(value("ZHIJIANG_TTS_TIMEOUT_SECONDS", "300")))),
+            default_voice_mode=value("ZHIJIANG_DEFAULT_VOICE_MODE", "system"),
             system_voice=value("ZHIJIANG_SYSTEM_VOICE", "Microsoft Huihui Desktop"),
         )
 
     @property
     def llm_ready(self) -> bool:
         if self.llm_provider == "ollama":
-            return bool(self.llm_base_url and self.llm_model and self.llm_is_local)
+            return bool(self.llm_base_url and self.llm_model and self._is_loopback(self.llm_base_url))
         return bool(self.llm_base_url and self.llm_api_key and self.llm_model)
 
     @property
@@ -67,7 +75,12 @@ class Settings:
 
     @property
     def llm_is_local(self) -> bool:
-        return self._is_loopback(self.llm_base_url)
+        return not self.model_is_remote(self.llm_provider,self.llm_base_url,self.llm_model)
+
+    @classmethod
+    def model_is_remote(cls,provider: str,base_url: str,model: str) -> bool:
+        return (not cls._is_loopback(base_url) or
+                provider=='ollama' and model.lower().endswith((':cloud','-cloud')))
 
     @property
     def tts_is_local(self) -> bool:

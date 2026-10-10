@@ -1,0 +1,3 @@
+-r requirements-tts.txt
+# Optional CUDA-only language-transformer quantization; the voice codec stays floating point.
+bitsandbytes==0.50.2

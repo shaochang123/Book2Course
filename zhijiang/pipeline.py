@@ -26,6 +26,9 @@ from zhijiang.presentation import PresentationError, render_presentation
 from zhijiang.speech import AISpeech, SpeechError, SystemSpeech
 from zhijiang.storage import JobStore
 from zhijiang.video import VideoError, render_video
+from zhijiang.presentation_templates import template_instruction
+from zhijiang.deck_planning import plan_deck
+from zhijiang.visual_assets import AssetError
 
 
 logger = logging.getLogger(__name__)
@@ -66,15 +69,18 @@ class JobProcessor:
             return self.agent_factory(mode)
         if mode == Mode.DEMO:
             return DemoAgents()
+        teaching_prompt = options.prompt + (template_instruction(options.ppt_template)
+            if options.ppt_template != 'classic' else '')
         if options.provider == "ollama":
             return AIAgents(OllamaClient(options.base_url, options.model,
-                semantic_thinking=options.semantic_thinking), options.prompt)
+                semantic_thinking=options.semantic_thinking,
+                num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level), teaching_prompt)
         return AIAgents(
             OpenAICompatibleClient(
                 options.base_url,
                 options.api_key,
                 options.model,
-            ), options.prompt
+            ), teaching_prompt
         )
 
     def _speech(self, mode: VoiceMode, options: SpeechOptions):
@@ -86,6 +92,7 @@ class JobProcessor:
                 options.api_key,
                 options.model,
                 options.voice,
+                timeout_seconds=self.settings.tts_timeout_seconds,
             )
         return SystemSpeech(self.settings.system_voice)
 
@@ -95,6 +102,8 @@ class JobProcessor:
             return
         folder = self.store.jobs_dir / job_id
         agents = None
+        math_reviewer = None
+        math_planner = None
         speech = None
         active_stage = ['解析 PDF', 8]
 
@@ -104,23 +113,34 @@ class JobProcessor:
 
         def model_progress(stage, elapsed, characters):
             self.store.set_progress(job_id,
-                f'{active_stage[0]} · 本机模型生成中（{elapsed}秒，{characters}字）', active_stage[1])
+                f'{active_stage[0]} · 模型生成中（{elapsed}秒，{characters}字）', active_stage[1])
 
         try:
             progress("解析 PDF", 8)
             source_bytes=(folder/'source.pdf').read_bytes()
             source_hash=hashlib.sha256(source_bytes).hexdigest()
-            document=checkpoint(folder/'parsed-source.json','pdf-v2:'+source_hash,SourceDocument,
-                lambda:read_pdf(source_bytes,job['filename'], cache_dir=folder/'parsed-pages',
-                    progress=lambda done,total,label:progress(
-                        f'解析 PDF（{done}/{total} 页）：{label}', 8 + done * 13 // total)))
             mode = Mode(job["mode"])
             voice_mode = VoiceMode(job["voice_mode"])
             options = self.store.get_options(job_id)
+            teaching_prompt = options.prompt + (template_instruction(options.ppt_template)
+                if options.ppt_template != 'classic' else '')
             agents = self._agents(mode, options)
             if isinstance(agents, AIAgents) and isinstance(agents.client, OllamaClient):
                 agents.client.progress = model_progress
                 agents.client.prefer_json=options.animation_mode=='geometry'
+            if mode==Mode.AI and options.animation_mode=='geometry':
+                from zhijiang.math_sources import read_math_pdf
+                from zhijiang.mathematical_planning import plan_constructed_lesson
+                document=checkpoint(folder/'parsed-source.json',
+                    'visual-math-source-v2:'+source_hash+options.model+options.base_url,SourceDocument,
+                    lambda:read_math_pdf(agents.client,source_bytes,job['filename'],
+                        cache_dir=folder/'math-source-pages',progress=lambda done,total,label:
+                            progress(f'{label}（{done}/{total} 页）',8+done*13//total)))
+            else:
+                document=checkpoint(folder/'parsed-source.json','pdf-v2:'+source_hash,SourceDocument,
+                    lambda:read_pdf(source_bytes,job['filename'], cache_dir=folder/'parsed-pages',
+                        progress=lambda done,total,label:progress(
+                            f'解析 PDF（{done}/{total} 页）：{label}', 8 + done * 13 // total)))
             # Special-purpose templates are opt-in. A mixed textbook must keep
             # all extracted topics and choose an expression for each of them.
             use_math = mode == Mode.AI and options.animation_mode == "math" and supports_math(document)
@@ -138,9 +158,26 @@ class JobProcessor:
                     use_math = False
                     use_visual = False
                     fallback_reason = "动画环境未就绪，自动模式使用基础图示：" + capability["reason"]
-            if use_math:
+            if use_visual and options.animation_mode=='geometry':
+                if options.math_model and options.math_model!=options.model:
+                    math_planner=(OllamaClient(options.base_url,options.math_model,
+                        semantic_thinking=options.semantic_thinking,prefer_json=True,progress=model_progress,
+                        num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level)
+                        if options.provider=='ollama' else OpenAICompatibleClient(
+                            options.base_url,options.api_key,options.math_model))
+                if options.review_model and options.review_model!=options.model:
+                    math_reviewer=(OllamaClient(options.base_url,options.review_model,
+                        semantic_thinking=options.semantic_thinking,prefer_json=True,progress=model_progress,
+                        num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level)
+                        if options.provider=='ollama' else OpenAICompatibleClient(
+                            options.base_url,options.api_key,options.review_model))
+                lesson=plan_constructed_lesson(agents.client,document,teaching_prompt,voice_mode,
+                    progress,draft_output=folder/'visual-planning.json',review_client=math_reviewer,
+                    planning_client=math_planner,
+                    source_image_loader=lambda page:__import__('zhijiang.math_sources',fromlist=['page_png']).page_png(source_bytes,page))
+            elif use_math:
                 progress("规划数学对象与推理分镜", 25)
-                lesson = plan_math_lesson(agents.client, document, options.prompt, voice_mode,
+                lesson = plan_math_lesson(agents.client, document, teaching_prompt, voice_mode,
                     progress)
             else:
                 progress("提取知识点", 22)
@@ -163,7 +200,7 @@ class JobProcessor:
                 if use_visual:
                     source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document,
                         progress=lambda done,total,label:progress(f'{label}（{done}/{total} 页）',38+done*4//total))
-                    lesson=plan_general_lesson(agents.client,bundle,document,options.prompt,voice_mode,
+                    lesson=plan_general_lesson(agents.client,bundle,document,teaching_prompt,voice_mode,
                         progress,draft_output=folder/'visual-planning.json',
                         source_assets=source_assets,pdf_path=folder/'source.pdf',
                         geometry_only=options.animation_mode=='geometry')
@@ -174,13 +211,24 @@ class JobProcessor:
                     lesson.animation_report = {"renderer": "Pillow basic", "scene_count": 0,
                         "reason": fallback_reason}
             if mode == Mode.AI and options.provider == "ollama":
-                lesson.notice = lesson.notice.replace("AI 生成：", "本机 Ollama 生成：", 1)
+                remote=any(Settings.model_is_remote(options.provider,options.base_url,name)
+                    for name in [options.model,options.review_model,options.math_model] if name)
+                lesson.notice = lesson.notice.replace("AI 生成：", "Ollama 云模型参与生成：" if remote else "本机 Ollama 生成：", 1)
             if any(page.ocr for page in document.pages):
-                lesson.notice += " 扫描页文字经 OCR 识别，请核对识别结果和引用。"
+                lesson.notice += " 页中文字与公式经图像识别，请核对识别结果和引用。"
             progress("核验引用与讲解结构", 64)
             validate_lesson(document, lesson)
+            if isinstance(agents, AIAgents):
+                from zhijiang.caption_grounding import ground_lesson_captions
+                progress('绑定画面要点与完整讲稿', 65)
+                ground_lesson_captions(lesson, agents.client, output=folder/'caption-grounding.json')
             if not use_math and not use_visual:
                 agents.review(lesson)
+            lesson.ppt_template = options.ppt_template
+            progress('检索教学素材并规划页面版式', 68)
+            lesson.deck_plan = plan_deck(lesson, options.ppt_template,
+                agents.client if isinstance(agents, AIAgents) else None,
+                output=folder/'presentation-plan.json', use_illustrations=options.use_illustrations)
             self.store.save_lesson(job_id, lesson)
             self.store.set_progress(job_id, "合成配音", 73)
             speech = self._speech(voice_mode, self.store.get_speech_options(job_id))
@@ -207,18 +255,37 @@ class JobProcessor:
                     job_id, f"合成配音（{index + 1}/{len(lesson.segments)}）",
                     73 + (index + 1) * 14 // len(lesson.segments),
                 )
-            self.store.set_progress(job_id, "合成教学视频", 88)
-            self.video_renderer(lesson, audio_files, folder / "lesson.mp4")
-            self.store.set_progress(job_id, "制作 SVG 教学图与 PPT 动画", 94)
+            self.store.set_progress(job_id, "制作共享教学画面与 PPT", 88)
             self.presentation_renderer(lesson, folder / "lesson.pptx")
+            self.store.set_progress(job_id, "合成同模板完整视频", 94)
+            self.video_renderer(lesson, audio_files, folder / "lesson.mp4")
             self.store.complete(job_id)
-        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError, MathAnimationError, TeachingDesignError) as exc:
+        except (PDFError, GenerationError, SpeechError, VideoError, PresentationError, MathAnimationError, TeachingDesignError, AssetError) as exc:
             self.store.fail(job_id, str(exc))
         except Exception:
             logger.exception("任务 %s 发生未预期的错误", job_id)
             self.store.fail(job_id, "处理失败，请检查服务日志后重试。")
         finally:
+            if math_planner is not None:
+                if isinstance(math_planner,OllamaClient):
+                    (folder/'mathematical-planning-calls.json').write_text(json.dumps(math_planner.call_metrics,ensure_ascii=False,indent=2),encoding='utf-8')
+                    if math_planner.invalid_outputs:
+                        (folder/'mathematical-planning-format-errors.json').write_text(json.dumps(math_planner.invalid_outputs,ensure_ascii=False,indent=2),encoding='utf-8')
+                math_planner.close()
             self.store.clear_api_key(job_id)
+            if math_reviewer is not None:
+                if isinstance(math_reviewer,OllamaClient):
+                    (folder/'independent-review-calls.json').write_text(json.dumps(math_reviewer.call_metrics,
+                        ensure_ascii=False,indent=2),encoding='utf-8')
+                    if math_reviewer.invalid_outputs:
+                        path=folder/'independent-review-format-errors.json'
+                        try:
+                            previous=json.loads(path.read_text(encoding='utf-8'))
+                            if not isinstance(previous,list):previous=[]
+                        except (OSError,ValueError):previous=[]
+                        path.write_text(json.dumps(previous+math_reviewer.invalid_outputs,
+                            ensure_ascii=False,indent=2),encoding='utf-8')
+                math_reviewer.close()
             if agents is not None and isinstance(agents, AIAgents):
                 knowledge_log=folder / 'knowledge-planning.json'
                 if agents.knowledge_drafts or not knowledge_log.exists():

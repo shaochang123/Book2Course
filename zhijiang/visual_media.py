@@ -15,10 +15,10 @@ from zhijiang.math_media import _run, render_summary_png
 from zhijiang.visual_planning import object_geometry, verify_visual_scene
 
 
-def visual_summary_svg(scene) -> str:
+def visual_summary_svg(scene, state_index=-1) -> str:
     if scene.diagram:
         return teaching_summary_svg(scene)
-    state = verify_visual_scene(scene)['states'][-1]
+    state = verify_visual_scene(scene)['states'][state_index]
     from zhijiang.visual_coordinates import EuclideanViewport
     viewport=EuclideanViewport(scene.x_range,scene.y_range,1060,430,(600,310),flip_y=True)
     def xy(p):
@@ -34,13 +34,15 @@ def visual_summary_svg(scene) -> str:
             parts.append(f'<path d="M {a[0]} {a[1]} L {b[0]} {b[1]}" stroke="#698CA5" stroke-width="2"/>')
     for obj in scene.objects:
         if obj.id not in state['visible']: continue
-        geometry=object_geometry(obj,state['parameters']); pts=[xy(p) for p in geometry['points']]; color=obj.color
+        if obj.reference:parts.append('<g opacity=".45">')
+        geometry=state['end_geometry'][obj.id]; pts=[xy(p) for p in geometry['points']]; color=obj.color
         if obj.kind in {'dot','circle'}:
             r=geometry['radius']*viewport.scale
             if obj.kind=='dot': r=min(9,max(3,r))
             parts.append(f'<circle cx="{pts[0][0]}" cy="{pts[0][1]}" r="{r}" fill="{color}" fill-opacity="{1 if obj.kind=="dot" else 0.2}" stroke="{color}" stroke-width="3"/>')
         elif obj.kind=='label':
-            parts.append(f'<text x="{pts[0][0]}" y="{pts[0][1]}" font-size="23" fill="{color}">{html.escape(obj.text)}</text>')
+            anchored=obj.id in (scene.mathematical_model or {}).get('point_labels',{}).values()
+            parts.append(f'<text x="{pts[0][0]}" y="{pts[0][1]}" text-anchor="middle" dominant-baseline="middle" font-size="{20 if anchored else 23}" fill="{color}">{html.escape(obj.text)}</text>')
         elif obj.kind=='polygon':
             points=' '.join(f'{p[0]},{p[1]}' for p in pts)
             parts.append(f'<polygon points="{points}" fill="{color}" fill-opacity=".2" stroke="{color}" stroke-width="3"/>')
@@ -48,16 +50,47 @@ def visual_summary_svg(scene) -> str:
             path=' '.join(('M' if i==0 else 'L')+f' {p[0]} {p[1]}' for i,p in enumerate(pts))
             parts.append(f'<path d="{path}" fill="none" stroke="{color}" stroke-width="3"/>')
             if obj.kind=='arrow':
-                a,b=pts[0],pts[-1]; angle=math.atan2(b[1]-a[1],b[0]-a[0])
-                tip=[b]+[[b[0]-12*math.cos(angle+d),b[1]-12*math.sin(angle+d)] for d in [-.42,.42]]
-                points=' '.join(f'{p[0]},{p[1]}' for p in tip)
-                parts.append(f'<polygon points="{points}" fill="{color}" stroke="{color}" stroke-width="1"/>')
+                for a,b in [(pts[0],pts[-1])]+([(pts[-1],pts[0])] if obj.double_tip else []):
+                    angle=math.atan2(b[1]-a[1],b[0]-a[0])
+                    tip=[b]+[[b[0]-12*math.cos(angle+d),b[1]-12*math.sin(angle+d)] for d in [-.42,.42]]
+                    points=' '.join(f'{p[0]},{p[1]}' for p in tip)
+                    parts.append(f'<polygon points="{points}" fill="{color}" stroke="{color}" stroke-width="1"/>')
+        if obj.reference:parts.append('</g>')
     parameter_label=', '.join(f'{key}={value:.4g}' for key,value in list(state['parameters'].items())[:5])
-    calculation_label=' · '.join(f"{c['label'][:12]}={c['value']:.5g}" for c in state['calculations'][:2])
-    parts+=['</g>','<rect width="1200" height="78" fill="#10283A"/>','<rect y="540" width="1200" height="135" fill="#10283A"/>',f'<text x="50" y="50" font-size="28" fill="#F4F7F9">{html.escape(scene.question[:38])}</text>',
+    calculation_label=' · '.join(f"{c['label'][:12]}≈{c['value']:.5g}" for c in state['calculations'][:2])
+    functions=[obj for obj in scene.objects if obj.kind=='curve' and obj.id in state['visible']] if scene.mathematical_model else []
+    if len(functions)>6:raise ValueError('单画面最多同时显示六条函数及公式，请分步显示。')
+    parts+=['</g>','<rect width="1200" height="78" fill="#10283A"/>','<rect y="540" width="1200" height="135" fill="#10283A"/>',
             f'<text x="50" y="570" font-size="19" fill="#6DE2C0">{html.escape(parameter_label)}</text>',
             f'<text x="50" y="602" font-size="19" fill="#FFA458">{html.escape(calculation_label)}</text>',
-            f'<text x="50" y="642" font-size="19" fill="#AEC4D0">{html.escape(scene.domain)} · PDF 第 {scene.evidence.page} 页 · 示意与计算检查，领域解释需复核</text>','</svg>']
+            f'<text x="50" y="642" font-size="19" fill="#AEC4D0">{html.escape(scene.domain)} · PDF 第 {scene.evidence.page} 页 · 示意与计算检查，领域解释需复核</text>']
+    if functions:
+        # Replace the two default footer lines with equations of the actual
+        # plotted expressions. No model-authored equation label is trusted.
+        parts[-3:-1]=[]
+        from zhijiang.math_construction import scalar
+        import sympy as sp
+        parameters={k:sp.Rational(str(v)) for k,v in state['parameters'].items()}
+        parameters['x']=sp.Symbol('x',real=True)
+        roles=scene.mathematical_model.get('roles',{})
+        for index,obj in enumerate(functions):
+            expression=scene.mathematical_model.get('display_expressions',{}).get(obj.id,obj.expression)
+            expr=sp.sstr(scalar(expression,parameters)).replace('**','^').replace('*','·').replace('log(','ln(')
+            label=roles.get(obj.id,obj.id)+': y = '+expr
+            font=min(17,520/max(1,len(label)*.65))
+            parts.append(f'<text x="{50+(index%2)*550}" y="{556+(index//2)*20}" font-size="{font}" fill="{obj.color}">{html.escape(label)}</text>')
+        parts.append(f'<text x="50" y="624" font-size="17" fill="#FFA458">{html.escape(calculation_label)}</text>')
+    columns=max(50,math.ceil(len(scene.question)/3));font=min(22,1100/columns)
+    for index,start in enumerate(range(0,len(scene.question),columns)):
+        parts.append(f'<text x="50" y="{24+index*22}" font-size="{font}" fill="#F4F7F9">{html.escape(scene.question[start:start+columns])}</text>')
+    if scene.mathematical_model:
+        from zhijiang.math_identity import legend_entries
+        left=60
+        for label,colour in legend_entries(scene,state['visible']):
+            width=len(label)*21+24
+            if left+width>1140:break
+            parts.append(f'<text x="{left}" y="108" font-size="18" fill="{colour}">{html.escape(label)}</text>');left+=width
+    parts.append('</svg>')
     return ''.join(parts)
 
 
@@ -138,10 +171,43 @@ def render_visual_scene(scene, speech, folder: Path, *, reuse_audio=False) -> di
                 if parameters:
                     words += ' 当前参数：'+ '，'.join(f'{key}为{value:.5g}' for key,value in parameters.items())+'。'
             calculations=scene.verification['states'][i]['calculations']
-            for c in calculations: words+=f" 计算得到，{c['label']}为{c['value']:.5g}。"
+            for c in calculations: words+=f" 计算得到，{c['label']}约为{c['value']:.5g}。"
+            from zhijiang.math_fact_narration import source_facts,display_source_statement,speak_source_statement
+            facts=source_facts(scene,i)
+            panels=[{'requirement_id':r['id'],'display_text':display_source_statement(r['statement']),
+                'source_pages':sorted({e['page'] for e in r['source_excerpts']}),
+                'spoken_text':speak_source_statement(r['statement'])} for r in facts]
+            math_words=words
+            words=' '.join([p['spoken_text'] for p in panels]+[math_words])
             clip=folder/f'beat-{i+1:02d}.wav'
             previous_timing=previous.get('timing',[])
-            if not (reuse_audio and clip.is_file() and i<len(previous_timing) and previous_timing[i]['text']==words):
+            reuse=bool(reuse_audio and clip.is_file() and i<len(previous_timing) and previous_timing[i]['text']==words
+                and len(previous_timing[i].get('fact_panels',[]))==len(panels))
+            if reuse:
+                for panel,old_panel in zip(panels,previous_timing[i].get('fact_panels',[])):
+                    panel.update({k:old_panel[k] for k in ('start','duration','speech_seconds')})
+            elif panels:
+                pieces=[];source_cursor=0
+                for j,panel in enumerate(panels,1):
+                    fact_clip=folder/f'beat-{i+1:02d}-source-{j:02d}.wav'
+                    speech.synthesize(panel['spoken_text'],fact_clip)
+                    with wave.open(str(fact_clip),'rb') as audio_part:
+                        seconds=audio_part.getnframes()/audio_part.getframerate()
+                    panel.update(start=source_cursor,duration=seconds+.4,speech_seconds=seconds)
+                    source_cursor+=seconds+.4;pieces.append((fact_clip,.4))
+                math_clip=folder/f'beat-{i+1:02d}-math.wav'
+                speech.synthesize(math_words,math_clip);pieces.append((math_clip,0))
+                with wave.open(str(clip),'wb') as combined:
+                    part_format=None
+                    for part,gap in pieces:
+                        with wave.open(str(part),'rb') as audio_part:
+                            fmt=(audio_part.getnchannels(),audio_part.getsampwidth(),audio_part.getframerate())
+                            if part_format is None:
+                                part_format=fmt;combined.setnchannels(fmt[0]);combined.setsampwidth(fmt[1]);combined.setframerate(fmt[2])
+                            if fmt!=part_format or fmt[1]!=2:raise ValueError('Source facts require matching PCM16 WAV formats')
+                            combined.writeframes(audio_part.readframes(audio_part.getnframes()))
+                            combined.writeframes(b'\0'*round(gap*fmt[2])*fmt[0]*fmt[1])
+            else:
                 speech.synthesize(words,clip)
             with wave.open(str(clip),'rb') as source:
                 fmt=(source.getnchannels(),source.getsampwidth(),source.getframerate())
@@ -151,7 +217,8 @@ def render_visual_scene(scene, speech, folder: Path, *, reuse_audio=False) -> di
                     raise ValueError('Scene narration requires matching PCM16 WAV formats')
                 seconds=source.getnframes()/fmt[2]; target.writeframes(source.readframes(source.getnframes()))
                 target.writeframes(b'\0'*round(.8*fmt[2])*fmt[0]*fmt[1])
-            timing.append({'step':i+1,'start':cursor,'duration':seconds+.8,'speech_seconds':seconds,'text':words})
+            timing.append({'step':i+1,'start':cursor,'duration':seconds+.8,'speech_seconds':seconds,'text':words,
+                'source_seconds':sum(p['duration'] for p in panels),'fact_panels':panels})
             cursor+=seconds+.8
     config=folder/'scene.json'; config.write_text(json.dumps({'plan':scene.model_dump(),'timing':timing,'geometry_output':str(folder/'geometry.json')},ensure_ascii=False,indent=2),encoding='utf-8')
     renderer='teaching_renderer' if scene.diagram else 'visual_renderer'

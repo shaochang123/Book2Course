@@ -9,7 +9,8 @@ from typing import Annotated
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from zhijiang.presentation_templates import PPTTemplate, TEMPLATES, template_preview_svg
 from fastapi.staticfiles import StaticFiles
 
 from zhijiang.config import Settings
@@ -20,6 +21,7 @@ from zhijiang.visual_planning import PRIMITIVES, CHECKERS, DOMAIN_VALIDATORS, vi
 from zhijiang.pdf import PDFError, validate_pdf
 from zhijiang.pipeline import JobProcessor, JobRunner
 from zhijiang.storage import JobStore
+from zhijiang.speech_preview import preview_info, preview_path
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -108,8 +110,12 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             "tts_base_url": settings.tts_base_url,
             "tts_model": settings.tts_model,
             "tts_voice": settings.tts_voice,
+            "default_voice_mode": "ai" if settings.default_voice_mode == "ai" and settings.ai_tts_ready else "system",
+            "speech_preview": preview_info(settings),
             "demo_notice": "演示模式的知识选择和讲稿由确定性规则生成，并非 AI 生成。",
+            "ppt_templates": [template.public() for template in TEMPLATES.values()],
             "ollama_semantic_thinking": settings.ollama_semantic_thinking,
+            "ollama_thinking_level": settings.ollama_thinking_level,
             "math_animation": math_capabilities(),
             "visual_animation": {**visual_capabilities(), "subject_restriction": None,
                 "topics": None, "primitives": list(PRIMITIVES),
@@ -117,6 +123,21 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 "numeric_checks": sorted(CHECKERS), "domain_validators": sorted(DOMAIN_VALIDATORS),
                 "verification_scope": "按表达类型核对来源摘录、关系引用或几何与数值关系；教学含义和领域事实需复核"},
         }
+
+    @application.get('/api/speech-preview')
+    def speech_preview() -> FileResponse:
+        if preview_info(settings) is None:
+            raise HTTPException(404, '当前配置还没有匹配的试听音频。')
+        return FileResponse(preview_path(settings), media_type='audio/wav',
+                            headers={'Cache-Control': 'no-cache'})
+
+    @application.get('/api/ppt-templates')
+    def ppt_templates() -> list[dict]:
+        return [template.public() for template in TEMPLATES.values()]
+
+    @application.get('/api/ppt-templates/{template_id}/preview')
+    def ppt_template_preview(template_id: PPTTemplate) -> Response:
+        return Response(template_preview_svg(template_id), media_type='image/svg+xml')
 
     @application.post("/api/jobs", status_code=202)
     async def create_job(
@@ -128,9 +149,13 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         llm_provider: Annotated[str, Form()] = "",
         llm_base_url: Annotated[str, Form()] = "",
         llm_model: Annotated[str, Form()] = "",
+        llm_review_model: Annotated[str, Form(max_length=120)] = "",
+        llm_math_model: Annotated[str, Form(max_length=120)] = "",
         llm_api_key: Annotated[str, Form()] = "",
         custom_prompt: Annotated[str, Form()] = "",
         animation_mode: Annotated[AnimationMode, Form()] = "auto",
+        ppt_template: Annotated[PPTTemplate, Form()] = 'classic',
+        use_illustrations: Annotated[bool, Form()] = True,
         tts_base_url: Annotated[str, Form()] = "",
         tts_model: Annotated[str, Form()] = "",
         tts_voice: Annotated[str, Form()] = "",
@@ -140,9 +165,13 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             raise HTTPException(400, "请先确认拥有资料使用权。")
         options = model_options(settings, llm_provider, llm_base_url, llm_model,
                                 llm_api_key, custom_prompt) if mode == Mode.AI else GenerationOptions()
+        options.review_model=llm_review_model.strip() if mode==Mode.AI else ''
+        options.math_model=llm_math_model.strip() if mode==Mode.AI else ''
         if mode == Mode.DEMO and animation_mode in {"math","visual","geometry"}:
             raise HTTPException(400, "数学推演需要选择真实 AI 模式。")
         options.animation_mode = animation_mode if mode == Mode.AI else "basic"
+        options.ppt_template = ppt_template
+        options.use_illustrations = use_illustrations
         if options.animation_mode in {"math","visual","geometry"} and not (
                 math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
             capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
@@ -151,10 +180,11 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             raise HTTPException(400, "数学对象推演环境未就绪：" + visual_capabilities().get('geometry_reason','缺少 TeX'))
         voice_options = speech_options(settings, tts_base_url, tts_model, tts_voice,
                                        tts_api_key) if voice_mode == VoiceMode.AI else SpeechOptions()
-        external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
+        external_text = mode == Mode.AI and any(Settings.model_is_remote(options.provider,options.base_url,name)
+            for name in [options.model,options.review_model,options.math_model] if name)
         external_voice = voice_mode == VoiceMode.AI and not Settings._is_loopback(voice_options.base_url)
         if (external_text or external_voice) and not remote_consent:
-            raise HTTPException(400, "调用外部服务前须同意发送提取文本或讲稿。")
+            raise HTTPException(400, "调用外部服务前须同意发送提取文本、数学模式的教材页图像或讲稿。")
         filename = (file.filename or "source.pdf").replace("\\", "/").split("/")[-1]
         if not filename.lower().endswith(".pdf"):
             raise HTTPException(400, "仅支持 PDF 文件。")
@@ -247,8 +277,12 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                   llm_provider: Annotated[str | None, Form()] = None,
                   llm_base_url: Annotated[str | None, Form()] = None,
                   llm_model: Annotated[str | None, Form()] = None,
+                  llm_review_model: Annotated[str | None, Form(max_length=120)] = None,
+                  llm_math_model: Annotated[str | None, Form(max_length=120)] = None,
                   custom_prompt: Annotated[str | None, Form()] = None,
                   animation_mode: Annotated[AnimationMode | None, Form()] = None,
+                  ppt_template: Annotated[PPTTemplate | None, Form()] = None,
+                  use_illustrations: Annotated[bool | None, Form()] = None,
                   tts_base_url: Annotated[str | None, Form()] = None,
                   tts_model: Annotated[str | None, Form()] = None,
                   tts_voice: Annotated[str | None, Form()] = None,
@@ -273,6 +307,10 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 base_url, options.model if llm_model is None else llm_model,
                 llm_api_key or (options.api_key if same_destination else ""),
                 ("" if replace_settings else options.prompt) if custom_prompt is None else custom_prompt)
+            options.review_model=(llm_review_model.strip() if llm_review_model is not None else
+                ('' if replace_settings or not same_destination else store.get_options(job_id).review_model))
+            options.math_model=(llm_math_model.strip() if llm_math_model is not None else
+                ('' if replace_settings or not same_destination else store.get_options(job_id).math_model))
             options.animation_mode = animation_mode or store.get_options(job_id).animation_mode
             if options.animation_mode in {"math", "visual", "geometry"} and not (
                     math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
@@ -282,6 +320,9 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 raise HTTPException(400, "数学对象推演环境未就绪：" + visual_capabilities().get('geometry_reason','缺少 TeX'))
         else:
             options = GenerationOptions(animation_mode="basic")
+        options.ppt_template = ppt_template or store.get_options(job_id).ppt_template
+        options.use_illustrations = (store.get_options(job_id).use_illustrations
+                                    if use_illustrations is None else use_illustrations)
         voice_options = store.get_speech_options(job_id)
         if voice_mode == VoiceMode.AI:
             base_url = voice_options.base_url if tts_base_url is None else tts_base_url
@@ -292,14 +333,18 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 tts_api_key or (voice_options.api_key if same_destination else ""))
         else:
             voice_options = SpeechOptions()
-        external_text = mode == Mode.AI and not Settings._is_loopback(options.base_url)
+        external_text = mode == Mode.AI and any(Settings.model_is_remote(options.provider,options.base_url,name)
+            for name in [options.model,options.review_model,options.math_model] if name)
         external_voice = (voice_mode == VoiceMode.AI
                           and not Settings._is_loopback(voice_options.base_url))
         consent = job["remote_consent"] if remote_consent is None else remote_consent
-        changed_external_destination = ((external_text and options.base_url != job["model_settings"].get("base_url"))
+        changed_external_destination = ((external_text and (options.base_url != job["model_settings"].get("base_url") or
+                                         options.model != job["model_settings"].get("model") or
+                                         options.review_model != job["model_settings"].get("review_model",'') or
+                                         options.math_model != job["model_settings"].get("math_model",'')))
                                         or (external_voice and voice_options.base_url != job["voice_settings"].get("base_url")))
         if (external_text or external_voice) and (not consent or (changed_external_destination and remote_consent is not True)):
-            raise HTTPException(400, "调用外部服务前须重新提交并同意发送文本。")
+            raise HTTPException(400, "调用外部服务前须重新提交并同意发送文本及数学模式的教材页图像。")
         if not (store.jobs_dir / job_id / "source.pdf").is_file():
             raise HTTPException(409, "原始 PDF 已丢失，请重新上传。")
         if not store.retry(job_id, mode=mode, voice_mode=voice_mode, options=options,

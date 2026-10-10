@@ -218,7 +218,7 @@ class JobStore:
         (self.jobs_dir / job_id / "lesson.pptx").unlink(missing_ok=True)
         (self.jobs_dir / job_id / "math-scenes.json").unlink(missing_ok=True)
         (self.jobs_dir/job_id/"scene-data.json").unlink(missing_ok=True)
-        for name in ("math","visual"):
+        for name in ("math","visual","presentation-preview"):
             scene_folder=(self.jobs_dir/job_id/name).resolve()
             if not scene_folder.is_relative_to(self.jobs_dir.resolve()):
                 raise ValueError("场景素材路径不在任务目录内。")

@@ -24,10 +24,27 @@ def check_geometry_visibility(scene, geometry, visible):
     Curves and lines may legitimately be clipped at the plotting boundary.
     This checks anchors, not label extents or general composition quality.
     """
+    actors={}
+    for obj in scene.objects:
+        actor=(scene.mathematical_model or {}).get('actor_of',{}).get(obj.id)
+        if actor and obj.id in visible and not obj.reference:
+            actors.setdefault(actor,[]).append(obj.id)
+    for actor,ids in actors.items():
+        if len(ids)>1:
+            raise GeometryRelationError('同一数学对象的原图与变换副本同时作为主体可见：'+str(ids)+
+                '。移动同一对象时隐藏原图；前后比较时将原图显式标为reference=true参照，不能凭空增加主体。')
     for obj in scene.objects:
         if obj.id not in visible or obj.kind not in {'dot', 'label'}:
             continue
         x, y = geometry[obj.id]['points'][0]
+        if obj.id in (scene.mathematical_model or {}).get('point_labels',{}).values():
+            # Computed annotations can occupy the letterbox space around an
+            # equal-unit plot. Check the physical clipping area, not the data
+            # extrema; the mathematical point itself still uses data bounds.
+            from zhijiang.visual_coordinates import EuclideanViewport
+            viewport=EuclideanViewport(scene.x_range,scene.y_range,1060,430,(0,0))
+            px,py=viewport.point(x,y)
+            if abs(px)<=530 and abs(py)<=215:continue
         if not (scene.x_range[0] <= x <= scene.x_range[1]
                 and scene.y_range[0] <= y <= scene.y_range[1]):
             raise GeometryRelationError('可见数学点或标签超出坐标窗口：' + obj.id

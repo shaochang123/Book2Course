@@ -270,7 +270,7 @@ def test_long_ai_course_is_batched_without_segment_cap():
                                             explanation="说明输入条件和比较步骤。", source_id=item["id"])
                     for item in data["sources"][:3]
                 ])
-            if schema is CourseOutline:
+            if issubclass(schema, CourseOutline):
                 return CourseOutline(title="完整课程", objective="理解全部相关知识和典型步骤。",
                                      point_titles=[point["title"] for point in data["points"]])
             if schema is ScriptDraft:

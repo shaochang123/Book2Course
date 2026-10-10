@@ -139,6 +139,10 @@ def _normalize_audio(source: Path, target: Path, ffmpeg: str) -> float:
 def render_video(lesson: Lesson, audio_files: list[Path], output: Path) -> None:
     if len(audio_files) != len(lesson.segments):
         raise VideoError("讲稿片段与配音数量不一致。")
+    if lesson.deck_plan:
+        from zhijiang.page_media import render_shared_video
+        render_shared_video(lesson, audio_files, output)
+        return
     if any(segment.math_scene or segment.visual_scene for segment in lesson.segments):
         _render_with_math(lesson, audio_files, output)
         return

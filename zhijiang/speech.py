@@ -56,12 +56,13 @@ class AISpeech:
         model: str,
         voice: str,
         http_client: httpx.Client | None = None,
+        timeout_seconds: float = 300,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.voice = voice
-        self.http_client = http_client or httpx.Client(timeout=300)
+        self.http_client = http_client or httpx.Client(timeout=timeout_seconds)
         self._owns_client = http_client is None
 
     def close(self) -> None:

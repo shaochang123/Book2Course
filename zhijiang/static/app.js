@@ -8,6 +8,23 @@ let currentJobId = /^[0-9a-f]{32}$/.test(linkedJobId) ? linkedJobId : localStora
 let pollTimer = null;
 let config = null;
 let shownSettingsJobId = null;
+let templateSelectionEdited = false;
+let voiceSelectionEdited = false;
+let illustrationSelectionEdited = false;
+$("#use-illustrations").addEventListener("change", () => { illustrationSelectionEdited = true; });
+
+function updateTemplatePreview() {
+  const id = $("#ppt-template").value;
+  const template = config?.ppt_templates?.find(item => item.id === id);
+  const image = $("#ppt-template-preview");
+  image.src = `/api/ppt-templates/${encodeURIComponent(id)}/preview`;
+  image.alt = `${template?.name || id}模板的版式示意`;
+  $("#ppt-template-description").textContent = template?.description || "正在读取模板信息。";
+}
+$("#ppt-template").addEventListener("change", () => {
+  templateSelectionEdited = true;
+  updateTemplatePreview();
+});
 
 async function getJSON(url, options = {}) {
   const response = await fetch(url, options);
@@ -35,7 +52,9 @@ function updateConsent() {
   const modelURL = $("#llm-base-url").value || config?.llm_base_url || "";
   const ttsURL = $("#tts-base-url").value || config?.tts_base_url || "";
   const localVoice = isLocalURL(ttsURL);
-  const remote = (ai && !isLocalURL(modelURL)) || (aiVoice && !localVoice);
+  const modelName = $("#llm-model").value || config?.llm_model || "";
+  const cloudModel = $("#llm-provider").value === "ollama" && [modelName,$("#llm-review-model").value,$("#llm-math-model").value].some(name=>/(:cloud|-cloud)$/i.test(name));
+  const remote = (ai && (!isLocalURL(modelURL) || cloudModel)) || (aiVoice && !localVoice);
   $("#remote-consent-row").hidden = !remote;
   $("#remote-consent").required = remote;
   if (!remote) $("#remote-consent").checked = false;
@@ -70,13 +89,14 @@ dropzone.addEventListener("drop", (event) => {
 });
 fileInput.addEventListener("change", () => { if (fileInput.files.length) $("#file-label").textContent = fileInput.files[0].name; });
 form.querySelectorAll('input[type="radio"]').forEach((input) => input.addEventListener("change", updateConsent));
+form.querySelectorAll('input[name="voice_mode"]').forEach(input => input.addEventListener("change", () => { voiceSelectionEdited = true; }));
 $("#llm-provider").addEventListener("change", updateConsent);
 $("#animation-mode").addEventListener("change", () => {
   if (["math","visual","geometry"].includes($("#animation-mode").value)) form.querySelector('input[name="mode"][value="ai"]').checked = true;
   updateConsent();
 });
 $("#llm-base-url").addEventListener("input", updateConsent);
-for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
+for (const name of ["llm_model", "llm_math_model", "llm_review_model", "tts_base_url", "tts_model", "tts_voice"]) {
   form.elements[name].addEventListener("input", updateConsent);
 }
 
@@ -86,11 +106,17 @@ function showJob(job) {
     const modeChoice = form.querySelector(`input[name="mode"][value="${job.mode}"]`);
     if (modeChoice) modeChoice.checked = true;
     const voiceChoice = form.querySelector(`input[name="voice_mode"][value="${job.voice_mode}"]`);
-    if (voiceChoice) voiceChoice.checked = true;
+    if (voiceChoice && !voiceSelectionEdited) voiceChoice.checked = true;
+    // A delayed restore of the previous job must not replace a new choice.
+    if (!templateSelectionEdited) $("#ppt-template").value = job.model_settings?.ppt_template || "classic";
+    if (!illustrationSelectionEdited) $("#use-illustrations").checked = job.model_settings?.use_illustrations ?? true;
+    updateTemplatePreview();
     if (job.mode === "ai" && job.model_settings) {
       $("#llm-provider").value = job.model_settings.provider || "openai";
       $("#llm-base-url").value = job.model_settings.base_url || "";
       $("#llm-model").value = job.model_settings.model || "";
+      $("#llm-review-model").value = job.model_settings.review_model || "";
+      $("#llm-math-model").value = job.model_settings.math_model || "";
       $("#custom-prompt").value = job.model_settings.prompt || "";
       $("#animation-mode").value = job.model_settings.animation_mode || "auto";
     }
@@ -177,7 +203,9 @@ async function showLesson(jobId) {
   $("#lesson-result").hidden = false;
   $("#lesson-title").textContent = lesson.title;
   $("#lesson-objective").textContent = lesson.objective;
-  $("#lesson-notice").textContent = lesson.notice;
+  $("#lesson-notice").textContent = lesson.notice.replace('在线 AI 配音', 'AI 配音');
+  const template = config?.ppt_templates?.find(item => item.id === lesson.ppt_template);
+  $("#ppt-template-result").textContent = `PPT：${template?.name || "深色演示"}${lesson.deck_plan?.planner === "model_layout_selection" ? " · AI 规划页面版式" : lesson.deck_plan?.planner === "deterministic_demo_layout" ? " · 规则排版" : ""}`;
   $("#segment-count").textContent = `${lesson.segments.length} 个讲解片段`;
   $("#voice-note").textContent = lesson.voice_mode === "ai" ? "本视频使用所配置的 AI 语音服务。" : "本视频使用 Windows 系统语音；此配音不是 AI 语音。";
   $("#segments").replaceChildren();
@@ -190,7 +218,7 @@ async function showLesson(jobId) {
   $("#math-report").hidden = !report.renderer;
   $("#math-report").textContent = report.scene_count ? (report.scene_type === "general" ?
     `${report.scene_count} 个通用教学场景 · ${report.renderer} · 含同步配音。表达类型：${[...new Set(report.representations || ["geometry"])].map(name => representationNames[name] || name).join("、")}。来源摘录、关系引用或几何计算按类型检查；教学含义和专业事实需复核。` :
-    `${report.scene_count} 个数学推演场景 · ${report.renderer} · 含同步配音。矩阵、向量与几何计算已核验；讲解质量和引用含义仍需人工核对。`) : report.reason || "基础图示";
+    `${report.scene_count} 个数学推演场景 · ${report.renderer} · 含同步配音。实际数学对象与声明关系已核验；讲解质量和引用含义仍需人工核对。`) : report.reason || "基础图示";
   $("#download-math-scenes").hidden = !report.scene_count;
   $("#download-math-scenes").href = `/api/jobs/${jobId}/scenes`;
 }
@@ -236,10 +264,12 @@ form.addEventListener("submit", async (event) => {
     body.append("mode", selected("mode"));
     body.append("voice_mode", selected("voice_mode"));
     body.append("animation_mode", $("#animation-mode").value);
+    body.append("ppt_template", $("#ppt-template").value);
+    body.append("use_illustrations", String($("#use-illustrations").checked));
     body.append("rights_confirmed", String($("#rights-confirmed").checked));
     body.append("remote_consent", String($("#remote-consent").checked));
     if (selected("mode") === "ai") {
-      for (const name of ["llm_provider", "llm_base_url", "llm_model", "llm_api_key", "custom_prompt"]) {
+      for (const name of ["llm_provider", "llm_base_url", "llm_model", "llm_math_model", "llm_review_model", "llm_api_key", "custom_prompt"]) {
         body.append(name, form.elements[name].value);
       }
     }
@@ -287,10 +317,12 @@ $("#retry-button").addEventListener("click", async () => {
     body.append("mode", selected("mode"));
     body.append("voice_mode", selected("voice_mode"));
     body.append("animation_mode", $("#animation-mode").value);
+    body.append("ppt_template", $("#ppt-template").value);
+    body.append("use_illustrations", String($("#use-illustrations").checked));
     body.append("remote_consent", String($("#remote-consent").checked));
     body.append("replace_settings", "true");
     if (selected("mode") === "ai") {
-      for (const name of ["llm_provider", "llm_base_url", "llm_model", "llm_api_key", "custom_prompt"]) {
+      for (const name of ["llm_provider", "llm_base_url", "llm_model", "llm_math_model", "llm_review_model", "llm_api_key", "custom_prompt"]) {
         body.append(name, form.elements[name].value);
       }
     }
@@ -315,6 +347,7 @@ $("#retry-button").addEventListener("click", async () => {
 (async function initialize() {
   try {
     config = await getJSON("/api/config");
+    updateTemplatePreview();
     $("#math-ready-label").textContent = config.visual_animation?.ready ?
       (config.visual_animation.geometry_ready ? "教学动画已就绪：支持来源关系图与可计算场景。" :
         "来源图示动画已就绪。公式演示还需 LaTeX；自动模式会按内容选择图示。") :
@@ -326,6 +359,15 @@ $("#retry-button").addEventListener("click", async () => {
     $("#tts-base-url").value = config.tts_base_url || "";
     $("#tts-model").value = config.tts_model || "";
     $("#tts-voice").value = config.tts_voice || "";
+    if (!voiceSelectionEdited) {
+      const preferredVoice = form.querySelector(`input[name="voice_mode"][value="${config.default_voice_mode || 'system'}"]`);
+      if (preferredVoice) preferredVoice.checked = true;
+    }
+    if (config.speech_preview) {
+      $("#speech-preview").hidden = false;
+      $("#speech-preview-text").textContent = config.speech_preview.text;
+      $("#speech-preview-audio").src = config.speech_preview.url;
+    }
     $("#ai-ready-label").textContent = config.llm_ready ?
       `默认：${config.llm_provider} · ${config.llm_model}；可在下方修改` : "在下方填写本次使用的模型 API";
     $("#tts-ready-label").textContent = !config.ai_tts_ready ? "可在下方填写本次使用的语音 API" :

@@ -49,6 +49,19 @@ def make_client(tmp_path):
     return TestClient(app), app.state.store
 
 
+def test_ollama_cloud_generation_and_review_require_remote_consent(tmp_path,sample_pdf):
+    client,store=make_client(tmp_path)
+    with client:
+        for model,reviewer,planner in [('gemma4:cloud','',''),('local-model','gpt-oss:120b-cloud',''),('local-model','','gpt-oss:120b-cloud')]:
+            response=client.post('/api/jobs',files={'file':('source.pdf',sample_pdf)},
+                data={'rights_confirmed':'true','mode':'ai','llm_provider':'ollama',
+                    'llm_base_url':'http://127.0.0.1:11434','llm_model':model,'llm_review_model':reviewer,'llm_math_model':planner})
+            assert response.status_code==400
+            assert '发送' in response.json()['detail']
+        assert Settings(llm_provider='ollama',llm_base_url='http://localhost:11434',llm_model='gemma4:cloud').llm_ready
+        assert not Settings(llm_provider='ollama',llm_base_url='http://localhost:11434',llm_model='gemma4:cloud').llm_is_local
+
+
 def test_geometry_mode_rejects_demo_and_missing_tex(tmp_path,sample_pdf,monkeypatch):
     client,store=make_client(tmp_path)
     monkeypatch.setattr('zhijiang.main.visual_capabilities',lambda:{'ready':True,'geometry_ready':False,'geometry_reason':'缺少 latex'})
@@ -59,6 +72,53 @@ def test_geometry_mode_rejects_demo_and_missing_tex(tmp_path,sample_pdf,monkeypa
                       'llm_provider':'ollama','llm_base_url':'http://127.0.0.1:11434','llm_model':'test-model'})
             assert response.status_code==400
             assert expected in response.json()['detail']
+
+
+def test_geometry_source_failure_is_reported_and_no_video_published(tmp_path,sample_pdf,monkeypatch):
+    from zhijiang.pdf import PDFError
+    from zhijiang.models import SourceDocument
+    client,store=make_client(tmp_path)
+    monkeypatch.setattr('zhijiang.main.visual_capabilities',lambda:{'ready':True,'geometry_ready':True})
+    monkeypatch.setattr('zhijiang.pipeline.visual_capabilities',lambda:{'ready':True,'geometry_ready':True})
+    def fail_read(*args,**kwargs):raise PDFError('数学原页识别未通过：分母不清晰')
+    monkeypatch.setattr('zhijiang.math_sources.read_math_pdf',fail_read)
+    with client:
+        response=client.post('/api/jobs',files={'file':('source.pdf',sample_pdf,'application/pdf')},
+            data={'mode':'ai','rights_confirmed':'true','voice_mode':'system','animation_mode':'geometry',
+                  'llm_provider':'ollama','llm_base_url':'http://127.0.0.1:11434','llm_model':'test-model'})
+        assert response.status_code==202
+        id=response.json()['id'];job=client.get(f'/api/jobs/{id}').json()
+        assert job['status']=='failed'
+        assert '分母不清晰' in job['error']
+        assert client.get(f'/api/jobs/{id}/video').status_code==409
+
+
+def test_geometry_retry_cannot_reuse_obsolete_visual_transcript(tmp_path,sample_pdf,monkeypatch):
+    import hashlib,json
+    from zhijiang.models import SourceDocument,PageText
+    from zhijiang.pdf import PDFError
+    client,store=make_client(tmp_path)
+    options=GenerationOptions(provider='ollama',base_url='http://localhost:11434',
+        model='mock-model',animation_mode='geometry')
+    job=store.create('source.pdf',Mode.AI,VoiceMode.SYSTEM,True,False,sample_pdf,options)
+    folder=store.jobs_dir/job['id']
+    obsolete=SourceDocument(filename='source.pdf',pages=[PageText(page=1,
+        text='An old translated summary with an invented diagram.')])
+    fingerprint='visual-math-source-v1:'+hashlib.sha256(sample_pdf).hexdigest()+options.model+options.base_url
+    (folder/'parsed-source.json').write_text(json.dumps({'fingerprint':fingerprint,
+        'data':obsolete.model_dump()}),encoding='utf-8')
+    called=[]
+    def reread(*args,**kwargs):
+        called.append(True)
+        raise PDFError('新来源识别必须重新核对原页')
+    monkeypatch.setattr('zhijiang.math_sources.read_math_pdf',reread)
+    def stale_plan(*args,**kwargs):raise AssertionError('Stale source must never reach planning')
+    monkeypatch.setattr('zhijiang.mathematical_planning.plan_constructed_lesson',stale_plan)
+    processor=JobProcessor(Settings(data_dir=tmp_path/'data'),store)
+    processor.process(job['id'])
+    assert called==[True]
+    assert store.get(job['id'])['status']=='failed'
+    assert '重新核对原页' in store.get(job['id'])['error']
 
 
 def test_api_upload_result_video_and_delete(tmp_path, sample_pdf):
@@ -312,7 +372,18 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
             narration=segment.narration, bullets=segment.bullets,
         ) for index, segment in enumerate(lesson.segments, start=1)
     ])
-    replies = [selection, outline, script_draft, ReviewResult(approved=True)]
+    from zhijiang.deck_planning import DeckDirectorDraft, DeckPageChoice, VisualGroup
+    director = DeckDirectorDraft(hook_segment_id=1, pages=[DeckPageChoice(
+        segment_id=i, role='explanation', layout='wide', bullet_ids=[1], include_animation=False,
+        visual_groups=[VisualGroup(bullet_id=1)])
+        for i in range(1, len(lesson.segments)+1)])
+    from pydantic import BaseModel
+    from zhijiang.caption_grounding import speech_sentences
+    class CaptionReply(BaseModel):
+        pages: list[dict]
+    captions = CaptionReply(pages=[{'segment_id':i,'sentence_ids':[1]}
+                                  for i in range(1,len(lesson.segments)+1)])
+    replies = [selection, outline, script_draft, captions, ReviewResult(approved=True), director]
     transport = httpx.MockTransport(
         lambda _: httpx.Response(
             200, json={"choices": [{"message": {"content": replies.pop(0).model_dump_json()}}]}
@@ -335,6 +406,8 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
         processor.process(job["id"])
     assert store.get(job["id"])["status"] == JobStatus.COMPLETED
     assert store.lesson(job["id"]).mode == Mode.AI
+    assert [s.bullets for s in store.lesson(job['id']).segments] == [
+        [speech_sentences(s.narration)[0]] for s in script_draft.segments]
     assert not replies
 
 

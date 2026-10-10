@@ -14,6 +14,128 @@ from zhijiang.agents import source_candidates
 from zhijiang.pdf import read_pdf
 
 
+@pytest.mark.parametrize('stage',['DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection'])
+def test_small_deck_repairs_use_native_schema_even_with_json_preference(stage):
+    from pydantic import create_model
+    schema=create_model(stage,selection=(str,...))
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        payload=json.loads(request.content)
+        assert payload['format']==schema.model_json_schema()
+        return httpx.Response(200,json={'message':{'content':'{"selection":"valid"}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','local',http_client,prefer_json=True)
+        assert client.generate(schema,'choose verified fields','source').selection=='valid'
+        assert client.call_metrics[-1]['decoding']=='schema'
+
+
+@pytest.mark.parametrize('prefer_json',[True,False])
+def test_math_task_boundary_context_and_reasoning_budget(prefer_json):
+    from pydantic import create_model
+    schema=create_model('MathProgramDraft',reason=(str,...))
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={'thinking':{'values':[True,False],'default':True}})
+        payload=json.loads(request.content)
+        assert payload['options']['num_ctx']==16384
+        assert payload['options']['num_predict']==12288
+        assert payload['options']['num_gpu']==24
+        assert payload['options']['presence_penalty']==0
+        assert payload['think'] is True
+        assert (payload['format']=='json') if prefer_json else isinstance(payload['format'],dict)
+        user=payload['messages'][1]['content']
+        assert user.index('</source_data>')<user.index('应用提供的阶段任务')<user.index('EXECUTE_THIS_TASK')
+        return httpx.Response(200,json={'message':{'content':'{"reason":"valid"}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','local',http_client,prefer_json=prefer_json,num_gpu=24)
+        assert client.generate(schema,'EXECUTE_THIS_TASK','untrusted textbook question').reason=='valid'
+
+
+def test_image_request_rejects_advertised_text_only_model():
+    from pydantic import create_model
+    schema=create_model('MathSourceReading',reason=(str,...))
+    def handler(request):
+        assert request.url.path=='/api/show'
+        return httpx.Response(200,json={'capabilities':['completion']})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','text-only',http_client)
+        with pytest.raises(GenerationError,match='vision'):client.generate(schema,'read page','text',images=[b'page'])
+
+
+def test_math_budget_recovery_is_bounded_and_never_accepts_truncated_content():
+    from pydantic import create_model
+    schema=create_model('MathSourceReview',approved=(bool,...))
+    budgets=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        payload=json.loads(request.content);budgets.append(payload['options']['num_predict'])
+        if len(budgets)==1:return httpx.Response(200,json={'done_reason':'length','message':{'content':'{"approved":true}'}})
+        return httpx.Response(200,json={'done_reason':'stop','message':{'content':'{"approved":false}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','local',http_client)
+        assert client.generate(schema,'review','source').approved is False
+        assert budgets==[4096,8192]
+
+
+def test_math_budget_recovery_remains_available_after_schema_repair():
+    from pydantic import create_model
+    schema=create_model('MathSourceReview',approved=(bool,...))
+    budgets=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={'capabilities':[]})
+        payload=json.loads(request.content);budgets.append(payload['options']['num_predict'])
+        values=[{'done_reason':'stop','message':{'content':'{}'}},
+                {'done_reason':'length','message':{'content':'{"approved":true}'}},
+                {'done_reason':'stop','message':{'content':'{"approved":false}'}}]
+        return httpx.Response(200,json=values[len(budgets)-1])
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client=OllamaClient('http://localhost:11434','mock',http,prefer_json=True)
+        assert client.generate(schema,'Complete valid result.','Source.').approved is False
+        assert budgets==[4096,4096,8192]
+
+
+@pytest.mark.parametrize('recovers',[True,False])
+def test_budget_retry_remains_after_two_format_failures_and_is_bounded(recovers):
+    from pydantic import create_model
+    schema=create_model('MathSourceReview',approved=(bool,...));budgets=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        budgets.append(json.loads(request.content)['options']['num_predict'])
+        count=len(budgets)
+        content='{}' if count<3 or not recovers else '{"approved":false}'
+        return httpx.Response(200,json={'done_reason':'length' if count==3 else 'stop',
+            'message':{'content':content}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client=OllamaClient('http://localhost:11434','mock',http,prefer_json=True)
+        if recovers:assert client.generate(schema,'review','source').approved is False
+        else:
+            with pytest.raises(GenerationError,match='不符合数据契约'):client.generate(schema,'review','source')
+    assert budgets==[4096,4096,4096,8192]
+
+
+@pytest.mark.parametrize('values,expected',[(['low','medium','high'],'low'),([True,False],True)])
+def test_named_thinking_level_uses_advertised_controls(values,expected):
+    from pydantic import create_model
+    schema=create_model('MathSourceReview',approved=(bool,...))
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={'thinking':{'values':values,'default':values[1]}})
+        assert json.loads(request.content)['think']==expected
+        return httpx.Response(200,json={'message':{'content':'{"approved":false}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        assert OllamaClient('http://localhost:11434','mock',http,thinking_level='low').generate(schema,'review','source').approved is False
+
+
+def test_cloud_fenced_json_is_strictly_validated_without_accepting_extra_prose():
+    from pydantic import create_model
+    schema=create_model('MathSourceReading',reason=(str,...))
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        return httpx.Response(200,json={'message':{'content':'```json\n{"reason":"page-read"}\n```'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','model:cloud',http_client)
+        assert client.generate(schema,'read','page').reason=='page-read'
+        assert client.call_metrics[-1]['format_repair']=='fenced_json'
+
+
 @pytest.mark.parametrize('provider',['ollama','compatible'])
 def test_format_retry_supplies_enum_and_numeric_contract_without_echoing_input(provider):
     from typing import Literal
@@ -235,8 +357,9 @@ def test_native_json_normalization_does_not_ignore_prose_or_another_object(sampl
     assert len(calls)==2
 
 
-@pytest.mark.parametrize('status,count',[(401,1),(503,2)])
-def test_ollama_http_repair_is_bounded_and_does_not_retry_auth(status,count):
+@pytest.mark.parametrize('status,count',[(401,1),(429,3),(502,3),(503,3),(504,3)])
+def test_ollama_http_repair_is_bounded_and_does_not_retry_auth(status,count,monkeypatch):
+    pauses=[];monkeypatch.setattr('zhijiang.agents.time.sleep',pauses.append)
     calls=[]
     def handler(request):
         if request.url.path=='/api/show':return httpx.Response(200,json={})
@@ -245,6 +368,79 @@ def test_ollama_http_repair_is_bounded_and_does_not_retry_auth(status,count):
         with pytest.raises(GenerationError,match='HTTP '+str(status)):
             OllamaClient('http://localhost:11434','model',http_client).generate(KnowledgeBundle,'提取','资料')
     assert len(calls)==count
+    assert pauses==([2,5] if count==3 else [])
+
+
+def test_transient_cloud_502_preserves_request_and_recovers(sample_pdf,monkeypatch):
+    monkeypatch.setattr('zhijiang.agents.time.sleep',lambda seconds:None)
+    bundle=DemoAgents().extract_knowledge(read_pdf(sample_pdf,'sample.pdf'));bodies=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        bodies.append(request.content)
+        if len(bodies)==1:return httpx.Response(502,json={'error':'temporary'})
+        return httpx.Response(200,json={'message':{'content':bundle.model_dump_json()}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        result=OllamaClient('http://localhost:11434','cloud',http_client).generate(KnowledgeBundle,'提取','资料')
+    assert result==bundle and len(bodies)==2 and bodies[0]==bodies[1]
+
+
+@pytest.mark.parametrize('recovers',[True,False])
+def test_eof_without_done_retries_same_payload_bounded_never_accepts_partial(recovers,monkeypatch):
+    from pydantic import create_model
+    monkeypatch.setattr('zhijiang.agents.time.sleep',lambda seconds:None)
+    schema=create_model('MathSourceReview',approved=(bool,...));bodies=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        bodies.append(request.content)
+        chunk={'message':{'content':'{"approved":true}'},'done':False}
+        if recovers and len(bodies)==2:chunk={'message':{'content':'{"approved":false}'},'done':True}
+        return httpx.Response(200,content=json.dumps(chunk)+'\n')
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client=OllamaClient('http://localhost:11434','cloud',http,progress=lambda *args:None)
+        if recovers:assert client.generate(schema,'review','source').approved is False
+        else:
+            with pytest.raises(GenerationError,match='输出中断'):client.generate(schema,'review','source')
+    assert len(bodies)==(2 if recovers else 3) and len(set(bodies))==1
+
+
+def test_math_schema_repair_uses_third_attempt_and_one_based_step_feedback():
+    from pydantic import create_model,Field
+    from typing import Annotated
+    schema=create_model('MathBehaviorDraft',steps=(list[Annotated[int,Field(ge=1,le=10)]],...))
+    calls=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        body=json.loads(request.content);calls.append(body)
+        if len(calls)>1:assert '"minimum": 1' in body['messages'][-1]['content']
+        return httpx.Response(200,json={'message':{'content':json.dumps({'steps':[1 if len(calls)==3 else 0]})}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        assert OllamaClient('http://localhost:11434','cloud',http).generate(schema,'steps','source').steps==[1]
+    assert len(calls)==3
+
+
+def test_math_typed_measurement_repair_provides_actual_valid_point_ids():
+    from zhijiang.math_behavior import behavior_schema
+    from tests.test_math_construction import program
+    p=program([{'id':'f','op':'function','expr':['exp(x)']},
+        {'id':'origin','op':'point','expr':['0','0'],'visible':False},
+        {'id':'moving','op':'point_on_function','refs':['f'],'expr':['u']}],
+        [{'lhs':'ycoord(moving)','rhs':'value(f,u)'}])
+    schema=behavior_schema(p,{1});calls=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        body=json.loads(request.content);calls.append(body)
+        if len(calls)>1:
+            hint=body['messages'][-1]['content']
+            assert 'moving' in hint and 'origin' in hint and 'enum' in hint
+        point='invented' if len(calls)==1 else 'moving'
+        data={'operations':[{'narration':'观察函数上的运动点与实际输出的对应关系。','changes':{'u':v}}
+            for v in [.3,.6,.8]],'claims':[{'source_id':1,
+                'left':{'terms':[{'kind':'ycoord','point':point}]},
+                'right':{'terms':[{'kind':'value','function':'f','at':'u'}]}}]}
+        return httpx.Response(200,json={'message':{'content':json.dumps(data)}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        result=OllamaClient('http://localhost:11434','cloud',http).generate(schema,'类型测量','实际对象')
+    assert result.claims[0].left.terms[0].point=='moving' and len(calls)==2
 
 
 def test_long_english_pdf_candidates_fit_small_batches():

@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from zhijiang.presentation_templates import PPTTemplate
 
 
 class Mode(StrEnum):
@@ -34,6 +35,7 @@ class PageText(BaseModel):
     page: int = Field(ge=1)
     text: str = Field(min_length=1)
     ocr: bool = False
+    math_reading: dict | None = None
 
 
 class SourceDocument(BaseModel):
@@ -51,9 +53,13 @@ class GenerationOptions(BaseModel):
     provider: Literal["ollama", "openai"] = "openai"
     base_url: str = ""
     model: str = ""
+    review_model: str = Field(default="",max_length=120)
+    math_model: str = Field(default="",max_length=120)
     api_key: str = Field(default="", exclude=True)
     prompt: str = Field(default="", max_length=4000)
     animation_mode: AnimationMode = "auto"
+    ppt_template: PPTTemplate = 'classic'
+    use_illustrations: bool = True
     semantic_thinking: bool = True
 
 
@@ -133,6 +139,10 @@ class SceneObject(BaseModel):
     text: str = Field(default="", max_length=80)
     color: str = Field(default="#78BAFF", pattern=r"^#[0-9a-fA-F]{6}$")
     visible: bool = True
+    reference: bool = False
+    double_tip: bool = False
+    line_extent: Literal['segment','ray','line'] = 'segment'
+    coordinate_window: list[float] = Field(default_factory=list,max_length=4)
 
 
 class SceneCalculation(BaseModel):
@@ -149,7 +159,7 @@ class SceneCheck(BaseModel):
 
 
 class VisualBeat(BaseModel):
-    narration: str = Field(min_length=12, max_length=800)
+    narration: str = Field(min_length=8, max_length=800)
     parameters: dict[str, float] = Field(default_factory=dict)
     show: list[str] = Field(default_factory=list)
     hide: list[str] = Field(default_factory=list)
@@ -220,10 +230,14 @@ class VisualScenePlan(BaseModel):
     domain: str = Field(min_length=2, max_length=40)
     question: str = Field(min_length=4, max_length=120)
     parameters: dict[str, float] = Field(default_factory=dict)
-    objects: list[SceneObject] = Field(min_length=2, max_length=24)
+    # Source constructions stay bounded separately. Compiled partition cells
+    # and anchored annotations need room in the serialized renderer contract.
+    objects: list[SceneObject] = Field(min_length=2, max_length=64)
     beats: list[VisualBeat] = Field(min_length=1, max_length=12)
     checks: list[SceneCheck] = Field(default_factory=list, max_length=16)
     geometry_constraints: list[GeometryConstraint] = Field(default_factory=list,max_length=12)
+    derived_parameters: dict[str,str] = Field(default_factory=dict)
+    mathematical_model: dict | None = None
     domain_data: dict[str, str] = Field(default_factory=dict)
     domain_validators: list[str] = Field(default_factory=list, max_length=12)
     x_range: list[float] = Field(default_factory=lambda: [-5, 5], min_length=2, max_length=2)
@@ -255,6 +269,8 @@ class Lesson(BaseModel):
     voice_mode: VoiceMode
     notice: str
     animation_report: dict = Field(default_factory=dict)
+    ppt_template: PPTTemplate = 'classic'
+    deck_plan: dict = Field(default_factory=dict)
 
 
 class ReviewResult(BaseModel):

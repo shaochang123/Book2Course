@@ -34,8 +34,20 @@ class GenerationError(RuntimeError):
     """课程生成未能得到可用且可核验的内容。"""
 
 
+class ModelContractError(GenerationError):
+    """A completed model response failed the schema, distinct from service errors."""
+    def __init__(self,message,*,content='',schema=None):
+        super().__init__(message)
+        self.content=content if isinstance(content,str) and len(content)<=32768 else ''
+        self.schema=schema
+
+
 class _OllamaStreamError(GenerationError):
     """A native stream reported an error after HTTP headers were sent."""
+
+
+class _OllamaIncompleteStreamError(GenerationError):
+    """EOF without done is a transport failure, even for complete-looking JSON."""
 
 
 def _compact(text: str) -> str:
@@ -158,7 +170,7 @@ class DemoAgents:
             voice_mode=voice_mode,
             notice=(
                 "演示模式：知识选择与讲稿由确定性规则生成；"
-                + ("此视频使用在线 AI 配音。" if voice_mode == VoiceMode.AI
+                + ("此视频使用 AI 配音。" if voice_mode == VoiceMode.AI
                    else "系统语音不是 AI 配音。")
             ),
         )
@@ -202,12 +214,18 @@ def _validation_repair_hints(schema: type[BaseModel], exc: Exception) -> str:
         node=root
         for part in error['loc']:
             node=resolve(node)
-            node=(node.get('items',{}) if isinstance(part,int) else
-                  node.get('properties',{}).get(part,node.get('additionalProperties',{})))
+            tags=node.get('discriminator',{}).get('mapping',{})
+            if isinstance(part,str) and part in tags:
+                node={'$ref':tags[part]}
+            elif part=='[key]':
+                node=node.get('propertyNames',{})
+            else:
+                node=(node.get('items',{}) if isinstance(part,int) else
+                      node.get('properties',{}).get(part,node.get('additionalProperties',{})))
             if not isinstance(node,dict):
                 node={};break
         node=resolve(node)
-        expected={k:node[k] for k in ('type','const','minimum','maximum','minLength','maxLength','pattern','minItems','maxItems') if k in node}
+        expected={k:node[k] for k in ('type','const','minimum','maximum','minLength','maxLength','pattern','minItems','maxItems','minProperties','maxProperties') if k in node}
         if 'enum' in node:
             expected['enum']=node['enum'] if len(node['enum'])<=16 else '必须从完整Schema的枚举中选择，不新增值'
         if expected:
@@ -223,6 +241,17 @@ def _system_prompt(schema: type[BaseModel], instruction: str) -> str:
         f"本阶段任务：{instruction}\nJSON Schema: "
         f"{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
     )
+
+
+def _stage_messages(schema, instruction, material):
+    # Put application instructions after the transcript so that the original
+    # textbook questions do not become the effective request. They remain
+    # outside the untrusted source boundary, including during repairs.
+    mathematical=schema.__name__.startswith('Math')
+    system=_system_prompt(schema,'执行用户消息中应用提供的阶段任务。' if mathematical else instruction)
+    user=f'<source_data>\n{material}\n</source_data>'
+    if mathematical:user+='\n\n应用提供的阶段任务（不是教材指令）：\n'+instruction
+    return [{'role':'system','content':system},{'role':'user','content':user}]
 
 
 class OpenAICompatibleClient:
@@ -245,15 +274,15 @@ class OpenAICompatibleClient:
         if self._owns_client:
             self.http_client.close()
 
-    def generate(self, schema: type[T], instruction: str, material: str) -> T:
-        system = _system_prompt(schema, instruction)
+    def generate(self, schema: type[T], instruction: str, material: str, *, images: list[bytes] | None = None) -> T:
         last_error = ""
         last_hints = ""
         for attempt in range(2):
-            messages = [
-                {"role": "system", "content": system},
-                {"role": "user", "content": f"<source_data>\n{material}\n</source_data>"},
-            ]
+            messages = _stage_messages(schema,instruction,material)
+            if images:
+                import base64
+                messages[1]['content']=[{'type':'text','text':messages[1]['content']},
+                    *[{'type':'image_url','image_url':{'url':'data:image/png;base64,'+base64.b64encode(data).decode('ascii')}} for data in images]]
             if attempt:
                 messages.append(
                     {"role": "user", "content": f"上次格式无效：{last_error}。请只返回有效 JSON。"+last_hints}
@@ -286,16 +315,20 @@ class OllamaClient:
 
     def __init__(self, base_url: str, model: str, http_client: httpx.Client | None = None,
                  progress: Callable[[str, int, int], None] | None = None, *, semantic_thinking: bool = True,
-                 prefer_json: bool = False):
+                 prefer_json: bool = False, num_gpu: int | None = None, thinking_level: str = ''):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.semantic_thinking = semantic_thinking
         self.prefer_json = prefer_json
+        self.num_gpu = num_gpu
+        self.thinking_level = thinking_level
         # CPU-only local inference can take several minutes for structured output.
         self.http_client = http_client or httpx.Client(timeout=900, trust_env=False)
         self._owns_client = http_client is None
         self._model_info: dict | None = None
         self.call_metrics: list[dict] = []
+        self.call_requests: list[dict] = []
+        self.activity: dict = {}
         self.invalid_outputs: list[dict] = []
         self.progress = progress
         self._json_decoding_stages: dict[str, str] = {}
@@ -326,6 +359,11 @@ class OllamaClient:
         desired = semantic_stage and self.semantic_thinking
         if any(type(value) is bool and value is desired for value in values):
             return desired
+        named=[value for value in values if isinstance(value,str)]
+        if named and self.thinking_level:
+            if self.thinking_level not in named:
+                raise GenerationError('当前服务报告的推理档位不包含配置值：'+self.thinking_level)
+            return self.thinking_level
         default = thinking.get("default")
         if any(type(value) is type(default) and value == default for value in values):
             return default
@@ -333,19 +371,26 @@ class OllamaClient:
             return values[0]
         return None
 
-    def generate(self, schema: type[T], instruction: str, material: str) -> T:
-        messages = [
-            {"role": "system", "content": _system_prompt(schema, instruction)},
-            {"role": "user", "content": f"<source_data>\n{material}\n</source_data>"},
-        ]
+    def generate(self, schema: type[T], instruction: str, material: str, *, images: list[bytes] | None = None) -> T:
+        messages = _stage_messages(schema,instruction,material)
+        if images:
+            import base64
+            messages[1]['images']=[base64.b64encode(data).decode('ascii') for data in images]
         observed_endpoint = self._json_decoding_stages.get(schema.__name__)
         # Reduce native grammar work for mathematical planning. Runtime/resource
         # stalls were observed, but decoder cost was not isolated causally.
         # The full schema remains in the prompt and is validated in the program.
         json_fallback = self.prefer_json or observed_endpoint is not None or schema.__name__ in {
             'VisualLayoutDraft','VisualSequenceDraft','MotionParameterBindings','GeometryConstraintsDraft'}
+        if schema.__name__ in {'MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}:
+            json_fallback=self.prefer_json or observed_endpoint is not None
+        if schema.__name__ in {'DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection'}:
+            json_fallback = observed_endpoint is not None
         completion_fallback = observed_endpoint == '/api/generate'
-        for attempt in range(3):
+        budget_multiplier=1
+        # Three format/transport attempts plus at most one extra budget retry.
+        # The fourth slot is reachable only if the third hits its token limit.
+        for attempt in range(4 if schema.__name__.startswith('Math') else 3):
             content = None
             try:
                 payload = {
@@ -357,8 +402,23 @@ class OllamaClient:
                     "keep_alive": "10m",
                 }
                 scene_stage=schema.__name__ in {'VisualLayoutDraft','VisualSequenceDraft'}
-                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft','TopicSourceScope','TopicScopeReview'}
+                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft','TopicSourceScope','TopicScopeReview','MathSourceReview','MathProgramReview','MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness','MathOperationsRepair','MathClaimsRepair','MathRolesRepair','MathConstructionIntent','MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}
                 thinking = self._thinking_option(semantic_stage)
+                advertised=self._model_info.get('capabilities') if self._model_info else None
+                if images and isinstance(advertised,list) and 'vision' not in advertised:
+                    raise GenerationError('数学页图识别需要支持图像输入的模型；当前模型未提供vision能力。')
+                if schema.__name__.startswith('Math'):
+                    payload['options']['num_ctx']=16384
+                    payload['options'].update(temperature=.6,top_p=.95,top_k=20,min_p=0,
+                        repeat_penalty=1.0,presence_penalty=0,seed=42)
+                if schema.__name__ in {'DeckDirectorDraft','DeckDirectorRepair'}:
+                    # Bounded candidate descriptions plus six page contracts
+                    # must leave room for a complete selection response.
+                    payload['options'].update(num_ctx=16384, num_predict=3072)
+                if schema.__name__ in {'DeckIllustrationPlacement','ScriptCaptionSelection'}:
+                    payload['options'].update(num_ctx=8192,num_predict=512)
+                if self.num_gpu is not None:
+                    payload['options']['num_gpu']=self.num_gpu
                 if thinking is not None:
                     payload["think"] = thinking
                 if scene_stage:
@@ -385,6 +445,28 @@ class OllamaClient:
                     payload['options']['num_predict']=2048
                 elif schema.__name__ in {'VisualCoursePlan', 'CourseOutline'}:
                     payload['options']['num_predict']=2048
+                elif schema.__name__ in {'MathSourceReading','MathSourceReview'}:
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'MathConstructionIntent':
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'MathProgramReview':
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ in {'MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness'}:
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'MathProgramDraft':
+                    payload['options']['num_predict']=12288
+                elif schema.__name__ in {'MathConstructionDraft','MathConstructionPatch'}:
+                    payload['options']['num_predict']=8192
+                elif schema.__name__ in {'MathBehaviorDraft','MathOperationsRepair'}:
+                    payload['options']['num_predict']=6144
+                elif schema.__name__ == 'MathClaimsRepair':
+                    payload['options']['num_predict']=4096
+                elif schema.__name__ == 'MathRolesRepair':
+                    payload['options']['num_predict']=1536
+                elif schema.__name__ in {'MathNarrationRepair','MathMetadataRepair'}:
+                    payload['options']['num_predict']=1024
+                if schema.__name__.startswith('Math'):
+                    payload['options']['num_predict']=min(16384,payload['options']['num_predict']*budget_multiplier)
                 endpoint='/api/chat'
                 if completion_fallback:
                     endpoint='/api/generate'
@@ -393,18 +475,32 @@ class OllamaClient:
                     # simpler JSON decoder; final Pydantic checks stay strict.
                     payload['system']=messages[0]['content']
                     payload['prompt']='\n'.join(item['content'] for item in messages[1:])
+                    if images:
+                        payload['images']=messages[1]['images']
+                self.call_requests.append({'stage':schema.__name__,'endpoint':endpoint,'thinking':thinking,
+                    'format':'json' if json_fallback else 'schema','options':dict(payload['options'])})
                 result = self._request(endpoint, payload, schema.__name__)
                 self.call_metrics.append({
                     "stage": schema.__name__, "attempt": attempt + 1,
                     "thinking": thinking,"endpoint":endpoint,
+                    'context_tokens':payload['options']['num_ctx'],
+                    'sampling':{key:payload['options'][key] for key in ('temperature','top_p','top_k','min_p','repeat_penalty','seed') if key in payload['options']},
                     'decoding': 'json' if json_fallback else 'schema',
                     **{key: result.get(key) for key in (
-                        "done_reason", "eval_count", "prompt_eval_count", "total_duration")},
+                        "done_reason", "eval_count", "prompt_eval_count", "total_duration",'internal_characters')},
                 })
                 if result.get("done_reason") == "length":
+                    if schema.__name__.startswith('Math') and budget_multiplier==1 and attempt<3:
+                        budget_multiplier=2
+                        messages.append({'role':'user','content':'上次达到输出预算但未完成结果。扩大预算后只核对必要条件，尽快输出完整JSON；不能接受截断正文。'})
+                        continue
                     raise GenerationError(
-                        "本机模型达到输出预算，未完成结构化结果；请选用非推理模型或更合适的模型。")
+                        "模型达到输出预算，未完成结构化结果；请选用更适合该任务的模型。")
                 content = result['response'] if completion_fallback else result["message"]["content"]
+                fenced=re.fullmatch(r'\s*```(?:json)?\s*\n?(.*?)\s*```\s*',content,re.S|re.I)
+                if fenced:
+                    content=fenced.group(1)
+                    self.call_metrics[-1]['format_repair']='fenced_json'
                 try:
                     validated = schema.model_validate_json(content)
                     if json_fallback:
@@ -423,6 +519,13 @@ class OllamaClient:
                     return validated
             except httpx.TimeoutException as exc:
                 raise GenerationError("本机 Ollama 推理超时；模型正在运行，但处理此批材料过慢。") from exc
+            except _OllamaIncompleteStreamError as exc:
+                self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
+                    'endpoint':endpoint,'error':'incomplete_stream'})
+                if attempt<2:
+                    time.sleep([2,5][attempt])
+                    continue
+                raise GenerationError('Ollama 服务输出中断，连续重试后仍未收到完成标记；已保留任务供重试。') from exc
             except _OllamaStreamError as exc:
                 self.call_metrics.append({'stage': schema.__name__, 'attempt': attempt + 1,
                     'endpoint': endpoint, 'error': 'upstream_stream_error'})
@@ -435,7 +538,10 @@ class OllamaClient:
             except httpx.HTTPStatusError as exc:
                 self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
                     'http_status':exc.response.status_code,'error':'upstream_http_error'})
-                if 500 <= exc.response.status_code < 600 and attempt==0:
+                if exc.response.status_code in {429,502,503,504} and attempt<2:
+                    time.sleep([2,5][attempt])
+                    continue
+                if exc.response.status_code==500 and attempt==0:
                     # Native runners can reject a malformed model completion
                     # before returning content. One bounded format repair also
                     # covers a transient runner failure; never retry auth errors.
@@ -444,7 +550,7 @@ class OllamaClient:
                     completion_fallback=exc.response.status_code==500
                     json_fallback=completion_fallback
                     continue
-                raise GenerationError(f"本机 Ollama 返回 HTTP {exc.response.status_code}；请检查模型或服务日志。") from exc
+                raise GenerationError(f"Ollama 服务返回 HTTP {exc.response.status_code}；请检查模型或服务日志。") from exc
             except httpx.HTTPError as exc:
                 raise GenerationError("本机 Ollama 不可用；请检查服务与模型名称。") from exc
             except (KeyError, TypeError, ValueError, ValidationError) as exc:
@@ -457,8 +563,10 @@ class OllamaClient:
                     self.invalid_outputs.append({'stage':schema.__name__,'attempt':attempt+1,
                         'endpoint':endpoint,'error':detail,'content':content[:32768],
                         'truncated':len(content)>32768})
-                if attempt >= (2 if json_fallback else 1):
-                    raise GenerationError("本机 Ollama 返回不符合数据契约的 JSON："+detail) from exc
+                # The director owns bounded repair with the complete rejected
+                # layout and per-page candidates. Avoid nested blind retries.
+                if schema.__name__ in {'DeckDirectorDraft','DeckDirectorRepair','DeckIllustrationPlacement','CourseOutline','CourseOutlineRepair','ScriptCaptionSelection'} or attempt >= (2 if json_fallback or schema.__name__.startswith('Math') else 1):
+                    raise ModelContractError("本机 Ollama 返回不符合数据契约的 JSON："+detail,content=content,schema=schema) from exc
                 if isinstance(exc, json.JSONDecodeError):
                     json_fallback = True
                 guidance = ''
@@ -478,6 +586,8 @@ class OllamaClient:
         last_update = started
         chunks = []
         count = 0
+        internal_count = 0
+        self.activity={'stage':stage,'content_characters':0,'internal_characters':0}
         self.progress(stage, 0, 0)
         stopped = Event()
 
@@ -503,7 +613,10 @@ class OllamaClient:
                     if not isinstance(piece, str):
                         raise ValueError('invalid stream content')
                     chunks.append(piece)
+                    internal_piece=result.get('message',{}).get('thinking','')
+                    if isinstance(internal_piece,str):internal_count+=len(internal_piece)
                     count += len(piece)
+                    self.activity={'stage':stage,'content_characters':count,'internal_characters':internal_count}
                     now = time.monotonic()
                     if now - started >= 900:
                         raise GenerationError('本机 Ollama 推理超时；此批材料处理已超过十五分钟。')
@@ -512,6 +625,7 @@ class OllamaClient:
                         last_update = now
                     if result.get('done') is True:
                         content = ''.join(chunks)
+                        result['internal_characters']=internal_count
                         if endpoint == '/api/generate':
                             result['response'] = content
                         else:
@@ -520,7 +634,7 @@ class OllamaClient:
         finally:
             stopped.set()
             reporter.join()
-        raise GenerationError('本机 Ollama 输出中断，未收到完成标记；已完成的批次可以续跑。')
+        raise _OllamaIncompleteStreamError('Ollama 输出中断，未收到完成标记。')
 
 
 class ScriptDraftSegment(BaseModel):
@@ -1239,14 +1353,28 @@ class AIAgents:
         outlines = []
         for points in self._batches(bundle.points, 6):
             part = KnowledgeBundle(points=points)
-            outline = self.client.generate(
-                CourseOutline,
-                "将给定知识点编排为中文课程的一部分；不限制总视频时长。"
-                "point_titles 只能使用输入中的标题，且每个标题仅出现一次。" + self._style(),
-                part.model_dump_json(),
-            )
-            if set(outline.point_titles) != {point.title for point in points}:
-                raise GenerationError("课程大纲未完整使用已核验的知识点。")
+            titles=tuple(point.title for point in points)
+            contract=create_model('CourseOutline',__base__=CourseOutline,
+                point_titles=(list[Literal[titles]],Field(min_length=len(titles),max_length=len(titles))))
+            feedback=''
+            for attempt in range(2):
+                try:
+                    schema=contract if not attempt else create_model('CourseOutlineRepair',__base__=contract)
+                    outline = self.client.generate(
+                        schema,
+                        "将给定知识点编排为中文课程的一部分；不限制总视频时长。"
+                        "point_titles 只能原样选择输入标题，且每个标题恰好出现一次，不重写或漏掉标题。"
+                        + self._style()+feedback,
+                        part.model_dump_json(),
+                    )
+                    outline=contract.model_validate(outline.model_dump())
+                    if Counter(outline.point_titles)!=Counter(titles):
+                        raise ValueError('标题须覆盖输入各知识点一次，重复标题按输入次数保留。')
+                    break
+                except (ValueError,ModelContractError):
+                    feedback='上次标题编号或覆盖不符。请使用契约列出的原始标题，每个恰好一次。'
+            else:
+                raise GenerationError("课程大纲两次仍未完整使用已核验的知识点。")
             outlines.append(outline)
         if len(outlines) == 1:
             return outlines[0]

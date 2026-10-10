@@ -483,38 +483,41 @@ def _patch_svg_parts(original: Path, output: Path,
         overrides["[Content_Types].xml"] = etree.tostring(
             content_root, xml_declaration=True, encoding="UTF-8", standalone=True
         )
-        for slide_number, (shape_id, svg_bytes) in assets.items():
+        for slide_number, entries in assets.items():
+            # Accept legacy one-picture tuples and new multi-illustration pages.
+            if isinstance(entries, tuple) and len(entries) == 2 and isinstance(entries[0], int):
+                entries = [entries]
             slide_name = f"ppt/slides/slide{slide_number}.xml"
             rel_name = f"ppt/slides/_rels/slide{slide_number}.xml.rels"
             slide = etree.fromstring(source.read(slide_name))
             rels = etree.fromstring(source.read(rel_name))
-            picture = slide.xpath(".//p:pic[p:nvPicPr/p:cNvPr[@id=$id]]",
-                                  namespaces={"p": P_NS}, id=str(shape_id))
-            if len(picture) != 1:
-                raise PresentationError("无法定位 SVG 教学图的图片占位符。")
-            blips = picture[0].xpath("./p:blipFill/a:blip", namespaces={"p": P_NS, "a": A_NS})
-            if len(blips) != 1:
-                raise PresentationError("SVG 教学图缺少 PNG 兼容图片。")
-            used_ids = [int(match.group(1)) for rel in rels
-                        if (match := re.fullmatch(r"rId(\d+)", rel.get("Id", "")))]
-            r_id = f"rId{max(used_ids, default=0)+1}"
-            media_name = f"teaching-{slide_number}.svg"
-            etree.SubElement(rels, f"{{{REL_NS}}}Relationship", Id=r_id,
-                             Type=REL_IMAGE, Target=f"../media/{media_name}")
-            ext_list = blips[0].find(f"{{{A_NS}}}extLst")
-            if ext_list is None:
-                ext_list = etree.SubElement(blips[0], f"{{{A_NS}}}extLst")
-            ext = etree.SubElement(ext_list, f"{{{A_NS}}}ext", uri=SVG_EXT_URI)
-            svg_blip = etree.SubElement(ext, f"{{{ASVG_NS}}}svgBlip",
-                                         nsmap={"asvg": ASVG_NS})
-            svg_blip.set(f"{{{R_NS}}}embed", r_id)
+            for asset_number, (shape_id, svg_bytes) in enumerate(entries, 1):
+                picture = slide.xpath(".//p:pic[p:nvPicPr/p:cNvPr[@id=$id]]",
+                                      namespaces={"p": P_NS}, id=str(shape_id))
+                if len(picture) != 1:
+                    raise PresentationError("无法定位 SVG 教学图的图片占位符。")
+                blips = picture[0].xpath("./p:blipFill/a:blip", namespaces={"p": P_NS, "a": A_NS})
+                if len(blips) != 1:
+                    raise PresentationError("SVG 教学图缺少 PNG 兼容图片。")
+                used_ids = [int(match.group(1)) for rel in rels
+                            if (match := re.fullmatch(r"rId(\d+)", rel.get("Id", "")))]
+                r_id = f"rId{max(used_ids, default=0)+1}"
+                media_name = f"teaching-{slide_number}-{asset_number}.svg"
+                etree.SubElement(rels, f"{{{REL_NS}}}Relationship", Id=r_id,
+                                 Type=REL_IMAGE, Target=f"../media/{media_name}")
+                ext_list = blips[0].find(f"{{{A_NS}}}extLst")
+                if ext_list is None:
+                    ext_list = etree.SubElement(blips[0], f"{{{A_NS}}}extLst")
+                ext = etree.SubElement(ext_list, f"{{{A_NS}}}ext", uri=SVG_EXT_URI)
+                svg_blip = etree.SubElement(ext, f"{{{ASVG_NS}}}svgBlip", nsmap={"asvg": ASVG_NS})
+                svg_blip.set(f"{{{R_NS}}}embed", r_id)
+                overrides[f"ppt/media/{media_name}"] = svg_bytes
             overrides[slide_name] = etree.tostring(
                 slide, xml_declaration=True, encoding="UTF-8", standalone=True
             )
             overrides[rel_name] = etree.tostring(
                 rels, xml_declaration=True, encoding="UTF-8", standalone=True
             )
-            overrides[f"ppt/media/{media_name}"] = svg_bytes
         for item in source.infolist():
             target.writestr(item, overrides.pop(item.filename, source.read(item.filename)))
         for name, data in overrides.items():
@@ -529,6 +532,10 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
     self-contained MP4 media shape playable in slideshow mode (scene clips include audio). Narration
     and exact PDF excerpts are in speaker notes.
     """
+    if lesson.ppt_template != 'classic' or lesson.deck_plan:
+        from zhijiang.deck_renderer import render_template_presentation
+        render_template_presentation(lesson, output)
+        return
     if not lesson.segments:
         raise PresentationError("没有可制作成幻灯片的讲解片段。")
     output = Path(output)

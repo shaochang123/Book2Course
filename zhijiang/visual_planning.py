@@ -43,10 +43,18 @@ class VisualCoursePlan(BaseModel):
 
 
 class SceneObjectDraft(SceneObject):
+    @model_validator(mode='before')
+    @classmethod
+    def trusted_line_window(cls,value):
+        if isinstance(value,dict):
+            return {**value,'line_extent':'segment','coordinate_window':[]}
+        return value
+
     @classmethod
     def __get_pydantic_json_schema__(cls,core_schema,handler):
         schema=handler.resolve_ref_schema(handler(core_schema))
-        schema.get('properties',{}).pop('points',None)
+        for field in ('points','line_extent','coordinate_window'):
+            schema.get('properties',{}).pop(field,None)
         return schema
 
 
@@ -375,6 +383,14 @@ def object_geometry(obj, parameters: dict) -> dict:
                     "如果要画y=f(x)的函数图像，改用curve，把函数写入expression，"
                     "提供domain并清空坐标字段。不要添加名为x的参数。")
     points = [[evaluate(p[0], parameters), evaluate(p[1], parameters)] for p in coordinate_expressions(obj)]
+    if obj.line_extent!='segment' and obj.coordinate_window:
+        if obj.kind not in {'line','arrow'} or len(points)!=2:
+            raise VisualSceneError('数学线窗口必须绑定两点方向。')
+        from zhijiang.visual_coordinates import extend_line_to_window
+        try:
+            points=extend_line_to_window(*points,obj.coordinate_window,ray=obj.line_extent=='ray')
+        except ValueError as exc:
+            raise VisualSceneError('数学线窗口或方向无效：'+obj.id) from exc
     if obj.kind == "curve":
         lo, hi = obj.domain
         points = [[lo+(hi-lo)*i/100, evaluate(obj.expression, dict(parameters, x=lo+(hi-lo)*i/100))]
@@ -468,7 +484,15 @@ def motion_features(scene,samples,visible):
     return features
 
 
+def scene_parameters(scene, parameters):
+    if not scene.derived_parameters:return dict(parameters)
+    from zhijiang.math_construction import resolve_parameters
+    return resolve_parameters(scene,parameters)
+
+
 def verify_visual_scene(scene: VisualScenePlan) -> dict:
+    from zhijiang.math_fact_narration import validate_source_fact_schedule
+    validate_source_fact_schedule(scene)
     if scene.diagram:
         from zhijiang.teaching_design import validate_diagram
         report=validate_diagram(scene.diagram,scene.domain_data.get('source_page_text'))
@@ -482,7 +506,7 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
         # Model prose describes operations. The trusted speech layer supplies
         # actual parameter/calculation values, so stale numbers can't survive
         # merely because another model approved the free-form narration.
-        identifiers = [obj.id for obj in scene.objects]
+        identifiers = [obj.id for obj in scene.objects]+list(scene.parameters)
         identifiers += [obj.text for obj in scene.objects
                         if re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*', obj.text)]
         def without_identifiers(text):
@@ -499,9 +523,19 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
                 r'[负零〇一二两三四五六七八九十百千万亿点]+'
                 r'(?=$|[，。,；;！!？?\s]|(?:米|秒|度|份|倍|焦耳))', prose)
             quantity_unit=re.search(r'[负零〇一二两三四五六七八九十百千万亿点]+(?:度|倍|米|秒|份)(?![a-zA-Z])',prose)
-            if any(char.isdigit() for char in prose) or worded_number or quantity_unit or any(
+            # An arbitrary share is a qualitative object, like 一个点. Numeric
+            # predicates (e.g. 等于一份) are still caught by worded_number.
+            if quantity_unit and quantity_unit.group()=='一份':
+                quantity_unit=next((match for match in re.finditer(
+                    r'[负零〇一二两三四五六七八九十百千万亿点]+(?:度|倍|米|秒|份)(?![a-zA-Z])',prose)
+                    if match.group()!='一份'),None)
+            fraction=re.search(r'[负零〇一二两三四五六七八九十百千万亿点]+分之[负零〇一二两三四五六七八九十百千万亿点]+',prose)
+            digit=re.search(r'\d+',prose)
+            if digit or worded_number or quantity_unit or fraction or any(
                     any(char.isdigit() for char in without_identifiers(c.label)) for c in beat.calculations):
-                raise VisualSceneError(f'口播数字未绑定：第{index+1}步。口播只用中文描述对象、操作与原因，'
+                match=digit or worded_number or quantity_unit or fraction
+                phrase=match.group() if match else '测量标签中的数字'
+                raise VisualSceneError(f'口播数字未绑定：第{index+1}步，具体片段“{phrase}”。口播只用中文描述对象、操作与原因，'
                     '不要写数值、坐标或方程；把这些放在parameters与calculations，程序负责计算与播报。')
     if len(scene.parameters) > 40:
         raise VisualSceneError("单场景参数过多，请拆成多个片段。")
@@ -536,6 +570,8 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
     check_params(scene.parameters)
     verified_states = []
     meaningful_motion = False
+    nondegenerate_ids=set()
+    distinct_dot_pairs=set()
     for index, (before, after, visible) in enumerate(states(scene)):
         beat = scene.beats[index]
         if set(beat.parameters)-set(scene.parameters):
@@ -547,6 +583,7 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
         relation_samples=[]
         for alpha in (0, 0.25, 0.5, 0.75, 1):
             params = {key: before[key]+alpha*(after[key]-before[key]) for key in before}
+            params = scene_parameters(scene,params)
             check_domain_state(scene,params)
             geometry = {}
             for obj in scene.objects:
@@ -560,6 +597,12 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
                     check_geometry_visibility(scene,geometry,visible)
                     relation_samples.append(check_geometry_constraints(scene,geometry,params))
                 except GeometryRelationError as exc:raise VisualSceneError(str(exc)) from exc
+            if scene.mathematical_model:
+                from zhijiang.math_construction import validate_actual_claims
+                from zhijiang.visual_geometry_checks import check_geometry_visibility,GeometryRelationError
+                try:check_geometry_visibility(scene,geometry,visible)
+                except GeometryRelationError as exc:raise VisualSceneError(str(exc)) from exc
+                relation_samples.append(validate_actual_claims(scene,geometry,params,step_index=index+1,endpoint=alpha==1))
             for check in scene.checks:
                 if check.checker not in CHECKERS:
                     raise VisualSceneError("尚未注册的领域检查："+check.checker)
@@ -570,6 +613,15 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
                         f"检查{check.checker}的预期为{check.expected:.8g}。checks是所有步骤及中间帧的恒成立条件，"
                         "不能把最终参数或某一步的结果当作全程恒等式；逐步结果应放在对应beat.calculations。")
             samples.append(geometry)
+            for obj in scene.objects:
+                if obj.id not in visible:continue
+                points=geometry[obj.id]['points']
+                if obj.kind in {'line','arrow'} and points[0]!=points[-1]:nondegenerate_ids.add(obj.id)
+            dots=[obj.id for obj in scene.objects if obj.kind=='dot' and obj.id in visible]
+            for i,first in enumerate(dots):
+                for second in dots[i+1:]:
+                    if geometry[first]['points']!=geometry[second]['points']:
+                        distinct_dot_pairs.add((first,second))
         meaningful_motion |= any(
             samples[0][key]['points']!=sample[key]['points'] or
             (next(obj.kind for obj in scene.objects if obj.id==key)=='circle' and samples[0][key]['radius']!=sample[key]['radius'])
@@ -580,7 +632,7 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
                 '长度增减不是旋转；修改真实坐标表达式或如实讲解当前操作，不得只改变参数名称。')
         calculations = []
         for calculation in beat.calculations:
-            value = evaluate(calculation.expression, after)
+            value = evaluate(calculation.expression, scene_parameters(scene,after))
             if calculation.expected is not None and abs(value-calculation.expected) > 1e-6:
                 raise VisualSceneError(f"分镜计算结果不正确：{calculation.label}，声明{calculation.expected}，计算{value}")
             calculations.append({"label": calculation.label, "expression": calculation.expression, "value": value})
@@ -591,15 +643,13 @@ def verify_visual_scene(scene: VisualScenePlan) -> dict:
         raise VisualSceneError("分镜需要与讲解对应的对象位置、尺寸或曲线变化，不能只逐项显现要点。")
     for obj in scene.objects:
         visible_states=[s for s in verified_states if obj.id in s['visible']]
-        if obj.kind in {'line','arrow'} and visible_states and all(
-            s['end_geometry'][obj.id]['points'][0]==s['end_geometry'][obj.id]['points'][-1] for s in visible_states):
+        if obj.kind in {'line','arrow'} and visible_states and obj.id not in nondegenerate_ids:
             raise VisualSceneError('线或箭头在所有可见步骤都退化为一点：'+obj.id)
     for i,obj in enumerate(scene.objects):
         if obj.kind!='dot': continue
         for other in scene.objects[i+1:]:
             common=[s for s in verified_states if obj.id in s['visible'] and other.id in s['visible']]
-            if other.kind=='dot' and len(common)>=2 and all(
-                s['end_geometry'][obj.id]['points']==s['end_geometry'][other.id]['points'] for s in common):
+            if other.kind=='dot' and len(common)>=2 and (obj.id,other.id) not in distinct_dot_pairs:
                 raise VisualSceneError('两个点始终完全重合，无法区分教学对象：'+obj.id+' / '+other.id)
     return {"passed": True, "states": verified_states, "interpolation_samples_per_step": 5,
             "declared_domain_checks": len(scene.checks), "scope": "表达式、声明的数值关系与几何状态；领域事实及示意简化仍需来源和人工核对"}

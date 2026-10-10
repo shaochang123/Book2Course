@@ -89,6 +89,9 @@ def test_model_schema_excludes_program_and_legacy_fields():
     assert 'narration_binding' not in schema['properties']
     objects=schema['$defs']['SceneObjectDraft']['properties']
     assert 'points' not in objects and all(k in objects for k in ['position','start','end','vertices'])
+    assert 'line_extent' not in objects and 'coordinate_window' not in objects
+    from zhijiang.visual_planning import SceneObjectDraft
+    assert SceneObjectDraft(id='a',line_extent='line',coordinate_window=[-5,5,-5,5]).coordinate_window==[]
     assert 'tolerance' not in schema['$defs']['SceneCheckDraft']['properties']
     from zhijiang.visual_planning import SceneCheckDraft
     check=SceneCheckDraft.model_validate({'expression':'t','expected':999,'tolerance':999})
@@ -107,6 +110,10 @@ def test_model_numeric_narration_cannot_bypass_correct_calculations():
     with pytest.raises(VisualSceneError,match='口播数字未绑定'): verify_visual_scene(scene)
     scene.beats[1].narration='此时实际位置为三，观察它与参考对象之间的对应关系。'
     with pytest.raises(VisualSceneError,match='口播数字未绑定'): verify_visual_scene(scene)
+    scene.beats[1].narration='最后每块所占的比例达到四分之三，观察它与整个图形的对应关系。'
+    with pytest.raises(VisualSceneError,match='四分之三'): verify_visual_scene(scene)
+    scene.beats[1].narration='这块占负十一分之七点五，其余部分保持原来的位置。'
+    with pytest.raises(VisualSceneError,match='分之'): verify_visual_scene(scene)
     scene.beats[1].narration='此时观察运动点的位置，计算结果由当前参数决定。'
     assert verify_visual_scene(scene)['states'][1]['calculations'][0]['value']==2
     scene.objects[0].text='H2O'
@@ -129,6 +136,7 @@ def test_model_numeric_narration_cannot_bypass_correct_calculations():
     data={'beats':[b.model_dump() for b in scene_for('任意学科','t',{'t':1},{'t':2}).beats]}
     data['beats']+=data['beats'][:2]
     with pytest.raises(ValidationError,match='too_long'): schema.model_validate(data)
+
     from zhijiang.visual_planning import VisualLayoutDraft, LAYOUT_FIELDS
     layout=VisualLayoutDraft.model_validate({**scene.model_dump(include=LAYOUT_FIELDS),'step_count':5})
     assert len(sequence_schema(layout).model_validate(data).beats)==5
@@ -347,3 +355,12 @@ def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkey
     processor.process(job['id']); assert store.get(job['id'])['status']=='completed'
     assert rendered and all(d=='新领域' for d in rendered)
     assert store.lesson(job['id']).animation_report['scene_type']=='general'
+
+
+def test_arbitrary_share_prose_does_not_allow_numeric_unit_claims():
+    scene=scene_for('未知主题','t',{'t':1},{'t':2});scene.narration_binding='computed'
+    scene.beats[0].narration='观察其中一份与参考对象的对应关系，保持同一颜色。'
+    assert verify_visual_scene(scene)['passed']
+    for text in ['观察对应关系，此时长度等于一份。','观察其中一份，该对象沿一米移动。']:
+        scene.beats[0].narration=text
+        with pytest.raises(VisualSceneError,match='口播数字未绑定'):verify_visual_scene(scene)
