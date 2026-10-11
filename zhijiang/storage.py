@@ -58,6 +58,10 @@ class JobStore:
                 connection.execute("ALTER TABLE jobs ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
             if "speech_options_json" not in columns:
                 connection.execute("ALTER TABLE jobs ADD COLUMN speech_options_json TEXT NOT NULL DEFAULT '{}'")
+
+    def recover_interrupted(self) -> None:
+        """Recover stale jobs once at service startup, never on import/read."""
+        with self._connect() as connection:
             connection.execute(
                 "UPDATE jobs SET status=?, stage=?, error=?, updated_at=? "
                 "WHERE status IN (?, ?)",

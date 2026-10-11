@@ -119,6 +119,7 @@ function showJob(job) {
       $("#llm-math-model").value = job.model_settings.math_model || "";
       $("#custom-prompt").value = job.model_settings.prompt || "";
       $("#animation-mode").value = job.model_settings.animation_mode || "auto";
+      $("#content-checks").value = job.model_settings.content_checks || "warn";
     }
     if (job.voice_mode === "ai" && job.voice_settings) {
       $("#tts-base-url").value = job.voice_settings.base_url || "";
@@ -204,6 +205,11 @@ async function showLesson(jobId) {
   $("#lesson-title").textContent = lesson.title;
   $("#lesson-objective").textContent = lesson.objective;
   $("#lesson-notice").textContent = lesson.notice.replace('在线 AI 配音', 'AI 配音');
+  for (const warning of lesson.animation_report?.warnings || []) {
+    const line = document.createElement("p");
+    line.textContent = `第 ${warning.segment_id} 段：${warning.message}`;
+    $("#lesson-notice").append(line);
+  }
   const template = config?.ppt_templates?.find(item => item.id === lesson.ppt_template);
   $("#ppt-template-result").textContent = `PPT：${template?.name || "深色演示"}${lesson.deck_plan?.planner === "model_layout_selection" ? " · AI 规划页面版式" : lesson.deck_plan?.planner === "deterministic_demo_layout" ? " · 规则排版" : ""}`;
   $("#segment-count").textContent = `${lesson.segments.length} 个讲解片段`;
@@ -216,7 +222,7 @@ async function showLesson(jobId) {
   $("#download-presentation").href = `/api/jobs/${jobId}/presentation`;
   const report = lesson.animation_report || {};
   $("#math-report").hidden = !report.renderer;
-  $("#math-report").textContent = report.scene_count ? (report.scene_type === "general" ?
+  $("#math-report").textContent = report.content_checks === "warn" ? "直接生成 · SVG 教学图示与同步配音的逐步呈现。内容未经独立模型复核，提示不阻止课件导出。" : report.scene_count ? (report.scene_type === "general" ?
     `${report.scene_count} 个通用教学场景 · ${report.renderer} · 含同步配音。表达类型：${[...new Set(report.representations || ["geometry"])].map(name => representationNames[name] || name).join("、")}。来源摘录、关系引用或几何计算按类型检查；教学含义和专业事实需复核。` :
     `${report.scene_count} 个数学推演场景 · ${report.renderer} · 含同步配音。实际数学对象与声明关系已核验；讲解质量和引用含义仍需人工核对。`) : report.reason || "基础图示";
   $("#download-math-scenes").hidden = !report.scene_count;
@@ -266,6 +272,7 @@ form.addEventListener("submit", async (event) => {
     body.append("animation_mode", $("#animation-mode").value);
     body.append("ppt_template", $("#ppt-template").value);
     body.append("use_illustrations", String($("#use-illustrations").checked));
+    body.append("content_checks", $("#content-checks").value);
     body.append("rights_confirmed", String($("#rights-confirmed").checked));
     body.append("remote_consent", String($("#remote-consent").checked));
     if (selected("mode") === "ai") {
@@ -319,6 +326,7 @@ $("#retry-button").addEventListener("click", async () => {
     body.append("animation_mode", $("#animation-mode").value);
     body.append("ppt_template", $("#ppt-template").value);
     body.append("use_illustrations", String($("#use-illustrations").checked));
+    body.append("content_checks", $("#content-checks").value);
     body.append("remote_consent", String($("#remote-consent").checked));
     body.append("replace_settings", "true");
     if (selected("mode") === "ai") {
@@ -351,7 +359,7 @@ $("#retry-button").addEventListener("click", async () => {
     $("#math-ready-label").textContent = config.visual_animation?.ready ?
       (config.visual_animation.geometry_ready ? "教学动画已就绪：支持来源关系图与可计算场景。" :
         "来源图示动画已就绪。公式演示还需 LaTeX；自动模式会按内容选择图示。") :
-      `教学动画环境未就绪：${config.visual_animation?.reason || "请安装 math-animation 依赖"}。基础图示仍可使用。`;
+      `连续动画环境未就绪：${config.visual_animation?.reason || "请安装 math-animation 依赖"}。默认的 SVG 直接生成仍可使用。`;
     $("#pdf-limits").textContent = `文字版和扫描版 PDF · 最多 ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB · 无页数上限`;
     $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
     $("#llm-base-url").value = config.llm_base_url || "";

@@ -326,7 +326,70 @@ def test_store_marks_interrupted_jobs_failed(tmp_path, sample_pdf):
     store = JobStore(tmp_path / "data")
     job = store.create("sample.pdf", Mode.DEMO, VoiceMode.SYSTEM, True, False, sample_pdf)
     restarted = JobStore(tmp_path / "data")
+    assert restarted.get(job["id"])["status"] == JobStatus.QUEUED
+    store.set_progress(job["id"], "生成中", 40)
+    assert JobStore(tmp_path / "data").get(job["id"])["status"] == JobStatus.RUNNING
+    restarted.recover_interrupted()
     assert restarted.get(job["id"])["status"] == JobStatus.FAILED
+
+
+def test_app_construction_does_not_interrupt_running_job(tmp_path, sample_pdf):
+    settings = Settings(data_dir=tmp_path / "data")
+    store = JobStore(settings.data_dir)
+    job = store.create("sample.pdf", Mode.DEMO, VoiceMode.SYSTEM, True, False, sample_pdf)
+    store.set_progress(job["id"], "生成中", 40)
+    app = create_app(settings, InlineRunner())
+    assert store.get(job["id"])["status"] == JobStatus.RUNNING
+    with TestClient(app):
+        assert store.get(job["id"])["stage"] == "interrupted"
+
+
+def test_second_server_start_does_not_interrupt_active_job(tmp_path, sample_pdf):
+    import pytest
+    settings=Settings(data_dir=tmp_path/'data')
+    first=create_app(settings,InlineRunner())
+    with TestClient(first):
+        store=first.state.store
+        job=store.create('sample.pdf',Mode.DEMO,VoiceMode.SYSTEM,True,False,sample_pdf)
+        store.set_progress(job['id'],'生成中',40)
+        second=create_app(settings,InlineRunner())
+        with pytest.raises(RuntimeError,match='已有 Web 服务'):
+            with TestClient(second):pass
+        assert store.get(job['id'])['status']==JobStatus.RUNNING
+        assert store.get(job['id'])['error'] is None
+    # The lock file remains, but a stopped process/context releases ownership.
+    with TestClient(second):
+        assert store.get(job['id'])['stage']=='interrupted'
+
+
+def test_content_check_policy_is_saved_and_can_change_on_retry(tmp_path, sample_pdf):
+    client, store = make_client(tmp_path)
+    with client:
+        response = client.post('/api/jobs', files={'file':('sample.pdf',sample_pdf,'application/pdf')},
+            data={'rights_confirmed':'true','content_checks':'strict'})
+        assert response.status_code == 202, response.text
+        job_id=response.json()['id']
+        assert store.get_options(job_id).content_checks=='strict'
+        store.fail(job_id,'模拟旧内容审核失败')
+        response=client.post(f'/api/jobs/{job_id}/retry',data={'content_checks':'warn'})
+        assert response.status_code==202, response.text
+        assert store.get_options(job_id).content_checks=='warn'
+        assert client.post('/api/jobs',files={'file':('sample.pdf',sample_pdf,'application/pdf')},
+            data={'rights_confirmed':'true','content_checks':'invalid'}).status_code==422
+
+
+def test_direct_visual_upload_does_not_require_manim(tmp_path,sample_pdf,monkeypatch):
+    client, store=make_client(tmp_path)
+    monkeypatch.setattr('zhijiang.main.visual_capabilities',lambda:{'ready':False,'reason':'missing manim'})
+    # Queue only; the model is deliberately not contacted by this API test.
+    client.app.state.runner.submit=lambda job_id:None
+    with client:
+        data={'rights_confirmed':'true','mode':'ai','llm_provider':'ollama',
+              'llm_base_url':'http://127.0.0.1:11434','llm_model':'test','animation_mode':'visual'}
+        response=client.post('/api/jobs',files={'file':('sample.pdf',sample_pdf,'application/pdf')},data=data)
+        assert response.status_code==202,response.text
+        data['content_checks']='strict'
+        assert client.post('/api/jobs',files={'file':('sample.pdf',sample_pdf,'application/pdf')},data=data).status_code==400
 
 
 def test_existing_job_database_is_migrated(tmp_path):
@@ -451,7 +514,7 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
                         llm_api_key="fake", llm_model="fake")
     store = JobStore(settings.data_dir)
     job = store.create("sample.pdf", Mode.AI, VoiceMode.SYSTEM, True, True, sample_pdf,
-                       GenerationOptions(animation_mode="basic"))
+                       GenerationOptions(animation_mode="basic", content_checks="strict"))
     with httpx.Client(transport=transport) as http_client:
         ai_agents = AIAgents(OpenAICompatibleClient(settings.llm_base_url, "fake", "fake", http_client))
         processor = JobProcessor(

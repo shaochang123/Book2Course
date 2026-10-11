@@ -167,7 +167,8 @@ def render_shared_deck(lesson, output, *, audio_files=None):
     navigation=story.get('navigation')
     if navigation:
         from zhijiang.slide_story import DeckNavigation, validate_navigation
-        validate_navigation(DeckNavigation.model_validate(navigation),lesson)
+        validate_navigation(DeckNavigation.model_validate(navigation),lesson,
+            check_content=lesson.animation_report.get('content_checks') != 'warn')
     if plan.get('template_id') != template.id:
         raise PresentationError('PPT 模板与版式规划不一致。')
     choices = [DeckPageChoice.model_validate(item) for item in plan.get('pages', [])]
@@ -285,7 +286,9 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                 raise PresentationError('未通过语义复核的图解不能渲染。')
         if story_visual and not exhibit:
             from zhijiang.slide_story import SlideVisualDraft, validate_visual
-            validate_visual(SlideVisualDraft.model_validate(story_visual),segment)
+            checked_visual = SlideVisualDraft.model_validate(story_visual)
+            if lesson.animation_report.get('content_checks') != 'warn':
+                validate_visual(checked_visual,segment)
         exhibit_fallback=False
         if exhibit_entry and not exhibit and story_visual:
             from zhijiang.exhibit_svg import legacy_exhibit

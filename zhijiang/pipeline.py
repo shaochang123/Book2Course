@@ -126,6 +126,10 @@ class JobProcessor:
             teaching_prompt = options.prompt + (template_instruction(options.ppt_template)
                 if options.ppt_template != 'classic' else '')
             agents = self._agents(mode, options)
+            direct_draft = (isinstance(agents, AIAgents) and options.content_checks == 'warn'
+                            and options.animation_mode in {'auto', 'visual', 'basic'})
+            if isinstance(agents, AIAgents):
+                agents.content_checks = options.content_checks
             if isinstance(agents, AIAgents) and isinstance(agents.client, OllamaClient):
                 agents.client.progress = model_progress
                 agents.client.prefer_json=options.animation_mode=='geometry'
@@ -146,6 +150,8 @@ class JobProcessor:
             # all extracted topics and choose an expression for each of them.
             use_math = mode == Mode.AI and options.animation_mode == "math" and supports_math(document)
             use_visual = mode == Mode.AI and options.animation_mode in {"auto","visual","geometry"} and not use_math
+            if direct_draft:
+                use_visual = False
             fallback_reason = "当前任务选择基础图示。"
             if options.animation_mode == "math" and not use_math:
                 raise MathAnimationError("数学模式首轮仅支持有足够原文依据的二维线性变换，请使用相关讲义。")
@@ -186,8 +192,10 @@ class JobProcessor:
                 progress("提取知识点", 22)
                 # A failed diagram should not repeat a successful OCR/extraction.
                 # Input or model/prompt changes invalidate the analysis cache.
+                # An unchecked extraction must not become a strict-mode cache hit.
+                extraction_options = options.model_dump()
                 batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v8-sentence-wrap',
-                    'source':source_hash,'mode':mode,'options':options.model_dump()},sort_keys=True).encode()).hexdigest()
+                    'source':source_hash,'mode':mode,'options':extraction_options},sort_keys=True).encode()).hexdigest()
                 fingerprint=hashlib.sha256(('quantity-binding-v1:'+batch_fingerprint).encode()).hexdigest()
                 bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
                     lambda:agents.extract_knowledge(document, cache_dir=folder/'knowledge-batches',
@@ -200,7 +208,12 @@ class JobProcessor:
                         if isinstance(agents,AIAgents) else agents.extract_knowledge(document))
                 for point in bundle.points: validate_evidence(document,point.evidence)
                 progress("设计课程结构", 38)
-                if use_visual:
+                if direct_draft:
+                    from zhijiang.draft_generation import build_draft_lesson
+                    lesson = build_draft_lesson(agents.client, bundle, document, teaching_prompt, voice_mode,
+                        template_id=options.ppt_template, use_illustrations=options.use_illustrations,
+                        folder=folder/'teaching-draft', progress=progress)
+                elif use_visual:
                     source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document,
                         progress=lambda done,total,label:progress(f'{label}（{done}/{total} 页）',38+done*4//total))
                     lesson=plan_general_lesson(agents.client,bundle,document,teaching_prompt,voice_mode,
@@ -221,24 +234,25 @@ class JobProcessor:
                 lesson.notice += " 页中文字与公式经图像识别，请核对识别结果和引用。"
             progress("核验引用与讲解结构", 64)
             validate_lesson(document, lesson)
-            if isinstance(agents, AIAgents):
+            if isinstance(agents, AIAgents) and not direct_draft:
                 from zhijiang.caption_grounding import ground_lesson_captions
                 progress('绑定画面要点与完整讲稿', 65)
                 ground_lesson_captions(lesson, agents.client, output=folder/'caption-grounding.json')
-            if not use_math and not use_visual:
+            if not use_math and not use_visual and not direct_draft:
                 agents.review(lesson)
             lesson.ppt_template = options.ppt_template
             progress('检索教学素材并规划页面版式', 68)
-            lesson.deck_plan = plan_deck(lesson, options.ppt_template,
+            if not direct_draft:
+                lesson.deck_plan = plan_deck(lesson, options.ppt_template,
                 agents.client if isinstance(agents, AIAgents) else None,
                 output=folder/'presentation-plan.json', use_illustrations=options.use_illustrations)
-            from zhijiang.slide_story import enrich_visual_story
-            progress('设计简洁图示、学习路线与结尾', 70)
-            enrich_visual_story(lesson, agents.client if isinstance(agents,AIAgents) else None,
+                from zhijiang.slide_story import enrich_visual_story
+                progress('设计简洁图示、学习路线与结尾', 70)
+                enrich_visual_story(lesson, agents.client if isinstance(agents,AIAgents) else None,
                                 folder=folder/'slide-story')
-            from zhijiang.teaching_exhibits import enrich_teaching_exhibits
-            progress('保留具体示例、选择图解与讲解动作', 71)
-            enrich_teaching_exhibits(lesson, agents.client if isinstance(agents,AIAgents) else None,
+                from zhijiang.teaching_exhibits import enrich_teaching_exhibits
+                progress('保留具体示例、选择图解与讲解动作', 71)
+                enrich_teaching_exhibits(lesson, agents.client if isinstance(agents,AIAgents) else None,
                                     folder=folder/'teaching-exhibits',use_illustrations=options.use_illustrations)
             (folder/'presentation-plan.json').write_text(
                 json.dumps(lesson.deck_plan,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -262,7 +276,26 @@ class JobProcessor:
                     audio_files.append(folder / "visual" / f"scene-{index+1:02d}" / "narration.wav")
                     continue
                 audio = folder / f"audio-{index}.wav"
-                speech.synthesize(segment.narration, audio)
+                try:
+                    speech.synthesize(segment.narration, audio)
+                except SpeechError:
+                    if not direct_draft or voice_mode != VoiceMode.AI:
+                        raise
+                    if isinstance(speech, AISpeech):
+                        speech.close()
+                    speech = self._speech(VoiceMode.SYSTEM, SpeechOptions())
+                    voice_mode = VoiceMode.SYSTEM
+                    lesson.voice_mode = VoiceMode.SYSTEM
+                    message = 'AI 配音不可用，整节课已改用 Windows 系统语音；这次配音不属于 AI 语音。'
+                    lesson.notice += ' ' + message
+                    lesson.animation_report.setdefault('warnings', []).append({
+                        'segment_id':index+1, 'stage':'speech', 'message':message})
+                    # Recreate every earlier clip too: no mixed voice labelled as one voice.
+                    for earlier in range(index+1):
+                        speech.synthesize(lesson.segments[earlier].narration, folder/f'audio-{earlier}.wav')
+                    self.store.save_lesson(job_id, lesson)
+                    (folder/'teaching-draft'/'warnings.json').write_text(json.dumps(
+                        lesson.animation_report['warnings'],ensure_ascii=False,indent=2),encoding='utf-8')
                 audio_files.append(audio)
                 self.store.set_progress(
                     job_id, f"合成配音（{index + 1}/{len(lesson.segments)}）",

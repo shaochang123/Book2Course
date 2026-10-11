@@ -454,13 +454,15 @@ class ClosingPoint(BaseModel):
     label: str = Field(min_length=1,max_length=16)
 
 
-def validate_navigation(nav, lesson):
+def validate_navigation(nav, lesson, *, check_content=True):
     ids = [i for group in nav.groups for i in group.segment_ids]
     if ids != list(range(1,len(lesson.segments)+1)):
         raise ValueError('学习路线须分组连续覆盖全部片段恰好一次。')
     if len(set(nav.takeaway_ids)) != len(nav.takeaway_ids) or any(
             i not in ids for i in nav.takeaway_ids):
         raise ValueError('结尾只能选择已有片段的不同核心结论。')
+    if not check_content:
+        return
     if any(not complete_graph_label(g.label) for g in nav.groups):
         raise ValueError('目录主题名不能是残句。')
     minimum=3 if len(lesson.segments)>=12 else 2 if len(lesson.segments)>=5 else 1

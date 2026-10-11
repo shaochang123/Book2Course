@@ -344,7 +344,7 @@ def test_auto_uses_general_graph_for_unlisted_subject(tmp_path,sample_pdf,monkey
             b=super().extract_knowledge(doc); self.client.count=len(b.points); return b
     settings=Settings(data_dir=tmp_path); store=JobStore(tmp_path)
     job=store.create('source.pdf',Mode.AI,VoiceMode.SYSTEM,True,False,sample_pdf,
-                     GenerationOptions(provider='ollama',base_url='http://localhost',model='test'))
+                     GenerationOptions(provider='ollama',base_url='http://localhost',model='test',content_checks='strict'))
     monkeypatch.setattr('zhijiang.pipeline.supports_math',lambda _:has_special_topic)
     monkeypatch.setattr('zhijiang.pipeline.plan_math_lesson',lambda *_:pytest.fail('auto must preserve all textbook topics'))
     monkeypatch.setattr('zhijiang.pipeline.visual_capabilities',lambda:{'ready':True,'geometry_ready':True})

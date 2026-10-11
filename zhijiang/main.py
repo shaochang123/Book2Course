@@ -22,6 +22,7 @@ from zhijiang.pdf import PDFError, validate_pdf
 from zhijiang.pipeline import JobProcessor, JobRunner
 from zhijiang.storage import JobStore
 from zhijiang.speech_preview import preview_info, preview_path
+from zhijiang.runtime_lock import RuntimeLock
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -83,8 +84,12 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
     runner = runner or JobRunner(processor)
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
-        yield
-        runner.shutdown()
+        with RuntimeLock(settings.data_dir / 'service.lock'):
+            store.recover_interrupted()
+            try:
+                yield
+            finally:
+                runner.shutdown()
 
     application = FastAPI(title="智讲 Agent", version="0.1.0", lifespan=lifespan)
     application.state.settings = settings
@@ -156,6 +161,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         animation_mode: Annotated[AnimationMode, Form()] = "auto",
         ppt_template: Annotated[PPTTemplate, Form()] = 'classic',
         use_illustrations: Annotated[bool, Form()] = True,
+        content_checks: Annotated[str, Form(pattern='^(warn|strict)$')] = 'warn',
         tts_base_url: Annotated[str, Form()] = "",
         tts_model: Annotated[str, Form()] = "",
         tts_voice: Annotated[str, Form()] = "",
@@ -172,7 +178,8 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         options.animation_mode = animation_mode if mode == Mode.AI else "basic"
         options.ppt_template = ppt_template
         options.use_illustrations = use_illustrations
-        if options.animation_mode in {"math","visual","geometry"} and not (
+        options.content_checks = content_checks
+        if options.animation_mode in {"math","visual","geometry"} and (options.content_checks=='strict' or options.animation_mode!='visual') and not (
                 math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
             capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
             raise HTTPException(400, "教学动画环境未就绪：" + capability["reason"])
@@ -283,6 +290,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                   animation_mode: Annotated[AnimationMode | None, Form()] = None,
                   ppt_template: Annotated[PPTTemplate | None, Form()] = None,
                   use_illustrations: Annotated[bool | None, Form()] = None,
+                  content_checks: Annotated[str | None, Form(pattern='^(warn|strict)$')] = None,
                   tts_base_url: Annotated[str | None, Form()] = None,
                   tts_model: Annotated[str | None, Form()] = None,
                   tts_voice: Annotated[str | None, Form()] = None,
@@ -312,7 +320,8 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             options.math_model=(llm_math_model.strip() if llm_math_model is not None else
                 ('' if replace_settings or not same_destination else store.get_options(job_id).math_model))
             options.animation_mode = animation_mode or store.get_options(job_id).animation_mode
-            if options.animation_mode in {"math", "visual", "geometry"} and not (
+            options.content_checks = content_checks or store.get_options(job_id).content_checks
+            if options.animation_mode in {"math", "visual", "geometry"} and (options.content_checks=='strict' or options.animation_mode!='visual') and not (
                     math_capabilities() if options.animation_mode=='math' else visual_capabilities())["ready"]:
                 capability=math_capabilities() if options.animation_mode=='math' else visual_capabilities()
                 raise HTTPException(400, "教学动画环境未就绪：" + capability["reason"])
@@ -323,6 +332,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         options.ppt_template = ppt_template or store.get_options(job_id).ppt_template
         options.use_illustrations = (store.get_options(job_id).use_illustrations
                                     if use_illustrations is None else use_illustrations)
+        options.content_checks = content_checks or store.get_options(job_id).content_checks
         voice_options = store.get_speech_options(job_id)
         if voice_mode == VoiceMode.AI:
             base_url = voice_options.base_url if tts_base_url is None else tts_base_url

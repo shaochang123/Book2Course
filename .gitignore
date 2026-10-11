@@ -11,6 +11,10 @@ __pycache__/
 .cache/
 cache/
 caches/
+*-cache/
+*_cache/
+.hf/
+.huggingface/
 *.py[cod]
 *.egg-info/
 .coverage*

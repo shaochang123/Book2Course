@@ -68,7 +68,7 @@
               <p>数学对象模式下，生成模型负责读图及画面审查，规划模型负责构造与操作，复核模型独立核对来源、数学关系与文字。可分别选择擅长视觉和推理的模型；独立复核请使用与规划模型不同的模型。Ollama 云模型会发送教材至云端。复核仍需人工检查。</p>
               <label for="custom-prompt">自定义提示词（可选）</label>
               <textarea id="custom-prompt" name="custom_prompt" rows="4" maxlength="4000" placeholder="例如：面向零基础学生，解释术语时多用生活例子；讲解节奏放慢，给出常见误区。"></textarea>
-              <p>提示词控制讲解风格和内容深度；来源页码与引文核验规则仍会执行。</p>
+              <p>提示词控制讲解风格和内容深度。普通课件默认直接生成草稿，内容完整性判断不会阻止课件导出。</p>
             </div>
 
             <div class="advanced-fields template-picker">
@@ -88,12 +88,15 @@
 
             <div class="advanced-fields">
               <h3>教学图示与推演动画</h3>
+              <label for="content-checks">内容检查方式</label>
+              <select id="content-checks" name="content_checks"><option value="warn">直接生成：内容疑点提示，不阻止导出（默认）</option><option value="strict">严格复核：内容检查不通过时停止</option></select>
+              <p>普通课件直接读取完整来源页与相邻页，制作讲稿、比较图和关系图；不由模型审核结果否决整节课。数学对象与专用推演继续使用原有来源、数学及动画复核流程。输入损坏、服务不可用或导出错误会显示实际原因。</p>
               <label for="animation-mode">动画生成方式</label>
-              <select id="animation-mode" name="animation_mode"><option value="auto">按知识点自动选择图示与演示</option><option value="visual">通用教学过程：学科不限（Manim）</option><option value="geometry">数学对象推演（通用二维，无图示回退）</option>
+              <select id="animation-mode" name="animation_mode"><option value="auto">按知识点自动选择图示与演示</option><option value="visual">通用教学过程：学科不限</option><option value="geometry">数学对象推演（通用二维，无图示回退）</option>
                   <option value="math">专用数学推演：二维线性变换（Manim）</option><option value="basic">基础图示与要点呈现</option></select>
               <p id="math-ready-label">正在检查教学动画环境。</p>
               <p>数学对象模式自动规划点、线、图形与曲线的连续演示，失败时明确报错。专用模式用于二维线性变换。PPT 内含同步配音；数学含义与画面仍需复核。</p>
-              <p>先按内容选择过程、关系、比较、原文图示讲解或可计算几何。模型设计教学对象和步骤，程序生成 SVG 与同步配音动画；原文摘录、关系引用和计算按类型检查。专业事实与讲解质量仍需复核。</p>
+              <p>直接生成按内容选择过程、关系、比较和概念图，制作 SVG 与同步配音的逐步呈现；不需要 Manim。严格复核路径使用来源审核与 Manim 场景。专业事实与讲解质量仍需人工审阅。</p>
             </div>
 
             <fieldset class="choice-group"><legend class="field-title"><span class="step-number">03</span>选择讲解声音</legend>

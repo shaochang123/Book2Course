@@ -61,6 +61,7 @@ class GenerationOptions(BaseModel):
     ppt_template: PPTTemplate = 'classic'
     use_illustrations: bool = True
     semantic_thinking: bool = True
+    content_checks: Literal['warn', 'strict'] = 'warn'
 
 
 class SpeechOptions(BaseModel):

@@ -63,7 +63,7 @@ def visual_svg(visual, template, width, height, *, reveal=None, art_slots=()):
             gap=26;bw=(width-36-gap*(count-1))/count
             boxes=[(18+i*(bw+gap),32,bw,h-60) for i in range(count)]
     p=[f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-       '<title>教学概念与示例</title><desc>对象、实例及连线来自经过逐项复核的讲稿；不是物理模拟。</desc>',
+       '<title>教学概念与示例</title><desc>根据讲稿规划的对象、实例及连线；不是物理模拟，审核状态见课程报告。</desc>',
        f'<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L9,4.5 L0,9" fill="#{template.accent}"/></marker></defs>']
     secondary={'classic':'9AC8EF','paper':'356585','academic':'9B4F36','editorial':'356585'}[template.id]
     label_accent='806019' if template.id=='paper' else template.accent

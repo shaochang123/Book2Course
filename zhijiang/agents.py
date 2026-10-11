@@ -1320,7 +1320,7 @@ class AIAgents:
             if progress:
                 progress(batch_index - 1, len(batches),
                          f"{'继续修正' if from_draft else '复用' if selection else '分析'}第 {batch_index} 批原文（第 {batch[0]['page']}–{batch[-1]['page']} 页）")
-            if from_draft:
+            if from_draft and getattr(self, 'content_checks', 'strict') == 'strict':
                 selection = self._repair_knowledge_explanations(selection, by_id, batch_index,
                     len(batches), progress, save_draft)
             feedback = ''
@@ -1331,7 +1331,11 @@ class AIAgents:
                     raise GenerationError(f"知识点提取第 {batch_index}/{len(batches)} 批失败：{exc}") from exc
                 diagnostic={'batch':batch_index, 'draft':selection.model_dump(),'available_source_ids':list(by_id)}
                 self.knowledge_drafts.append(diagnostic)
-                issue = _selection_issues(selection, by_id)
+                issue = (_selection_issues(selection, by_id) if getattr(self, 'content_checks', 'strict') == 'strict'
+                         else _selection_structure_issue(selection, by_id))
+                if getattr(self, 'content_checks', 'strict') != 'strict':
+                    diagnostic['content_warnings'] = _selection_number_issues(selection, by_id)
+                    diagnostic['content_review'] = 'not_run'
                 if issue:
                     diagnostic['error']=issue
                     if not _selection_structure_issue(selection, by_id):
