@@ -38,17 +38,29 @@ SUBJECTS = {
         '血液把氧运输到组织，细胞在代谢中利用氧。外界呼吸、血液运输和细胞代谢是相互联系的不同环节。细胞图可以帮助识别讨论对象，肺部插画可以帮助定位器官，但两者不能代替对实际生化过程的解释。']),
 }
 
-def sample_pdf(title, paragraphs, output):
+def sample_pdf(title, paragraphs, output, *, include_header=True):
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
     pdf=canvas.Canvas(str(output),pagesize=(595,842))
+    pdf.setTitle(title);pdf.setAuthor('Book2Course')
     for i,paragraph in enumerate(paragraphs,1):
-        pdf.setFont('STSong-Light',20); pdf.drawString(46,790,f'{title} · {i}')
+        if include_header:
+            pdf.setFont('STSong-Light',20); pdf.drawString(46,790,f'{title} · {i}')
         pdf.setFont('STSong-Light',14)
-        for row,start in enumerate(range(0,len(paragraph),35)):
-            pdf.drawString(46,730-row*27,paragraph[start:start+35])
+        import re
+        tokens=re.findall(r'\d+(?:\.\d+)?[%％]?|[A-Za-z]+|.',paragraph)
+        rows=[];line=''
+        for token in tokens:
+            if line and pdfmetrics.stringWidth(line+token,'STSong-Light',14)>503:
+                rows.append(line);line=''
+            line+=token
+        if line:rows.append(line)
+        for row,line in enumerate(rows):
+            y=(730 if include_header else 790)-row*27
+            if y<46:raise ValueError('原创示例单页内容过长。')
+            pdf.drawString(46,y,line)
         pdf.showPage()
     pdf.save()
 
@@ -122,10 +134,13 @@ def inspect(folder, lesson):
             assert error<5, f'{item["kind"]} PPT 与视频画面不一致：{error:.2f}'
         frame.save(folder/f'video-{item["kind"]}.png')
         bookend_comparisons.append({'kind':item['kind'],'mean_pixel_error':round(error,3)})
-    selected=[r['asset_id'] for p in lesson.deck_plan['pages'] for r in p.get('asset_refs',[])]
+    requested=[r['asset_id'] for p in lesson.deck_plan['pages'] for r in p.get('asset_refs',[])]
+    content=[p for p in manifest['pages'] if p['kind']=='content']
+    selected=[r['asset_id'] for p in content for r in p.get('illustration_regions',[])]
     result={'template':lesson.ppt_template,'model':lesson.deck_plan['model'], 'planner':lesson.deck_plan['planner'],
             'segments':len(lesson.segments),'slides':len(Presentation(ppt).slides), 'svg_parts':len(svgs),
             'selected_assets':selected,'unique_selected_assets':sorted(set(selected)),
+            'director_asset_requests':requested,
             'full_video_decoded':True,'pptx_zip_valid':True,'powerpoint_application_playback':'not_performed',
             'video_seconds':round(video_seconds,2),'source_audio_seconds':round(audio_seconds,3),
             'decoded_audio_seconds':round(decoded_seconds,3),'source_audio_rms':rms,
@@ -134,6 +149,13 @@ def inspect(folder, lesson):
             'ordinary_frame_comparisons':comparisons,'narration_uses_per_segment':1,
             'pptx_sha256':hashlib.sha256(ppt.read_bytes()).hexdigest(),
             'mp4_sha256':hashlib.sha256(video.read_bytes()).hexdigest()}
+    exhibits=lesson.deck_plan.get('teaching_exhibits',{})
+    if exhibits:
+        result.update(exhibit_accepted=exhibits['accepted'],exhibit_rejected=exhibits['rejected'],
+            forms=sorted({p.get('representation','existing_scene') for p in content}),
+            compositions=sorted({p['composition'] for p in content}),
+            arrow_pages=sum(p.get('relation_count',0)>0 for p in content),
+            pictures=len(selected))
     (folder/'acceptance.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
     return result
 

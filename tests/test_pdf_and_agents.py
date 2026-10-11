@@ -174,6 +174,32 @@ def test_source_candidates_scan_late_text_when_no_title_topic_is_available():
         validate_evidence(document, Evidence(page=1, quote=item["quote"]))
 
 
+@pytest.mark.parametrize('unit,condition', [
+    ('元', '利息并入本金'), ('秒', '速度保持不变'), ('克', '溶液温度不变'),
+])
+def test_single_chinese_physical_wrap_keeps_unit_and_condition(unit, condition):
+    text = (f'使用相同字段记录两个期间，第一行包含对象与实测值以及相应说明。\n'
+            f'第二行同样记录对象与实测值。这两行记录都使用{unit}作\n'
+            f'为计量单位，且沿用{condition}的简化条件。')
+    document = SourceDocument(filename='notes.pdf', pages=[PageText(page=1, text=text)])
+    candidates = source_candidates(document, complete=True)
+    quote = next(item['quote'] for item in candidates if f'使用{unit}作' in item['quote'])
+    assert f'使用{unit}作为计量单位' in ''.join(quote.split())
+    assert condition in quote and quote.endswith('。')
+    for item in candidates:
+        validate_evidence(document, Evidence(page=1, quote=item['quote']))
+
+
+def test_quote_limit_splits_at_prose_boundary_and_does_not_drop_remaining_source():
+    from zhijiang.agents import _page_quotes
+    text = ('这是用于说明原始实验对象和限制条件的完整句子。' * 20
+            + '最终测量值为1102.5克，温度保持不变。')
+    quotes = _page_quotes(text, 300, 8)
+    assert len(quotes)>1 and all(len(quote)<=300 and quote.endswith('。') for quote in quotes)
+    assert ''.join(quotes)==text
+    assert '1102.5' in quotes[-1] and '温度保持不变' in quotes[-1]
+
+
 def test_ai_script_rewrites_unsupported_probability_values_and_definition():
     bundle = KnowledgeBundle(points=[
         KnowledgePoint(title="理论概率", kind="formula", explanation="有利结果数与所有可能结果数的比值。",
@@ -278,7 +304,7 @@ def test_long_ai_course_is_batched_without_segment_cap():
                     ScriptDraftSegment(source_id=point["source_id"], title=point["title"],
                                        kind="concept", narration="结合原文核对条件，并用具体例子逐步解释。" * 10,
                                        bullets=["条件", "例子"])
-                    for point in data["points"][:3]
+                    for point in data["points"]
                 ])
             return ReviewResult(approved=True)
 
@@ -287,15 +313,19 @@ def test_long_ai_course_is_batched_without_segment_cap():
     lesson = agents.script(bundle, agents.plan(bundle), VoiceMode.SYSTEM)
     validate_lesson(document, lesson)
     agents.review(lesson)
-    assert len(lesson.segments) == 12
+    assert len(lesson.segments) == len(bundle.points) and len(lesson.segments)>12
     assert lesson.segments[-1].evidence.page > 40
 
 
 def test_ai_agents_use_four_stages_and_validate_citations(sample_pdf):
     document = read_pdf(sample_pdf, "original.pdf")
     demo = DemoAgents()
-    bundle = demo.extract_knowledge(document)
     candidates = source_candidates(document)
+    bundle = KnowledgeBundle(points=[
+        KnowledgePoint(title=point.title, kind=point.kind, explanation='依据原文解释概念和使用条件。',
+                       evidence=Evidence(page=source['page'], quote=source['quote'], ocr=source['ocr']))
+        for point, source in zip(demo.extract_knowledge(document).points[:3], candidates[:3])
+    ])
     selection = KnowledgeSelection(points=[
         KnowledgeSelectionPoint(
             title=point.title, kind=point.kind, explanation=point.explanation,
@@ -368,6 +398,57 @@ def test_script_rejects_unknown_source_ids(sample_pdf):
     with pytest.raises(GenerationError, match="知识点编号"):
         AIAgents(client).script(bundle, outline, VoiceMode.SYSTEM)
     assert client.calls == 2
+
+
+def test_script_never_silently_drops_a_planned_knowledge_point():
+    points=[KnowledgePoint(title=t,kind='concept',explanation='完整解释此对象的必要条件。',
+        evidence=Evidence(page=1,quote='两个对象分别有不同作用，应根据条件加以辨认。')) for t in ['输入对象','输出对象']]
+    bundle=KnowledgeBundle(points=points)
+    outline=CourseOutline(title='对象的作用',objective='辨认输入与输出对象的不同作用。',point_titles=[p.title for p in points])
+    class MissingPoint:
+        def generate(self,*args):return ScriptDraft(segments=[ScriptDraftSegment(source_id=1,
+            title='输入对象',kind='concept',narration='输入对象提供待处理的信息，需要先核对其必要条件。',bullets=['输入对象'])])
+    with pytest.raises(GenerationError,match='知识点编号'):
+        AIAgents(MissingPoint()).script(bundle,outline,VoiceMode.SYSTEM)
+
+
+def test_omitted_calculation_is_retried_then_recovered_as_disclosed_verbatim_source_with_conditions():
+    quote='在忽略损耗的算例中，用2乘以3得到6。这个计算只解释所给条件，不表示所有情况都成立。'
+    point=KnowledgePoint(title='原文算例',kind='formula',explanation='计算输入与结果，并保留简化条件。',
+        evidence=Evidence(page=4,quote=quote))
+    bundle=KnowledgeBundle(points=[point])
+    outline=CourseOutline(title='计算与条件',objective='根据教材算例核对计算输入、结果与条件。',point_titles=[point.title])
+    class OmitsNumbers:
+        calls=0
+        def generate(self,schema,instruction,material):
+            import json
+            self.calls+=1
+            assert json.loads(material)['points'][0]['required_examples']
+            return ScriptDraft(segments=[ScriptDraftSegment(source_id=1,title=point.title,kind='formula',
+                narration='这一段应理解计算过程，先辨认输入与结果，再核对计算条件。',bullets=['辨认输入与结果'])])
+    client=OmitsNumbers();agents=AIAgents(client)
+    lesson=agents.script(bundle,outline,VoiceMode.SYSTEM)
+    assert client.calls==2 and quote in lesson.segments[0].narration
+    assert lesson.segments[0].evidence==point.evidence
+    assert '完整引文补回' in lesson.notice
+    assert agents.script_coverage[-1]['repair_method']=='verbatim_source_example'
+
+
+def test_numeric_example_detection_keeps_records_but_does_not_treat_dates_or_ranges_as_calculations():
+    from zhijiang.agents import literal_numeric_examples
+    assert literal_numeric_examples('库存为12，支出为5，余量为7。')
+    assert literal_numeric_examples('Multiply 2 by 3 to get 6.')
+    assert not literal_numeric_examples('记录三个年份：1900、1950和2000。概率范围为0到1。')
+
+
+def test_original_acceptance_pdf_wraps_whole_decimal_values_instead_of_corrupting_source_text(tmp_path):
+    from scripts.verify_visual_assets import sample_pdf
+    path=tmp_path/'original.pdf'
+    text='这是原创数字记录，用于说明条件。'*3+'第二期的本金为1050元，利息为52.5元，结余为1102.5元。'
+    sample_pdf('原创记录',[text],path,include_header=False)
+    document=read_pdf(path.read_bytes(),path.name)
+    assert '1102.5' in document.pages[0].text and '52.5' in document.pages[0].text
+    assert '1102 .5' not in document.pages[0].text
 
 
 def test_model_failure_does_not_expose_upstream_body():

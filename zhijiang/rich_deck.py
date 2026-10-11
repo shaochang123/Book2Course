@@ -274,12 +274,30 @@ def render_shared_deck(lesson, output, *, audio_files=None):
         body_y=max(1.6,.38+probe_height+.2); body_h=6.8-body_y
         refs=choice.asset_refs
         story_visual=story.get('visuals',{}).get(str(index),{}).get('visual') if not computed else None
-        if story_visual:
+        exhibit_entry=plan.get('teaching_exhibits',{}).get('pages',{}).get(str(index),{}) if not computed else {}
+        exhibit=exhibit_entry.get('exhibit') if exhibit_entry.get('accepted') else None
+        if exhibit:
+            from zhijiang.teaching_exhibits import TeachingExhibitDraft, validate_exhibit, exhibit_review_schema
+            draft=TeachingExhibitDraft.model_validate(exhibit)
+            validate_exhibit(draft,segment,exhibit_entry.get('candidates',[]))
+            review=exhibit_review_schema(draft).model_validate(exhibit_entry['review'])
+            if any(v!='faithful' for k,v in review.model_dump().items() if k!='issues'):
+                raise PresentationError('未通过语义复核的图解不能渲染。')
+        if story_visual and not exhibit:
             from zhijiang.slide_story import SlideVisualDraft, validate_visual
             validate_visual(SlideVisualDraft.model_validate(story_visual),segment)
-        semantic=bool(choice.visual_groups) and not computed and not story_visual
+        exhibit_fallback=False
+        if exhibit_entry and not exhibit and story_visual:
+            from zhijiang.exhibit_svg import legacy_exhibit
+            exhibit=legacy_exhibit(story_visual,refs,segment.narration);exhibit_fallback=True
+        semantic=bool(choice.visual_groups) and not computed and not story_visual and not exhibit
         specs=[]
-        if story_visual:
+        exhibit_parts=None;full_exhibit=exhibit
+        if exhibit:
+            from zhijiang.exhibit_svg import exhibit_pages
+            exhibit_parts=exhibit_pages(exhibit,template,round((PAGE_W-left-.75)*96),round((body_h-.1)*96),layout=choice.layout)
+            groups=[[] for _ in exhibit_parts]
+        elif story_visual:
             groups=[[]]
         elif semantic:
             details={item['id']:item['text'] for item in visual_details(segment)}
@@ -316,8 +334,9 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             original=template.boxes[choice.layout]
             text_width=original[2]-.65; text_height=min(body_h,original[3])-.5
             groups=text_pages(captions,text_width,text_height,gap=.45)
-        states=[]; body_numbers=[]; viewport=None
+        states=[]; state_fractions=[]; body_numbers=[]; viewport=None
         for group_number, group in enumerate(groups):
+            if exhibit_parts:exhibit=exhibit_parts[group_number][0]
             active_specs=[]
             if semantic:
                 active=[(i,spec) for i,spec in enumerate(specs) if group_number<len(spec['parts'])]
@@ -325,10 +344,24 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                 for (_,spec),box in zip(active,semantic_panels(partial,left,body_y,body_h)):
                     active_specs.append({**spec,'box':box})
             # Use exactly the same commands for native elements and raster states.
-            def compose(page, reveal):
+            def compose(page, reveal, *, active=None, progress=1.):
                 nonlocal viewport
                 header(page,segment.title)
-                if story_visual:
+                if exhibit:
+                    from zhijiang.exhibit_svg import exhibit_svg
+                    width=PAGE_W-left-.75;box=(left,body_y,width,body_h-.1)
+                    svg,_,art_boxes=exhibit_svg(exhibit,template,round(width*96),round(box[3]*96),
+                        layout=choice.layout,reveal=reveal,active=active,progress=progress)
+                    path=media/f'exhibit-{index}-{reveal}-{active}-{progress:.3f}.png'
+                    path.write_bytes(resvg_py.svg_to_bytes(svg_string=svg.decode(),font_family='Microsoft YaHei'))
+                    picture(page,path,box,svg)
+                    from types import SimpleNamespace
+                    for pic in exhibit['pictures']:
+                        box_px=art_boxes.get(pic['item_id'])
+                        if box_px is None:continue
+                        x,y,w,h=box_px
+                        asset(page,SimpleNamespace(asset_id=pic['asset_id']),(left+x/96,body_y+y/96,w/96,h/96))
+                elif story_visual:
                     from zhijiang.story_svg import visual_svg
                     bindings=story_illustration_bindings(story_visual,refs,segment.narration)
                     # Pictures sit beside their own object/example. They do not
@@ -397,18 +430,59 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                     path=media/f'card-{index}-{group_number}-{reveal}.png'
                     path.write_bytes(resvg_py.svg_to_bytes(svg_string=svg.decode(),font_family='Microsoft YaHei'))
                     picture(page,path,viewport_box,svg)
-            reveal_count=len(story_visual['items']) if story_visual else len(active_specs) if semantic else max(len(group),len(refs),1)
+            reveal_count=(1 if exhibit['form']=='equation' else len(exhibit['rows']) if exhibit['form']=='matrix' else len(exhibit['items'])) if exhibit else (
+                len(story_visual['items']) if story_visual else len(active_specs) if semantic else max(len(group),len(refs),1))
             page=new('content',index); compose(page,reveal_count)
             notes(page,segment,choice); page.save_preview(); body_numbers.append(page.number)
             pages[-1].update(layout=choice.layout,asset_ids=[ref.asset_id for ref in refs],part=group_number+1,
                              composition=choice.composition,illustration_regions=getattr(page,'asset_regions',[]))
-            if story_visual:
+            if exhibit:
+                from zhijiang.teaching_exhibits import display_text, TeachingExhibitDraft
+                from zhijiang.exhibit_svg import literal_transport_rows, literal_named_parts
+                transport=literal_transport_rows(exhibit)
+                pages[-1].update(representation=exhibit['form'],exhibit_accepted=not exhibit_fallback,
+                    exhibit_fallback='literal_source_or_previous_reviewed_visual' if exhibit_fallback else None,
+                    displayed_characters=len(display_text(TeachingExhibitDraft.model_validate(exhibit))),
+                    relation_count=len(exhibit['links'])+len(transport),
+                    composition=exhibit['form']+':'+('transport' if transport else 'named_parts' if literal_named_parts(exhibit) else choice.layout),
+                    asset_ids=[p['asset_id'] for p in exhibit['pictures']])
+                page.slide.notes_slide.notes_text_frame.text+='\n具体图解与来源绑定：'+json.dumps(exhibit,ensure_ascii=False)
+                if exhibit['pictures']:
+                    page.slide.notes_slide.notes_text_frame.text+='\n实际配图来源与许可：'+json.dumps(
+                        [catalog.assets[p['asset_id']].public() for p in exhibit['pictures']],ensure_ascii=False)
+            elif story_visual:
                 pages[-1].update(representation=story_visual['representation'],
                     displayed_characters=sum(len(item['label'])+len(item['caption']) for item in story_visual['items'])+
                         len(story_visual['context'])+sum(len(e['label']) for e in story_visual['links']),
                     relation_count=len(story_visual['links']))
             if computed:
                 states.append(previews/f'page-{page.number:03d}.png')
+            elif exhibit:
+                from zhijiang.exhibit_svg import exhibit_cues
+                indices=exhibit_parts[group_number][1];all_cues=exhibit_cues(full_exhibit,segment.narration)
+                cues=[]
+                for cue in all_cues:
+                    if (cue['reveal']==0 and group_number==0) or cue['reveal'] in indices:
+                        if cue['active'] is None and cue['reveal'] and group_number+1<len(exhibit_parts):continue
+                        cues.append({**cue,'reveal':indices.index(cue['reveal'])+1 if cue['reveal'] else 0,
+                                     'active':indices.index(cue['active'])+1 if cue['active'] in indices else None})
+                if group_number+1<len(exhibit_parts):
+                    next_index=exhibit_parts[group_number+1][1][0]
+                    next_fraction=next(c['fraction'] for c in all_cues if c['reveal']==next_index)
+                    cues.append({'fraction':(next_fraction+cues[-1]['fraction'])/2,'reveal':len(indices),'active':None,'source_sentence_id':None})
+                for ci,cue in enumerate(cues):
+                    end=cues[ci+1]['fraction'] if ci+1<len(cues) else 1.
+                    from zhijiang.exhibit_svg import literal_transport_rows
+                    steps=6 if (exhibit['form']=='relations' or literal_transport_rows(exhibit)) and cue['active'] is not None else 1
+                    span=min(.035,(end-cue['fraction'])*.4)
+                    for step in range(steps):
+                        temp_deck=Presentation();state=Page(temp_deck,template,previews,page.number)
+                        compose(state,cue['reveal'],active=cue['active'],progress=(step+1)/steps)
+                        state_path=previews/f'page-{page.number:03d}-cue-{ci:02d}-{step}.png'
+                        state.preview.save(state_path);states.append(state_path)
+                        state_fractions.append(cue['fraction']+span*step/max(steps-1,1))
+                pages[-1]['explanation_cues']=cues
+                pages[-1]['timing']='estimated_from_source_sentence_lengths'
             else:
                 for reveal in range(1,reveal_count+1):
                     # A temporary native page guarantees identical text placement.
@@ -429,7 +503,7 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             scene_on_page(background,source,viewport,clip)
             duration=clip_duration(clip)
         elif audio.is_file():
-            duration=narrated_pages(states,audio,clip)
+            duration=narrated_pages(states,audio,clip,fractions=state_fractions or None)
         elif choice.include_animation:
             # Legacy direct export can have no narration. New jobs always do.
             _render_animation(segment,index,len(lesson.segments),clip,media/f'poster-{index}.png')

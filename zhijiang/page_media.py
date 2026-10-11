@@ -11,7 +11,7 @@ import imageio_ffmpeg
 
 def media_fingerprint(lesson, audio_files):
     from zhijiang.visual_assets import AssetCatalog
-    digest = hashlib.sha256(('shared-pages-v14-picture-object-binding'+lesson.model_dump_json()).encode())
+    digest = hashlib.sha256(('shared-pages-v21-edge-labels'+lesson.model_dump_json()).encode())
     digest.update(AssetCatalog().fingerprint.encode())
     for audio in audio_files:
         if Path(audio).is_file():
@@ -39,7 +39,7 @@ def _encoding():
             '-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-movflags','+faststart']
 
 
-def narrated_pages(states, audio, output):
+def narrated_pages(states, audio, output, *, fractions=None):
     """Each recorded utterance is used once, across all visual reveal states."""
     output = Path(output)
     with wave.open(str(audio)) as wav:
@@ -51,9 +51,15 @@ def narrated_pages(states, audio, output):
     # Paths are internally generated; escape apostrophes in user workspace paths.
     def quoted(path):
         return str(Path(path).resolve().as_posix()).replace("'", "'\\''")
+    if not states:raise ValueError('讲解画面不能为空。')
+    if fractions is None:fractions=[i/len(states) for i in range(len(states))]
+    if len(fractions)!=len(states) or fractions[0]!=0 or any(not 0<=v<1 for v in fractions) or any(
+            a>=b for a,b in zip(fractions,fractions[1:])):
+        raise ValueError('画面时点必须从零开始、严格递增并位于音频内。')
     lines = []
-    for state in states:
-        lines += [f"file '{quoted(state)}'", f'duration {duration/len(states):.8f}']
+    for i,state in enumerate(states):
+        state_duration=duration*((fractions[i+1] if i+1<len(states) else 1)-fractions[i])
+        lines += [f"file '{quoted(state)}'", f'duration {state_duration:.8f}']
     lines.append(f"file '{quoted(states[-1])}'")
     manifest.write_text('\n'.join(lines)+'\n', encoding='utf-8')
     _run(['-f','concat','-safe','0','-i',str(manifest),'-i',str(audio),

@@ -183,7 +183,7 @@ class JobProcessor:
                 progress("提取知识点", 22)
                 # A failed diagram should not repeat a successful OCR/extraction.
                 # Input or model/prompt changes invalidate the analysis cache.
-                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v7',
+                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v8-sentence-wrap',
                     'source':source_hash,'mode':mode,'options':options.model_dump()},sort_keys=True).encode()).hexdigest()
                 fingerprint=hashlib.sha256(('quantity-binding-v1:'+batch_fingerprint).encode()).hexdigest()
                 bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
@@ -233,6 +233,10 @@ class JobProcessor:
             progress('设计简洁图示、学习路线与结尾', 70)
             enrich_visual_story(lesson, agents.client if isinstance(agents,AIAgents) else None,
                                 folder=folder/'slide-story')
+            from zhijiang.teaching_exhibits import enrich_teaching_exhibits
+            progress('保留具体示例、选择图解与讲解动作', 71)
+            enrich_teaching_exhibits(lesson, agents.client if isinstance(agents,AIAgents) else None,
+                                    folder=folder/'teaching-exhibits',use_illustrations=options.use_illustrations)
             (folder/'presentation-plan.json').write_text(
                 json.dumps(lesson.deck_plan,ensure_ascii=False,indent=2),encoding='utf-8')
             self.store.save_lesson(job_id, lesson)
@@ -293,6 +297,8 @@ class JobProcessor:
                             ensure_ascii=False,indent=2),encoding='utf-8')
                 math_reviewer.close()
             if agents is not None and isinstance(agents, AIAgents):
+                (folder/'script-coverage.json').write_text(json.dumps(
+                    agents.script_coverage,ensure_ascii=False,indent=2),encoding='utf-8')
                 knowledge_log=folder / 'knowledge-planning.json'
                 if agents.knowledge_drafts or not knowledge_log.exists():
                     knowledge_log.write_text(json.dumps(

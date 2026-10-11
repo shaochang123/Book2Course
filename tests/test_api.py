@@ -348,8 +348,13 @@ def test_existing_job_database_is_migrated(tmp_path):
 def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
     document = read_pdf(sample_pdf, "sample.pdf")
     demo = DemoAgents()
-    bundle = demo.extract_knowledge(document)
+    from zhijiang.models import Evidence, KnowledgeBundle, KnowledgePoint
     candidates = source_candidates(document)
+    bundle = KnowledgeBundle(points=[
+        KnowledgePoint(title=point.title, kind=point.kind, explanation='依据原文解释概念和使用条件。',
+                       evidence=Evidence(page=source['page'], quote=source['quote'], ocr=source['ocr']))
+        for point, source in zip(demo.extract_knowledge(document).points[:3], candidates[:3])
+    ])
     selection = KnowledgeSelection(points=[
         KnowledgeSelectionPoint(
             title=point.title, kind=point.kind, explanation=point.explanation,
@@ -415,6 +420,28 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
     first=replies[6].items[0]
     replies.extend([NavigationReply(cut_after=[],theme_1='理解原文',theme_2='理解原文',theme_3='理解原文',theme_4='理解原文',
         closing_points=[{'segment_id':1,'sentence_id':1,'label':first.label}]),RouteReviewReply(),ClosingReviewReply()])
+    from zhijiang.teaching_exhibits import TeachingExhibitDraft, ExhibitItem
+    class ExhibitReviewReply(BaseModel):
+        item_1: str='faithful'
+        meaning: str='faithful'
+        conditions: str='faithful'
+        pictures: str='faithful'
+        teaching_focus: str='faithful'
+        issues: str=''
+    class ExhibitIntentReply(BaseModel):
+        form: str='statement'
+        focus_sentence_ids: list[int]=[1]
+        reason: str='当前讲稿是单一原文主题'
+    for i in range(3):
+        label=replies[6+i*2].items[0].label
+        replies.extend([ExhibitIntentReply(),TeachingExhibitDraft(form='statement',items=[
+            ExhibitItem(label=label,detail='',sentence_id=1)]),ExhibitReviewReply()])
+        from zhijiang.exhibit_relations import relation_options
+        if relation_options(lesson.segments[i]):
+            class EmptyRelationReply(BaseModel):
+                option_ids: list[int]=[]
+                reason: str='没有清楚的教学关系候选'
+            replies.append(EmptyRelationReply())
     transport = httpx.MockTransport(
         lambda _: httpx.Response(
             200, json={"choices": [{"message": {"content": replies.pop(0).model_dump_json()}}]}
@@ -437,6 +464,7 @@ def test_full_ai_pipeline_with_mock_model(tmp_path, sample_pdf):
         processor.process(job["id"])
     assert store.get(job["id"])["status"] == JobStatus.COMPLETED
     assert store.lesson(job["id"]).mode == Mode.AI
+    assert store.lesson(job['id']).deck_plan['teaching_exhibits']['accepted']==3
     assert [s.bullets for s in store.lesson(job['id']).segments] == [
         [speech_sentences(s.narration)[0]] for s in script_draft.segments]
     assert not replies

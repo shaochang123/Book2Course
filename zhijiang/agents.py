@@ -386,7 +386,8 @@ class OllamaClient:
             json_fallback=self.prefer_json or observed_endpoint is not None
         if schema.__name__ in {'DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection',
                               'SlideVisualDraft','SlideLinkSelection','SlideVisualReview','SlideExampleTable',
-                              'SourcePropositionsDraft','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview'}:
+                              'SourcePropositionsDraft','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview',
+                              'TeachingExhibitIntent','TeachingExhibitDraft','TeachingExhibitReview','TeachingRelationSelection','TeachingArithmeticRepair','TeachingArithmeticTarget'}:
             json_fallback = observed_endpoint is not None
         completion_fallback = observed_endpoint == '/api/generate'
         budget_multiplier=1
@@ -419,7 +420,8 @@ class OllamaClient:
                     payload['options'].update(num_ctx=16384, num_predict=3072)
                 if schema.__name__ in {'DeckIllustrationPlacement','ScriptCaptionSelection'}:
                     payload['options'].update(num_ctx=8192,num_predict=512)
-                if schema.__name__ in {'SlideVisualDraft','SlideLinkSelection','SlideVisualReview','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview'}:
+                if schema.__name__ in {'SlideVisualDraft','SlideLinkSelection','SlideVisualReview','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview',
+                                       'TeachingExhibitIntent','TeachingExhibitDraft','TeachingExhibitReview','TeachingRelationSelection','TeachingArithmeticRepair','TeachingArithmeticTarget'}:
                     payload['options'].update(num_ctx=16384,num_predict=2048)
                 if self.num_gpu is not None:
                     payload['options']['num_gpu']=self.num_gpu
@@ -717,6 +719,32 @@ _WORD = re.compile(r"[^\W\d_]{4,}")
 _NUMBER = re.compile(r"(?<!\d)\d+(?:\.\d+)?(?:%|％)?(?!\d)")
 
 
+def literal_numeric_examples(quote: str) -> list[str]:
+    """Detect explicit source calculations/records, not arbitrary numbers.
+
+    This is a limited coverage signal. It neither computes an answer nor
+    proves source meaning; model review still compares the full quotation.
+    """
+    from zhijiang.caption_grounding import speech_sentences
+    result=[]
+    for sentence in speech_sentences(quote):
+        if len(set(_NUMBER.findall(sentence)))<3:continue
+        calculation=re.search(r'乘以|除以|减去|加上|相乘|相加|得到|[×÷=]|\b(?:multiply|divide|plus|minus|sum)\b',sentence,re.I)
+        fields=re.findall(r'[\u4e00-\u9fffA-Za-z]{1,12}(?:为|是|=)\s*\d+(?:\.\d+)?',sentence)
+        if calculation or len(fields)>=2:result.append(sentence)
+    return result
+
+
+def _script_example_issues(draft: ScriptDraft, by_id: dict[int, KnowledgePoint]) -> list[str]:
+    issues=[]
+    for segment in draft.segments:
+        examples=literal_numeric_examples(by_id[segment.source_id].evidence.quote)
+        required={n for s in examples for n in _NUMBER.findall(s)}
+        missing=required-set(_NUMBER.findall(segment.narration))
+        if missing:issues.append(f'《{segment.title}》漏讲原文算例/记录的数值：'+', '.join(sorted(missing)))
+    return issues
+
+
 def _script_fidelity_issues(draft: ScriptDraft, by_id: dict[int, KnowledgePoint]) -> list[str]:
     """Catch explicit invented values and a known mistranslation of a source ratio."""
     issues: list[str] = []
@@ -786,35 +814,49 @@ def _topic_term(document: SourceDocument) -> str:
 
 
 def _page_quotes(text: str, quote_limit: int, minimum_length: int, *, ocr: bool = False) -> list[str]:
-    """Keep complete lines, joining PDF line wraps when most lines are fragments."""
+    """Join physical wraps before bounding quotes at sentence/clause boundaries."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     cjk = len(re.findall(r'[\u3400-\u9fff]', text)) > len(_compact(text)) / 4
     substantive = [line for line in lines if len(_compact(line)) >= minimum_length]
-    wrapped = (cjk and (ocr or not substantive)) or (bool(substantive) and sum(
+    wrapped = (cjk and (ocr or not substantive or any(
+        not _SENTENCE_END.search(line) for line in substantive))) or (bool(substantive) and sum(
         not _SENTENCE_END.search(line) for line in substantive) > len(substantive) / 2)
     if cjk and wrapped:
         # A Chinese definition can be shorter than forty characters and wrap
         # across several scan lines. A sentence boundary is stronger than a
         # physical line boundary; do not discard its subject or conclusion.
         minimum_length = 8
+    def bounded(value: str) -> list[str]:
+        chunks = []
+        while len(value) > quote_limit:
+            prefix = value[:quote_limit]
+            # A numeric decimal point is not a prose boundary. Prefer a full
+            # sentence, then a clause; a boundary-free formula stays a literal
+            # fragment rather than receiving an invented conclusion.
+            endings = list(re.finditer(r'[。！？!?；;]|(?<!\d)\.(?!\d)', prefix))
+            if not endings:
+                endings = list(re.finditer(r'[，,:：]', prefix))
+            end = endings[-1].end() if endings else quote_limit
+            chunks.append(value[:end].strip())
+            value = value[end:].strip()
+        if value:
+            chunks.append(value)
+        return [chunk for chunk in chunks if len(_compact(chunk)) >= minimum_length]
+
     if not wrapped:
-        return [line[:quote_limit] for line in substantive]
+        return [quote for line in substantive for quote in bounded(line)]
 
     quotes: list[str] = []
     pending: list[str] = []
 
     def flush() -> None:
         if pending:
-            quote = " ".join(pending)[:quote_limit]
-            if len(_compact(quote)) >= minimum_length:
-                quotes.append(quote)
+            quotes.extend(bounded(" ".join(pending)))
             pending.clear()
 
     for line in lines:
-        if pending and len(" ".join((*pending, line))) > quote_limit:
-            flush()
         pending.append(line)
-        if len(line) >= quote_limit or _SENTENCE_END.search(line):
+        if _SENTENCE_END.search(line):
             flush()
     flush()
     if cjk:
@@ -932,13 +974,13 @@ def source_candidates(document: SourceDocument, *, complete: bool = False) -> li
         if quotes and len(hits) >= 0.8 * len(quotes):
             hits = []  # A word found everywhere cannot distinguish the subject from boilerplate.
         if hits:
-            complete = [index for index in hits if _SENTENCE_END.search(quotes[index])]
-            if len(complete) >= 3:
+            complete_hits = [index for index in hits if _SENTENCE_END.search(quotes[index])]
+            if len(complete_hits) >= 3:
                 # A page may contain unrelated sidebars. A complete subject sentence is
                 # stronger evidence than a clipped heading that merely names the topic.
-                chosen = _spread(complete, per_page_limit)
+                chosen = _spread(complete_hits, per_page_limit)
                 context = [index for index in range(len(quotes) - 1)
-                           if index not in hits and index + 1 in complete
+                           if index not in hits and index + 1 in complete_hits
                            and _SENTENCE_END.search(quotes[index])]
                 if context and len(chosen) < per_page_limit:
                     chosen.append(max(context, key=lambda index: len(_compact(quotes[index]))))
@@ -1086,6 +1128,7 @@ class AIAgents:
         self.client = client
         self.prompt = prompt.strip()
         self.knowledge_drafts: list[dict] = []
+        self.script_coverage: list[dict] = []
 
     def _style(self) -> str:
         return f"\n用户对讲解风格和输出效果的要求：{self.prompt}" if self.prompt else ""
@@ -1397,7 +1440,9 @@ class AIAgents:
             "术语定义须忠实保留原文中的分子、分母、范围与条件。"
             "自拟例子要写清条件，数值与比较必须符合所讲定义；不要把依赖条件的现实现象说成必然。"
             "不要把教学方法或后续章节预告写成当前课程知识点。"
-            "每段 source_id 必须指向输入 points 中存在的编号，每个编号最多用一次；"
+            "required_examples 是选中引文中的实际算例/记录，必须讲出其输入、运算或字段、结果和原有简化条件；"
+            "不能只说‘有两个期间/数值来自算例’而省掉具体数值。数值保留原文的数字写法，不改成中文数词。"
+            "每段 source_id 必须指向输入 points 中存在的编号，每个编号恰好用一次；"
             "不要输出页码或原文引文，它们由程序按编号填入。"
         ) + self._style()
         segments = []
@@ -1405,7 +1450,8 @@ class AIAgents:
         for points in self._batches(bundle.points, 6):
             material = json.dumps(
                 {"points": [
-                    {"source_id": index, **point.model_dump()}
+                    {"source_id": index, **point.model_dump(),
+                     "required_examples":literal_numeric_examples(point.evidence.quote)}
                     for index, point in enumerate(points, start=1)
                 ], "outline": {"title": outline.title, "objective": outline.objective,
                                 "point_titles": [point.title for point in points]}},
@@ -1420,8 +1466,8 @@ class AIAgents:
                     material,
                 )
                 ids = [segment.source_id for segment in draft.segments]
-                if len(set(ids)) != len(ids) or any(item not in by_id for item in ids):
-                    feedback = "上次知识点编号无效或重复；请修正。"
+                if len(set(ids)) != len(ids) or set(ids)!=set(by_id):
+                    feedback = "上次知识点编号无效、重复或遗漏；每个输入知识点恰好一段，请修正。"
                     continue
                 fidelity_issues = _script_fidelity_issues(draft, by_id)
                 if fidelity_issues:
@@ -1429,10 +1475,32 @@ class AIAgents:
                         draft = _sanitize_script_draft(draft, by_id)
                         if not _script_fidelity_issues(draft, by_id):
                             sanitized_any = True
-                            break
-                    feedback = ("上次讲稿有以下与来源不符之处：" + "；".join(fidelity_issues[:3])
-                                + "。请删除无来源数字，或改用对应引文中的原数值；修正术语定义。")
-                    continue
+                        else:
+                            continue
+                    else:
+                        feedback = ("上次讲稿有以下与来源不符之处：" + "；".join(fidelity_issues[:3])
+                                    + "。请删除无来源数字，或改用对应引文中的原数值；修正术语定义。")
+                        continue
+                example_issues=_script_example_issues(draft,by_id)
+                self.script_coverage.append({'attempt':attempt+1,'source_ids':ids,
+                    'required_examples':{i:literal_numeric_examples(p.evidence.quote) for i,p in by_id.items()},
+                    'missing':example_issues,'scope':'selected quotation numeric example coverage; not complete textbook coverage'})
+                if example_issues:
+                    if attempt==0:
+                        feedback='上次遗漏了已经给出的原文算例：'+'；'.join(example_issues)+'。必须讲出原有具体数值、配对与条件，不能只列定义。'
+                        continue
+                    # Preserve the complete selected quotation when a small
+                    # model repeatedly omits its worked example. This is source
+                    # text, not another model-authored or invented calculation.
+                    for segment in draft.segments:
+                        if _script_example_issues(ScriptDraft(segments=[segment]),by_id):
+                            before=segment.narration;quote=by_id[segment.source_id].evidence.quote
+                            segment.narration+='下面保留教材中的具体算例与条件。'+quote
+                            self.script_coverage.append({'source_id':segment.source_id,
+                                'repair_method':'verbatim_source_example','before':before,
+                                'source_quote':quote,'after':segment.narration})
+                    if _script_fidelity_issues(draft,by_id) or _script_example_issues(draft,by_id):
+                        raise GenerationError('原文算例覆盖修复仍未通过，已保留诊断。')
                 break
             else:
                 raise GenerationError("AI 讲稿未能遵守知识点编号或来源数值约束。")
@@ -1452,7 +1520,9 @@ class AIAgents:
             mode=Mode.AI,
             voice_mode=voice_mode,
             notice=("AI 生成：页码引文已自动核对，知识正确性仍需人工复核。"
-                    + (" 无来源数值或术语表述已自动删改，请重点检查这些讲解。" if sanitized_any else "")),
+                    + (" 无来源数值或术语表述已自动删改，请重点检查这些讲解。" if sanitized_any else "")
+                    + (" 模型遗漏的原文数字算例已用完整引文补回，详见算例覆盖记录。"
+                       if any(r.get('repair_method')=='verbatim_source_example' for r in self.script_coverage) else "")),
         )
 
     def review(self, lesson: Lesson) -> ReviewResult:

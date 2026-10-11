@@ -17,7 +17,8 @@ from zhijiang.caption_grounding import speech_sentences
 from zhijiang.teaching_graph import complete_graph_label
 from zhijiang.presentation import PresentationError
 
-TRANSITIVE_WORDS={'产生','提供','形成','包括','导致','获得','得到','成为','称为','认为','需要','表示','进行','使用','理解','问'}
+TRANSITIVE_WORDS={'产生','提供','形成','包括','导致','获得','得到','成为','称为','认为','需要','表示','进行','使用','理解','问',
+                  '利用','采集','支撑','返回','传递','读取','写入','分析','判断','改善','驱动','控制','加上','减去'}
 
 
 def source_is_question(text):
@@ -29,17 +30,40 @@ def ordered_source_relation(text,subject,predicate,obj):
     """Conservative active-clause support, never just same-page co-occurrence."""
     import re,jieba.posseg
     if source_is_question(text):return False
+    if predicate in {'能','能够','可以','会','可','可能','应该','应当'}:return False
+    if any(re.match(r'^(?:是|使|让|把|将|对|从|为|与|和)',n) for n in (subject,obj)):return False
     if not any(t.flag.startswith(('v','p','c','eng')) or t.word in TRANSITIVE_WORDS
                for t in jieba.posseg.cut(predicate)):return False
     for clause in re.split('[，,；;]',text):
         for start in re.finditer(re.escape(subject),clause):
+            prefix=clause[:start.start()]
+            if re.search(r'不是|并非|不等于|不能|不意味着|不代表|\b(?:not|never)\b',prefix,re.I):continue
+            prefix_tokens=list(jieba.posseg.cut(prefix))
+            if prefix_tokens and prefix_tokens[-1].word in {'在','于'}:continue
+            # In A uses B to produce C, B is the earlier object, not the
+            # producer of C. An explicit causative can introduce a new actor.
+            prefix=re.split(r'让|使|令',prefix)[-1]
+            if any(t.word in TRANSITIVE_WORDS for t in jieba.posseg.cut(prefix)):continue
             rest=clause[start.end():]
             for relation in re.finditer(re.escape(predicate),rest):
+                if (subject+predicate in clause and predicate not in TRANSITIVE_WORDS
+                    and visual_object_name(subject+predicate,clause)):continue
+                between_subject=rest[:relation.start()]
+                if '、' in between_subject:continue
+                if re.search(r'不|不能|并非|\b(?:not|never)\b',between_subject,re.I):continue
                 tail=rest[relation.end():]
+                # A listed noun such as 应用 or 敲声 is not a predicate.
+                if tail.startswith(('和','与','或','是','为')):continue
                 for target in re.finditer(re.escape(obj),tail):
                     # "uses data to produce a model" cannot become "uses model".
                     between=tail[:target.start()]
-                    if not any(t.flag.startswith(('n','eng')) for t in jieba.posseg.cut(between)):
+                    # "conditions remain unchanged的 conductor" modifies a
+                    # noun. It does not assert an arrow from the conditions to
+                    # that conductor. State predicates here are intransitive.
+                    if between.startswith('的') and re.search(
+                        r'(?:不变|相同|不同|稳定|一致|上升|下降|变化)$',predicate):continue
+                    if not any(t.flag.startswith(('n','eng','v','c')) or t.word in TRANSITIVE_WORDS
+                               for t in jieba.posseg.cut(between)):
                         return True
     return False
 
@@ -80,7 +104,12 @@ def visual_object_name(label, sentence):
     import jieba.posseg
     import re
     if re.search('[，,；;。！？：:]',label):return False
+    if re.match(r'^(?:是|使|让|把|将|对|从|为|与|和|拿[这那该])',label):return False
+    if re.search(r'(?:是|等于)',label):return False
     tokens=list(jieba.posseg.cut(label))
+    if '和' in label or '与' in label:
+        parts=re.split('和|与',label)
+        if len(parts)>1 and all(part and visual_object_name(part,sentence) for part in parts):return True
     if len(label)>2 and label.endswith('则') and jieba.get_FREQ(label[:-1]):
         base=list(jieba.posseg.cut(label[:-1]))
         if base[-1].flag.startswith(('v','d','c')):
@@ -88,6 +117,22 @@ def visual_object_name(label, sentence):
                 after=list(jieba.posseg.cut(sentence[match.end():]))
                 if after and after[0].flag=='p':return False
     if not tokens or not complete_graph_label(label) or tokens[-1].word=='则':return False
+    # Nominal compounds may consist of verb tokens in jieba (e.g. 控制操作,
+    # 监督学习). Their complete occurrence must have a nominal boundary.
+    if len(tokens)>1 and all(t.flag.startswith(('v','n','a','eng','d')) for t in tokens):
+        if not any(t.word in TRANSITIVE_WORDS for t in tokens):
+            if any(re.match(r'^(?:是|的|与|和|、|；|。|$)',sentence[m.end():])
+                   or re.search(r'(?:把|将)$',sentence[:m.start()])
+                   for m in re.finditer(re.escape(label),sentence)):
+                return True
+            if tokens[0].flag.startswith('n') and tokens[-1].flag.startswith('v'):
+                # A noun + verbal noun can itself be the subject of a later
+                # predicate (气体交换涉及..., 数据处理包括...). Do not allow an
+                # action ending such as "信号产生" with a missing object.
+                for m in re.finditer(re.escape(label),sentence):
+                    following=list(jieba.posseg.cut(sentence[m.end():]))
+                    if following and following[0].flag.startswith('v') and following[0].word!=tokens[-1].word:
+                        return True
     if any(t.flag=='p' for t in tokens) and '的' not in label:return False
     # Dictionaries sometimes tag a transitive predicate (e.g. 产生) as a noun.
     # A label ending there still cuts off its direct object in the source.
@@ -96,13 +141,14 @@ def visual_object_name(label, sentence):
             before=sentence[:match.start()];after=list(jieba.posseg.cut(sentence[match.end():]))
             nominal=bool(re.search(r'(?:的|是|种|次|类|进行|做)$',before))
             if not nominal and after and after[0].flag.startswith(('n','v')):return False
-    if tokens[-1].flag.startswith(('n','eng','vn','m')):
-        return any(t.flag.startswith(('n','eng','vn','m')) for t in tokens)
+    if tokens[-1].flag.startswith(('n','eng','vn','m','j')):
+        return any(t.flag.startswith(('n','eng','vn','m','j')) for t in tokens)
     if len(tokens)>1 and tokens[-1].flag=='q':return True
     if len(tokens)==1 and tokens[0].flag.startswith('v'):
         for match in re.finditer(re.escape(label),sentence):
             before=sentence[:match.start()];after=sentence[match.end():]
             remainder=list(jieba.posseg.cut(after))
+            if after.startswith(('是','的','与','和','、','；','。')):return True
             clause_start=not re.split('[，,；;：:]',before)[-1].strip()
             nominal=clause_start or re.search(r'(?:的|是|出|种|个|次|类|进行|做|有)$',before)
             # Do not truncate "建立联系" or "使用模型" to a bare verb.

@@ -65,6 +65,12 @@ New jobs separate speech from screen content. Full narration stays in notes and 
 
 Ordinary AI captions are first grounded in complete narration sentences, then a separate stage designs compact visuals. Full sentences are review evidence, not mandatory screen text. Independently read propositions restore knowledge diagrams; explicit fields and values can become example tables. Unsupported arrows are rejected and recorded. Model review does not establish that the narration itself is correct. Chinese candidate boundaries use `jieba`, now a core dependency; ordinary slides do not require the math-animation extra.
 
+An additional example planner selects attribute records, instance matrices, comparisons, relations, timelines, numerical examples, annotations or conclusions according to the content. Open compositions retain the director's column and paired-row choices. Explicit movement from an origin to a destination can use arrows that retain the moving object's identity and direction; named parallel parts do not become an invented causal chain. Bounded arithmetic checks numerical equality, with source meaning reviewed separately. Rejected exhibits retain literal source content or the earlier reviewed visual and rejection record rather than inventing an example. Reveals, focus changes and arrow drawing use sentence-length timing estimates, not forced audio alignment; existing continuous mathematics scenes take priority. See [concrete examples and visual variety](docs/具体示例与画面多样性.md) for the workflow, limits and actual verification.
+
+Basic AI narration must cover every planned knowledge point. Explicit numeric calculations and records in selected quotations are checked for omitted spoken values. If a retry still omits them, the complete quotation and its conditions are restored, disclosed in the web notice and `script-coverage.json`. This limited check does not cover all textbook examples, Chinese number words, algebra or proofs; displaying numbers does not establish correct relationships.
+
+Chinese source extraction joins physical PDF line wraps before bounding quotations at sentence or clause boundaries, keeping units and conditions together. Long formulas without punctuation still require comparison with the original page.
+
 The agent groups the roadmap into at most four consecutive learning themes (at least two for five or more passages, and three for twelve or more) and checks each theme against its actual passages, then independently selects and reviews complete knowledge statements for the ending instead of listing every slide title. Both PPT and new complete videos include a cover and ending. Videos hold the cover for 3 seconds and the ending for 5 seconds with intentional silence, without repeating narration. Existing generated files remain accessible.
 
 ## Searchable teaching illustrations
@@ -93,6 +99,7 @@ Creation and retry APIs accept `use_illustrations`, enabled by default; omitted 
 | [Implementation status and roadmap](docs/实现状态与路线图.md) | Reference design, implemented, partial and planned capabilities. |
 | [Validation and acceptance](docs/验证与验收.md) | Automated, media and teaching-quality evidence. |
 | [Compact visuals and closing acceptance](docs/画面修复验收-2026-10.md) | Visual regression repair, grouped roadmap, bookends and cross-domain media. |
+| [Concrete examples and visual variety](docs/具体示例与画面多样性.md) | Attribute records, instance matrices, equations, open compositions and source-based timing. |
 | [Illustration and shared-page acceptance](docs/素材库验收-2026-10.md) | Actual visual/media results for eight inputs, repairs and remaining limits. |
 | [AI Coding record](docs/AI_Coding_全过程.md) | Actual Codex use, feedback, fixes and commits. |
 | [Sources and licenses](docs/第三方来源与许可.md) | Dependencies, models and source documents. |

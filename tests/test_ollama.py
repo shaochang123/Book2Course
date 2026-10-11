@@ -261,7 +261,9 @@ def test_teaching_semantic_review_uses_qwen3_deliberation():
         assert not review.approved
 
 
-@pytest.mark.parametrize('stage',['DeckClosingReview','DeckRouteReview','SlideSourcePropositionsDraft'])
+@pytest.mark.parametrize('stage',['DeckClosingReview','DeckRouteReview','SlideSourcePropositionsDraft',
+    'TeachingExhibitIntent','TeachingExhibitDraft','TeachingExhibitReview','TeachingRelationSelection',
+    'TeachingArithmeticRepair','TeachingArithmeticTarget'])
 def test_compact_story_stages_use_bounded_native_schema(stage):
     from pydantic import create_model
     schema=create_model(stage,point_1=(bool,...),issues=(str,''))

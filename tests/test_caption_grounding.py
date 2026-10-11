@@ -90,7 +90,7 @@ def test_invalid_selection_fails_without_partial_changes(tmp_path):
     with pytest.raises(GenerationError,match='两次'):
         ground_lesson_captions(lesson,client,output=tmp_path/'captions.json')
     assert lesson.model_dump_json() == before and len(client.calls) == 3
-    assert 'error' in json.loads((tmp_path/'captions.json').read_text())[-1]
+    assert 'error' in json.loads((tmp_path/'captions.json').read_text(encoding='utf-8'))[-1]
 
 
 def test_service_failure_is_not_an_accepted_caption():
