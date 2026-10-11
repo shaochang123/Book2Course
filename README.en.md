@@ -20,6 +20,8 @@ Open [http://127.0.0.1:8765/](http://127.0.0.1:8765/), select the [original samp
 
 Python 3.11+ is required; Python 3.13 has been verified. System narration requires Windows Chinese speech; other environments can use a compatible speech API. `imageio-ffmpeg` supplies FFmpeg, so a system installation is unnecessary.
 
+The website focuses on uploads, slide style, voice audition and generated results, with larger body text and concise labels. Model, speech and animation settings are collapsed by default; unconfigured model or speech settings open automatically, as do panels containing invalid inputs. Generation warnings and technical information are available under “生成记录” (generation records); each script segment has expandable “原文依据” (source evidence).
+
 ## Model and animation configuration
 
 Copy the template for initial setup. If `.env.local` exists, edit it to preserve your settings:
@@ -53,7 +55,7 @@ Ordinary semantic deliberation follows model/service sampling settings instead o
 
 Native relations and page annotations do not need TeX; computational geometry and specialized math need `latex` and `dvisvgm`. See [configuration and recovery](docs/configuration.en.md) for speech, Kokoro, external APIs and resume; see [teaching diagrams and animations](docs/animations.en.md) for diagrams and skills.
 
-The website's content policy defaults to **direct generation** (API: `content_checks=warn`). Ordinary slides read complete cited and neighboring pages, then produce narration, diagrams and illustrations without completeness, source-meaning or visual-semantic veto calls. The program still handles citation identity, file structure and executable rendering. Omitted topics retain source narration; invalid assets or links are removed with recorded warnings. Outputs are explicitly unreviewed drafts. Choose `strict` for the previous review workflow; mathematical object and specialized math modes continue using their existing source, mathematical and animation review workflows. Create and retry both persist this option. See [direct generation and recovery](docs/直接生成与失败恢复.md).
+The generation policy under “图示与动画设置” (diagram and animation settings) defaults to **direct generation** (API: `content_checks=warn`). Ordinary slides read complete cited and neighboring pages, then produce narration, diagrams and illustrations without completeness, source-meaning or visual-semantic veto calls. The program still handles citation identity, file structure and executable rendering. Omitted topics retain source narration; invalid assets or links are removed with recorded warnings. Outputs are explicitly unreviewed drafts. Choose `strict` for the previous review workflow; mathematical object and specialized math modes continue using their existing source, mathematical and animation review workflows. Create and retry both persist this option. See [direct generation and recovery](docs/直接生成与失败恢复.md).
 
 ## Natural narration (optional)
 

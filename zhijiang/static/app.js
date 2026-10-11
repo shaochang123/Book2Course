@@ -2,6 +2,12 @@ const $ = (selector) => document.querySelector(selector);
 const form = $("#upload-form");
 const fileInput = $("#pdf-file");
 const dropzone = $("#dropzone");
+// Reveal a required field before the browser tries to focus it in a closed panel.
+form.addEventListener("invalid", (event) => {
+  for (let parent = event.target.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === "DETAILS") parent.open = true;
+  }
+}, true);
 const representationNames = {geometry: "可计算几何", process: "过程图", relationship: "关系图", comparison: "对比图", source_figure: "原文图示讲解"};
 const linkedJobId = new URLSearchParams(window.location.search).get("job") || "";
 let currentJobId = /^[0-9a-f]{32}$/.test(linkedJobId) ? linkedJobId : localStorage.getItem("zhijiang-job-id");
@@ -19,7 +25,6 @@ function updateTemplatePreview() {
   const image = $("#ppt-template-preview");
   image.src = `/api/ppt-templates/${encodeURIComponent(id)}/preview`;
   image.alt = `${template?.name || id}模板的版式示意`;
-  $("#ppt-template-description").textContent = template?.description || "正在读取模板信息。";
 }
 $("#ppt-template").addEventListener("change", () => {
   templateSelectionEdited = true;
@@ -59,15 +64,16 @@ function updateConsent() {
   $("#remote-consent").required = remote;
   if (!remote) $("#remote-consent").checked = false;
   $("#llm-api-key").required = ai && $("#llm-provider").value === "openai" && !config?.llm_ready;
-  $("#api-key-hint").textContent = $("#llm-provider").value === "ollama" ? "本机 Ollama 无需填写" :
-    (config?.llm_ready ? "服务器已有默认密钥；更换接口时请填写" : "兼容接口需要填写");
+  $("#llm-api-key").placeholder = $("#llm-provider").value === "ollama" ? "本机 Ollama 可留空" : "填写 API 密钥";
   for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
     form.elements[name].required = aiVoice;
   }
   const usesDefaultVoice = ttsURL === config?.tts_base_url &&
     $("#tts-model").value === config?.tts_model && $("#tts-voice").value === config?.tts_voice;
   $("#tts-api-key").required = aiVoice && !localVoice && !(usesDefaultVoice && config?.ai_tts_ready);
-  $("#tts-key-hint").textContent = localVoice ? "本机服务无需填写" : "外部服务需要填写；默认服务可使用服务器密钥";
+  $("#tts-api-key").placeholder = localVoice ? "本机服务可留空" : "填写 API 密钥";
+  $("#ai-ready-label").textContent = modelName;
+  $("#tts-ready-label").textContent = $("#tts-voice").value;
 }
 
 function setFile(file) {
@@ -138,9 +144,8 @@ function showJob(job) {
   const stages = { queued: "等待处理", completed: "生成完成", failed: "生成失败", interrupted: "服务中断" };
   $("#job-stage").textContent = stages[job.stage] || job.stage || "等待处理";
   $("#job-progress").style.width = `${job.progress || 0}%`;
-  $("#job-message").textContent = job.error || (job.status === "completed" ?
-    (job.has_presentation ? "视频、PPT 课件与逐段讲稿已生成。" : "视频与逐段讲稿已生成；旧任务可重新上传 PDF 生成 PPT。") :
-    "可以关闭或刷新网页后继续查看，请保持本机服务运行。整本扫描教材和 CPU 模型处理较慢，进度会显示当前页面、批次或场景；百分比表示阶段完成度，不是剩余时间。 ");
+  $("#job-message").textContent = job.error || "";
+  $("#job-message").hidden = !job.error;
   $("#presentation-export").hidden = !(job.status === "completed" && job.has_presentation);
   $("#retry-button").hidden = job.status !== "failed";
   $("#delete-button").hidden = !["completed", "failed"].includes(job.status);
@@ -160,9 +165,14 @@ function addSegment(segment, index) {
   body.className = "segment-body";
   const narration = document.createElement("p");
   narration.textContent = segment.narration;
+  const source = document.createElement("details");
+  source.className = "source-evidence";
+  const sourceHeading = document.createElement("summary");
+  sourceHeading.textContent = "原文依据";
   const quote = document.createElement("div");
   quote.className = "source-quote";
-  quote.textContent = `原文摘录：${segment.evidence.quote}`;
+  quote.textContent = segment.evidence.quote;
+  source.append(sourceHeading, quote);
   const scene = segment.math_scene || segment.visual_scene;
   if (!scene) body.append(narration);
   if (scene) {
@@ -194,7 +204,7 @@ function addSegment(segment, index) {
     });
     body.append(steps);
   }
-  body.append(quote);
+  body.append(source);
   details.append(summary, body);
   $("#segments").append(details);
 }
@@ -204,16 +214,18 @@ async function showLesson(jobId) {
   $("#lesson-result").hidden = false;
   $("#lesson-title").textContent = lesson.title;
   $("#lesson-objective").textContent = lesson.objective;
-  $("#lesson-notice").textContent = lesson.notice.replace('在线 AI 配音', 'AI 配音');
+  $("#lesson-notice").replaceChildren();
   for (const warning of lesson.animation_report?.warnings || []) {
     const line = document.createElement("p");
     line.textContent = `第 ${warning.segment_id} 段：${warning.message}`;
     $("#lesson-notice").append(line);
   }
+  if (!$("#lesson-notice").childElementCount) $("#lesson-notice").textContent = "无生成提示";
   const template = config?.ppt_templates?.find(item => item.id === lesson.ppt_template);
   $("#ppt-template-result").textContent = `PPT：${template?.name || "深色演示"}${lesson.deck_plan?.planner === "model_layout_selection" ? " · AI 规划页面版式" : lesson.deck_plan?.planner === "deterministic_demo_layout" ? " · 规则排版" : ""}`;
   $("#segment-count").textContent = `${lesson.segments.length} 个讲解片段`;
-  $("#voice-note").textContent = lesson.voice_mode === "ai" ? "本视频使用所配置的 AI 语音服务。" : "本视频使用 Windows 系统语音；此配音不是 AI 语音。";
+  $("#voice-note").textContent = lesson.voice_mode === "ai" ? "AI 配音" : "系统配音";
+  $("#generation-mode").textContent = lesson.mode === "ai" ? "AI 生成" : "规则生成";
   $("#segments").replaceChildren();
   lesson.segments.forEach(addSegment);
   const videoURL = `/api/jobs/${jobId}/video`;
@@ -222,9 +234,8 @@ async function showLesson(jobId) {
   $("#download-presentation").href = `/api/jobs/${jobId}/presentation`;
   const report = lesson.animation_report || {};
   $("#math-report").hidden = !report.renderer;
-  $("#math-report").textContent = report.content_checks === "warn" ? "直接生成 · SVG 教学图示与同步配音的逐步呈现。内容未经独立模型复核，提示不阻止课件导出。" : report.scene_count ? (report.scene_type === "general" ?
-    `${report.scene_count} 个通用教学场景 · ${report.renderer} · 含同步配音。表达类型：${[...new Set(report.representations || ["geometry"])].map(name => representationNames[name] || name).join("、")}。来源摘录、关系引用或几何计算按类型检查；教学含义和专业事实需复核。` :
-    `${report.scene_count} 个数学推演场景 · ${report.renderer} · 含同步配音。实际数学对象与声明关系已核验；讲解质量和引用含义仍需人工核对。`) : report.reason || "基础图示";
+  $("#math-report").textContent = report.content_checks === "warn" ? "SVG 教学图示 · 逐步呈现" : report.scene_count ?
+    `${report.scene_count} 个${report.scene_type === "general" ? "教学" : "数学推演"}场景 · ${report.renderer}` : report.reason || "基础图示";
   $("#download-math-scenes").hidden = !report.scene_count;
   $("#download-math-scenes").href = `/api/jobs/${jobId}/scenes`;
 }
@@ -356,11 +367,7 @@ $("#retry-button").addEventListener("click", async () => {
   try {
     config = await getJSON("/api/config");
     updateTemplatePreview();
-    $("#math-ready-label").textContent = config.visual_animation?.ready ?
-      (config.visual_animation.geometry_ready ? "教学动画已就绪：支持来源关系图与可计算场景。" :
-        "来源图示动画已就绪。公式演示还需 LaTeX；自动模式会按内容选择图示。") :
-      `连续动画环境未就绪：${config.visual_animation?.reason || "请安装 math-animation 依赖"}。默认的 SVG 直接生成仍可使用。`;
-    $("#pdf-limits").textContent = `文字版和扫描版 PDF · 最多 ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB · 无页数上限`;
+    $("#pdf-limits").textContent = `文字版 / 扫描版 · ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB 以内`;
     $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
     $("#llm-base-url").value = config.llm_base_url || "";
     $("#llm-model").value = config.llm_model || "";
@@ -373,13 +380,10 @@ $("#retry-button").addEventListener("click", async () => {
     }
     if (config.speech_preview) {
       $("#speech-preview").hidden = false;
-      $("#speech-preview-text").textContent = config.speech_preview.text;
       $("#speech-preview-audio").src = config.speech_preview.url;
     }
-    $("#ai-ready-label").textContent = config.llm_ready ?
-      `默认：${config.llm_provider} · ${config.llm_model}；可在下方修改` : "在下方填写本次使用的模型 API";
-    $("#tts-ready-label").textContent = !config.ai_tts_ready ? "可在下方填写本次使用的语音 API" :
-      (config.tts_is_local ? "默认连接本机语音模型；可在下方修改" : "默认连接外部语音服务；可在下方修改");
+    if (!config.llm_ready) $("#ai-settings").open = true;
+    if (!config.ai_tts_ready) $("#tts-settings").open = true;
     updateConsent();
     if (currentJobId) startPolling();
   } catch (error) {
