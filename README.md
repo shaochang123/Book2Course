@@ -108,7 +108,20 @@ Agent 将学习路线合并为最多四组连续主题（五个片段以上至�
 | [AI Coding 过程](docs/AI_Coding_全过程.md) | Codex 的实际用途、反馈、修复与提交。 |
 | [来源与许可](docs/第三方来源与许可.md) | 依赖、模型和验证资料。 |
 
-`zhijiang/` 为应用与生成模块，`tests/` 为自动测试，`scripts/` 为示例、验收和文档工具，`examples/` 为原创 PDF 与来源清单，`demo/` 为历史媒体，`data/` 为本机任务和模型数据。历史说明与发布包单独保留，见[历史材料](docs/archive/2026-09/README.md)。
+`zhijiang/` 为应用与生成模块，`tests/` 为自动测试，`scripts/` 为示例、验收和文档工具，`examples/` 为原创输入与来源清单。`data/`、`demo/`、`submission/`、`output/` 为忽略提交的本机数据或生成物；仓库保留生成脚本和说明，见[历史材料](docs/archive/2026-09/README.md)。
+
+## Git 提交与本地数据
+
+密钥和本地 `.env*`、上传资料、数据库、模型权重、缓存、生成的 PPT/视频/音频/课程 JSON、导出 PDF/ZIP 和结果截图均被 `.gitignore` 排除。只保留空配置模板、原创公开输入样例、素材源码及文档。旧产物已取消 Git 跟踪，本地文件保留；历史提交中的旧产物不会因此自动消失。
+
+在每个新克隆中启用推送检查：
+
+```powershell
+git config core.hooksPath .githooks
+.\.venv\Scripts\python scripts\check_git_privacy.py
+```
+
+推送检查核对待推送的提交，包括中间提交，拒绝被强制加入的忽略文件和检测到的内嵌密钥；只打印文件名和问题类型。检查使用 Python 标准库，不依赖模型服务。规则、适用范围与历史记录见[Git 隐私与产物管理](docs/Git隐私与产物管理.md)。
 
 ## 流程
 

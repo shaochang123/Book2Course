@@ -108,7 +108,20 @@ Creation and retry APIs accept `use_illustrations`, enabled by default; omitted 
 | [AI Coding record](docs/AI_Coding_全过程.md) | Actual Codex use, feedback, fixes and commits. |
 | [Sources and licenses](docs/第三方来源与许可.md) | Dependencies, models and source documents. |
 
-The index and main product documents are in Chinese; configuration and animation references have English equivalents. `zhijiang/` holds application and generation modules, `tests/` automated checks, `scripts/` sample/validation/document tools, `examples/` original PDF and source manifest, `demo/` historical media, and `data/` local jobs and models. See the [archive](docs/archive/2026-09/README.md) for historical documents and packages.
+The index and main product documents are in Chinese; configuration and animation references have English equivalents. `zhijiang/` holds application and generation modules, `tests/` automated checks, `scripts/` sample/validation/document tools, and `examples/` original inputs and source manifests. `data/`, `demo/`, `submission/` and `output/` contain ignored local data or generated artifacts; the repository retains their scripts and documentation. See the [archive](docs/archive/2026-09/README.md).
+
+## Git commits and local data
+
+Keys and local `.env*` files, uploads, databases, model weights, caches, generated slides/video/audio/course JSON, exported PDF/ZIP files and result screenshots are ignored. Empty configuration templates, original public input fixtures, authored assets and documentation remain versioned. Existing artifacts have been untracked while preserving local copies; this does not remove them from historical commits.
+
+Enable the push check in each new clone:
+
+```powershell
+git config core.hooksPath .githooks
+.\.venv\Scripts\python scripts\check_git_privacy.py
+```
+
+The check inspects outgoing commits, including intermediate commits, and rejects force-added ignored files and detected embedded credentials. It prints filenames and issue types only. It uses Python's standard library, without a model service. Details and historical scope are in [Git privacy and artifact management](docs/Git隐私与产物管理.md).
 
 ## Workflow
 

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Git supplies outgoing refs on stdin. Use standard-library Python only.
+if [ -x .venv/Scripts/python.exe ]; then
+    exec .venv/Scripts/python.exe scripts/check_git_privacy.py --pre-push
+elif [ -x .venv/bin/python ]; then
+    exec .venv/bin/python scripts/check_git_privacy.py --pre-push
+elif command -v python3 >/dev/null 2>&1; then
+    exec python3 scripts/check_git_privacy.py --pre-push
+else
+    exec python scripts/check_git_privacy.py --pre-push
+fi

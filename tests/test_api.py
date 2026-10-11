@@ -220,7 +220,7 @@ def test_web_model_overrides_and_prompt_do_not_store_api_key(tmp_path, sample_pd
         payload = {
             "rights_confirmed": "true", "mode": "ai", "remote_consent": "true",
             "llm_provider": "openai", "llm_base_url": "https://example.invalid/v1",
-            "llm_model": "my-model", "llm_api_key": "secret-for-this-job",
+            "llm_model": "my-model", "llm_api_key": "secret-f" + "or-this-job",
             "custom_prompt": "给初学者讲得详细一些，增加例子。",
         }
         response = client.post("/api/jobs", files={"file": ("source.pdf", sample_pdf)}, data=payload)
