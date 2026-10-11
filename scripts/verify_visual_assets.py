@@ -231,7 +231,7 @@ def ml(settings, output, render_only=False):
         lesson.deck_plan=json.loads((output/'presentation-plan.json').read_text(encoding='utf-8'))
     else:
         client=OllamaClient(settings.llm_base_url,settings.llm_model,semantic_thinking=False,
-                            prefer_json=True,num_gpu=settings.ollama_num_gpu)
+                            prefer_json=True,num_gpu=settings.ollama_num_gpu,context_tokens=settings.ollama_context_tokens)
         try:
             print('ML: local model selecting assets and layouts for 25 passages',flush=True)
             ground_lesson_captions(lesson,client,output=output/'caption-grounding.json')
@@ -279,7 +279,7 @@ def subjects(settings, output):
             folder=store.jobs_dir/job['id']; lesson=store.lesson(job['id'])
             if lesson:
                 client=OllamaClient(settings.llm_base_url,settings.llm_model,semantic_thinking=False,
-                                   prefer_json=True,num_gpu=settings.ollama_num_gpu)
+                                   prefer_json=True,num_gpu=settings.ollama_num_gpu,context_tokens=settings.ollama_context_tokens)
                 try:
                     ground_lesson_captions(lesson,client,output=folder/'caption-grounding.json')
                     lesson.deck_plan=plan_deck(lesson,lesson.ppt_template,client,output=folder/'presentation-plan.json')

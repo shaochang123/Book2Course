@@ -124,7 +124,7 @@ def main():
             lesson=store.lesson(job['id'])
             if args.refresh_catalog:
                 client=OllamaClient(settings.llm_base_url,settings.llm_model,semantic_thinking=False,
-                                    prefer_json=True,num_gpu=settings.ollama_num_gpu)
+                                    prefer_json=True,num_gpu=settings.ollama_num_gpu,context_tokens=settings.ollama_context_tokens)
                 previous=folder/'presentation-plan-attempts.json'
                 if previous.is_file():
                     shutil.copyfile(previous,folder/f'layout-attempts-before-refresh-{len(history)-1}.json')

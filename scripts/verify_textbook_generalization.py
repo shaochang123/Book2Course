@@ -51,7 +51,8 @@ def main():
     (out/'input.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     (out/'parsed-source.json').write_text(document.model_dump_json(indent=2),encoding='utf-8')
     assets=prepare_source_assets(args.pdf,out/'source-pages',document)
-    client=OllamaClient(settings.llm_base_url,manifest['model'],semantic_thinking=manifest['semantic_thinking'])
+    client=OllamaClient(settings.llm_base_url,manifest['model'],semantic_thinking=manifest['semantic_thinking'],
+        context_tokens=settings.ollama_context_tokens)
     agents=AIAgents(client)
     try:
         path=out/'knowledge.json';fingerprint=hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()

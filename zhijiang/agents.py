@@ -29,6 +29,10 @@ from zhijiang.models import (
     VoiceMode,
 )
 
+# Connecting/sending can fail, but inference itself has no application deadline.
+# Keep the same policy for streaming, non-streaming, and compatible services.
+_GENERATION_TIMEOUT = httpx.Timeout(connect=30, read=None, write=60, pool=30)
+
 
 class GenerationError(RuntimeError):
     """课程生成未能得到可用且可核验的内容。"""
@@ -267,7 +271,7 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self.http_client = http_client or httpx.Client(timeout=90)
+        self.http_client = http_client or httpx.Client(timeout=_GENERATION_TIMEOUT)
         self._owns_client = http_client is None
 
     def close(self) -> None:
@@ -292,9 +296,16 @@ class OpenAICompatibleClient:
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json={"model": self.model, "messages": messages, "temperature": 0.2},
+                    timeout=_GENERATION_TIMEOUT,
                 )
                 response.raise_for_status()
-                content = response.json()["choices"][0]["message"]["content"]
+                choice = response.json()["choices"][0]
+                if choice.get('finish_reason') == 'length':
+                    last_error = '模型服务返回截断结果（finish_reason=length），应用未设置生成长度上限'
+                    if attempt == 0:
+                        continue
+                    raise GenerationError(last_error+'；请检查服务端生成与上下文设置，原任务可重试。')
+                content = choice["message"]["content"]
                 if isinstance(content, list):
                     content = "".join(part.get("text", "") for part in content)
                 content = str(content).strip()
@@ -315,15 +326,18 @@ class OllamaClient:
 
     def __init__(self, base_url: str, model: str, http_client: httpx.Client | None = None,
                  progress: Callable[[str, int, int], None] | None = None, *, semantic_thinking: bool = True,
-                 prefer_json: bool = False, num_gpu: int | None = None, thinking_level: str = ''):
+                 prefer_json: bool = False, num_gpu: int | None = None, thinking_level: str = '',
+                 context_tokens: int | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.semantic_thinking = semantic_thinking
         self.prefer_json = prefer_json
         self.num_gpu = num_gpu
         self.thinking_level = thinking_level
-        # CPU-only local inference can take several minutes for structured output.
-        self.http_client = http_client or httpx.Client(timeout=900, trust_env=False)
+        if context_tokens is not None and (type(context_tokens) is not int or context_tokens <= 0):
+            raise ValueError('Ollama 上下文大小必须为正整数；留空使用服务设置。')
+        self.context_tokens = context_tokens
+        self.http_client = http_client or httpx.Client(timeout=_GENERATION_TIMEOUT, trust_env=False)
         self._owns_client = http_client is None
         self._model_info: dict | None = None
         self.call_metrics: list[dict] = []
@@ -390,10 +404,10 @@ class OllamaClient:
                               'TeachingExhibitIntent','TeachingExhibitDraft','TeachingExhibitReview','TeachingRelationSelection','TeachingArithmeticRepair','TeachingArithmeticTarget'}:
             json_fallback = observed_endpoint is not None
         completion_fallback = observed_endpoint == '/api/generate'
-        budget_multiplier=1
-        # Three format/transport attempts plus at most one extra budget retry.
-        # The fourth slot is reachable only if the third hits its token limit.
-        for attempt in range(4 if schema.__name__.startswith('Math') else 3):
+        truncation_retried=False
+        # Three format/transport attempts, plus recovery when an upstream
+        # service truncates despite our request for unlimited generation.
+        for attempt in range(4):
             content = None
             try:
                 payload = {
@@ -401,78 +415,28 @@ class OllamaClient:
                     "messages": messages,
                     "stream": self.progress is not None,
                     "format": 'json' if json_fallback else schema.model_json_schema(),
-                    "options": {"temperature": 0, "num_ctx": 8192},
+                    "options": {"temperature": 0, "num_predict": -1},
                     "keep_alive": "10m",
                 }
-                scene_stage=schema.__name__ in {'VisualLayoutDraft','VisualSequenceDraft'}
                 semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft','TopicSourceScope','TopicScopeReview','MathSourceReview','MathProgramReview','MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness','MathOperationsRepair','MathClaimsRepair','MathRolesRepair','MathConstructionIntent','MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}
                 thinking = self._thinking_option(semantic_stage)
+                # Preserve server/model sampling for semantic deliberation;
+                # forcing greedy decoding can turn reasoning into repetition.
+                # Exact non-thinking selection keeps deterministic sampling.
+                if semantic_stage and self.semantic_thinking and thinking is not False:
+                    payload['options'].pop('temperature',None)
                 advertised=self._model_info.get('capabilities') if self._model_info else None
                 if images and isinstance(advertised,list) and 'vision' not in advertised:
                     raise GenerationError('数学页图识别需要支持图像输入的模型；当前模型未提供vision能力。')
                 if schema.__name__.startswith('Math'):
-                    payload['options']['num_ctx']=16384
                     payload['options'].update(temperature=.6,top_p=.95,top_k=20,min_p=0,
                         repeat_penalty=1.0,presence_penalty=0,seed=42)
-                if schema.__name__ in {'DeckDirectorDraft','DeckDirectorRepair'}:
-                    # Bounded candidate descriptions plus six page contracts
-                    # must leave room for a complete selection response.
-                    payload['options'].update(num_ctx=16384, num_predict=3072)
-                if schema.__name__ in {'DeckIllustrationPlacement','ScriptCaptionSelection'}:
-                    payload['options'].update(num_ctx=8192,num_predict=512)
-                if schema.__name__ in {'SlideVisualDraft','SlideLinkSelection','SlideVisualReview','SlideSourcePropositionsDraft','DeckNavigation','DeckClosingSelection','DeckClosingReview','DeckRouteReview',
-                                       'TeachingExhibitIntent','TeachingExhibitDraft','TeachingExhibitReview','TeachingRelationSelection','TeachingArithmeticRepair','TeachingArithmeticTarget'}:
-                    payload['options'].update(num_ctx=16384,num_predict=2048)
+                if self.context_tokens is not None:
+                    payload['options']['num_ctx']=self.context_tokens
                 if self.num_gpu is not None:
                     payload['options']['num_gpu']=self.num_gpu
                 if thinking is not None:
                     payload["think"] = thinking
-                if scene_stage:
-                    payload['options']['num_predict']=3072
-                elif schema.__name__ == 'TeachingDesignDraft':
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'TeachingSourceReview':
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'TeachingScriptDraft':
-                    payload['options']['num_predict']=1536
-                elif schema.__name__ == 'SourceFactsDraft':
-                    payload['options']['num_predict']=2048
-                elif schema.__name__ == 'SourcePropositionsDraft':
-                    payload['options']['num_predict']=3072
-                elif schema.__name__ == 'SourceFactClauseSelection':
-                    payload['options']['num_predict']=512
-                elif schema.__name__ in {'TopicSourceScope','TopicScopeReview'}:
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'VisualSceneDraft':
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'ReviewResult':
-                    payload['options']['num_predict']=2048
-                elif schema.__name__ in {'KnowledgeSelection', 'KnowledgeExplanationRepair', 'KnowledgeSourceClauseRepair', 'KnowledgePageQuoteRepair'}:
-                    payload['options']['num_predict']=2048
-                elif schema.__name__ in {'VisualCoursePlan', 'CourseOutline'}:
-                    payload['options']['num_predict']=2048
-                elif schema.__name__ in {'MathSourceReading','MathSourceReview'}:
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'MathConstructionIntent':
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'MathProgramReview':
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ in {'MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness'}:
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'MathProgramDraft':
-                    payload['options']['num_predict']=12288
-                elif schema.__name__ in {'MathConstructionDraft','MathConstructionPatch'}:
-                    payload['options']['num_predict']=8192
-                elif schema.__name__ in {'MathBehaviorDraft','MathOperationsRepair'}:
-                    payload['options']['num_predict']=6144
-                elif schema.__name__ == 'MathClaimsRepair':
-                    payload['options']['num_predict']=4096
-                elif schema.__name__ == 'MathRolesRepair':
-                    payload['options']['num_predict']=1536
-                elif schema.__name__ in {'MathNarrationRepair','MathMetadataRepair'}:
-                    payload['options']['num_predict']=1024
-                if schema.__name__.startswith('Math'):
-                    payload['options']['num_predict']=min(16384,payload['options']['num_predict']*budget_multiplier)
                 endpoint='/api/chat'
                 if completion_fallback:
                     endpoint='/api/generate'
@@ -489,19 +453,23 @@ class OllamaClient:
                 self.call_metrics.append({
                     "stage": schema.__name__, "attempt": attempt + 1,
                     "thinking": thinking,"endpoint":endpoint,
-                    'context_tokens':payload['options']['num_ctx'],
+                    'context_tokens':payload['options'].get('num_ctx'),
+                    'output_token_limit':payload['options']['num_predict'],
                     'sampling':{key:payload['options'][key] for key in ('temperature','top_p','top_k','min_p','repeat_penalty','seed') if key in payload['options']},
                     'decoding': 'json' if json_fallback else 'schema',
                     **{key: result.get(key) for key in (
                         "done_reason", "eval_count", "prompt_eval_count", "total_duration",'internal_characters')},
                 })
                 if result.get("done_reason") == "length":
-                    if schema.__name__.startswith('Math') and budget_multiplier==1 and attempt<3:
-                        budget_multiplier=2
-                        messages.append({'role':'user','content':'上次达到输出预算但未完成结果。扩大预算后只核对必要条件，尽快输出完整JSON；不能接受截断正文。'})
+                    self.call_metrics[-1]['upstream_truncation']=True
+                    if not truncation_retried and attempt<3:
+                        truncation_retried=True
+                        messages.append({'role':'user','content':'上次服务返回截断结果，未保存。应用未设置生成token限额。'
+                            '请重新返回完整JSON，保留所有必填字段、原文事实及必要条件，避免重复分析；不能续写或拼接截断正文。'})
                         continue
                     raise GenerationError(
-                        "模型达到输出预算，未完成结构化结果；请选用更适合该任务的模型。")
+                        'Ollama 服务仍返回截断结果（done_reason=length）；本项目已请求完整生成（num_predict=-1）。'
+                        '请检查服务端生成与上下文设置；当前不完整结果未保存，原任务可重试。')
                 content = result['response'] if completion_fallback else result["message"]["content"]
                 fenced=re.fullmatch(r'\s*```(?:json)?\s*\n?(.*?)\s*```\s*',content,re.S|re.I)
                 if fenced:
@@ -524,7 +492,7 @@ class OllamaClient:
                         self._json_decoding_stages[schema.__name__] = endpoint
                     return validated
             except httpx.TimeoutException as exc:
-                raise GenerationError("本机 Ollama 推理超时；模型正在运行，但处理此批材料过慢。") from exc
+                raise GenerationError("本机 Ollama 连接或发送请求超时；请检查模型服务。") from exc
             except _OllamaIncompleteStreamError as exc:
                 self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
                     'endpoint':endpoint,'error':'incomplete_stream'})
@@ -585,7 +553,7 @@ class OllamaClient:
 
     def _request(self, endpoint: str, payload: dict, stage: str) -> dict:
         if self.progress is None:
-            response = self.http_client.post(f"{self.base_url}{endpoint}", json=payload, timeout=900)
+            response = self.http_client.post(f"{self.base_url}{endpoint}", json=payload, timeout=_GENERATION_TIMEOUT)
             response.raise_for_status()
             return response.json()
         started = time.monotonic()
@@ -606,7 +574,7 @@ class OllamaClient:
         reporter.start()
         try:
             with self.http_client.stream('POST', f"{self.base_url}{endpoint}", json=payload,
-                                         timeout=900) as response:
+                                         timeout=_GENERATION_TIMEOUT) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line.strip():
@@ -624,8 +592,6 @@ class OllamaClient:
                     count += len(piece)
                     self.activity={'stage':stage,'content_characters':count,'internal_characters':internal_count}
                     now = time.monotonic()
-                    if now - started >= 900:
-                        raise GenerationError('本机 Ollama 推理超时；此批材料处理已超过十五分钟。')
                     if now - last_update >= 5 or result.get('done') is True:
                         self.progress(stage, int(now - started), count)
                         last_update = now

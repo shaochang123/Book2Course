@@ -120,7 +120,7 @@ def sequence_schema(layout):
     alternatives=r'[^0-9０-９⁰¹²³⁴⁵⁶⁷⁸⁹\\=＝^＾{}<>*]'
     if names: alternatives+='|'+'|'.join(sorted(set(names)))
     # Bound the regex too: local JSON grammars do not necessarily enforce
-    # maxLength, and an unbounded prose branch can exhaust num_predict.
+    # maxLength, and an unbounded prose branch can keep emitting repetitions.
     change_model=create_model('ParameterChange',
         name=(Literal[tuple(layout.parameters)],Field(description='Declared parameter name')),
         value=(float,Field(ge=-1e4,le=1e4))) if layout.parameters else None

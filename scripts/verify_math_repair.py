@@ -46,11 +46,14 @@ def main():
         (args.output/'live-model-requests.json').write_text(json.dumps(client.call_requests,ensure_ascii=False,indent=2),encoding='utf-8')
         (args.output/'live-activity.json').write_text(json.dumps(client.activity,ensure_ascii=False),encoding='utf-8')
     client=OllamaClient(settings.llm_base_url,args.model,semantic_thinking=args.semantic_thinking,prefer_json=True,
-        progress=model_progress,num_gpu=settings.ollama_num_gpu,thinking_level=args.thinking_level or settings.ollama_thinking_level)
+        progress=model_progress,num_gpu=settings.ollama_num_gpu,thinking_level=args.thinking_level or settings.ollama_thinking_level,
+        context_tokens=settings.ollama_context_tokens)
     reviewer=OllamaClient(settings.llm_base_url,args.review_model,semantic_thinking=args.semantic_thinking,prefer_json=True,
-        num_gpu=settings.ollama_num_gpu,thinking_level=args.thinking_level or settings.ollama_thinking_level) if args.review_model else None
+        num_gpu=settings.ollama_num_gpu,thinking_level=args.thinking_level or settings.ollama_thinking_level,
+        context_tokens=settings.ollama_context_tokens) if args.review_model else None
     planner=OllamaClient(settings.llm_base_url,args.math_model,semantic_thinking=args.semantic_thinking,prefer_json=True,
-        progress=model_progress,num_gpu=settings.ollama_num_gpu,thinking_level=args.thinking_level or settings.ollama_thinking_level) if args.math_model else None
+        progress=model_progress,num_gpu=settings.ollama_num_gpu,thinking_level=args.thinking_level or settings.ollama_thinking_level,
+        context_tokens=settings.ollama_context_tokens) if args.math_model else None
     results=[]
     try:
         for case in cases:

@@ -40,7 +40,7 @@ def run_case(pdf: Path, pages: list[int], output: Path, render: bool, model: str
     (output/'input.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     (output/'parsed-source.json').write_text(document.model_dump_json(indent=2),encoding='utf-8')
     client=OllamaClient(settings.llm_base_url,manifest['model'],semantic_thinking=False,
-        prefer_json=True,
+        prefer_json=True,context_tokens=settings.ollama_context_tokens,
         progress=lambda stage,seconds,chars:print(f'LLM {stage}: {seconds}s / {chars} chars',flush=True))
     agents=AIAgents(client);results=[]
     try:

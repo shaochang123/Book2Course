@@ -44,7 +44,7 @@ def main():
     model = previous['model']
     thinking = args.thinking or previous['semantic_thinking']
     client = OllamaClient(settings.llm_base_url, model,
-                          semantic_thinking=thinking)
+                          semantic_thinking=thinking,context_tokens=settings.ollama_context_tokens)
     generate = client.generate; calls = []
     def recorded(schema, instruction, material):
         start = time.monotonic(); record = {'schema': schema.__name__}

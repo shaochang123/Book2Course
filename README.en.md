@@ -31,7 +31,11 @@ ollama list
 
 Set `ZHIJIANG_LLM_MODEL` to an installed model, start Ollama, and restart the web service. Mathematical object mode requires image input; the local model is `qwen3.5:9b`, with `ZHIJIANG_OLLAMA_SEMANTIC_THINKING=true` recommended. `.env.local`, model weights, uploads and generated artifacts are ignored by Git. The website also accepts per-job settings. External services require consent to send text, mathematical page images or narration; job keys remain only in process memory.
 
-Optional `ZHIJIANG_OLLAMA_NUM_GPU` controls GPU layer allocation; leave it empty for Ollama's automatic allocation. This 8GB desktop uses `24` to preserve memory headroom while other applications run; adjust it to your hardware. Mathematical construction calls use a 16K context. Speed depends on available GPU memory, RAM and the model.
+Optional `ZHIJIANG_OLLAMA_NUM_GPU` controls GPU layer allocation; leave it empty for Ollama's automatic allocation. This 8GB desktop uses `24` to preserve memory headroom while other applications run; adjust it to your hardware. Speed depends on available GPU memory, RAM and the model.
+
+The project imposes no generated-token quota or total inference deadline: every Ollama stage requests `num_predict=-1`, and compatible APIs receive no output-length cap. Context memory follows Ollama settings by default; optional `ZHIJIANG_OLLAMA_CONTEXT_TOKENS` accepts a positive integer with no project maximum. This machine uses `16384`. If an upstream service still truncates, the client requests a complete result again and identifies the service-side failure, never approving partial JSON. See [configuration and recovery](docs/configuration.en.md).
+
+Ordinary semantic deliberation follows model/service sampling settings instead of forced zero temperature; the user's thinking switch still applies.
 
 `ZHIJIANG_OLLAMA_THINKING_LEVEL` selects a reasoning level actually advertised by the service; leave it empty for the service default. Unsupported levels fail explicitly. Models with only a Boolean thinking switch continue to use `ZHIJIANG_OLLAMA_SEMANTIC_THINKING`. Results with different models, levels or hardware are not an intrinsic model ranking.
 

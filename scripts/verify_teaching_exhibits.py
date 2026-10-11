@@ -28,7 +28,7 @@ def run(name,root,settings,render_only=False,plan_only=False,segments=()):
                 for filename in ['clip.mp4','summary.png','summary.svg']:
                     shutil.copyfile(origin/sub/filename,folder/sub/filename)
         client=OllamaClient(settings.llm_base_url,settings.llm_model,semantic_thinking=False,
-            prefer_json=True,num_gpu=settings.ollama_num_gpu)
+            prefer_json=True,num_gpu=settings.ollama_num_gpu,context_tokens=settings.ollama_context_tokens)
         original_script=[s.narration for s in lesson.segments]
         original_plan=lesson.deck_plan
         if segments:lesson.deck_plan={**original_plan,'pages':[p for p in original_plan['pages'] if p['segment_id'] in segments]}

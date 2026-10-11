@@ -21,6 +21,7 @@ class Settings:
     ollama_semantic_thinking: bool = True
     ollama_num_gpu: int | None = None
     ollama_thinking_level: str = ""
+    ollama_context_tokens: int | None = None
     tts_base_url: str = ""
     tts_api_key: str = ""
     tts_model: str = ""
@@ -49,6 +50,7 @@ class Settings:
             ollama_semantic_thinking=value("ZHIJIANG_OLLAMA_SEMANTIC_THINKING", "true").lower() not in {"false","0","off","no"},
             ollama_num_gpu=int(value("ZHIJIANG_OLLAMA_NUM_GPU")) if value("ZHIJIANG_OLLAMA_NUM_GPU") else None,
             ollama_thinking_level=value("ZHIJIANG_OLLAMA_THINKING_LEVEL"),
+            ollama_context_tokens=int(value("ZHIJIANG_OLLAMA_CONTEXT_TOKENS")) if value("ZHIJIANG_OLLAMA_CONTEXT_TOKENS") else None,
             tts_base_url=value("ZHIJIANG_TTS_BASE_URL"),
             tts_api_key=value("ZHIJIANG_TTS_API_KEY"),
             tts_model=value("ZHIJIANG_TTS_MODEL"),

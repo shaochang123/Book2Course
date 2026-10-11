@@ -69,7 +69,7 @@ def plan(name,origin,folder,settings):
             for filename in ['clip.mp4','summary.png','summary.svg']:
                 shutil.copyfile(origin/sub/filename,folder/sub/filename)
     client=OllamaClient(settings.llm_base_url,settings.llm_model,semantic_thinking=settings.ollama_semantic_thinking,
-                        prefer_json=True,num_gpu=settings.ollama_num_gpu)
+                        prefer_json=True,num_gpu=settings.ollama_num_gpu,context_tokens=settings.ollama_context_tokens)
     try:
         print(name+': planning compact diagrams and navigation with local model',flush=True)
         enrich_visual_story(lesson,client,folder=folder/'slide-story')

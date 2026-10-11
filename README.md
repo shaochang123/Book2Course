@@ -31,7 +31,11 @@ ollama list
 
 将 `ZHIJIANG_LLM_MODEL` 改为已安装的模型名，启动 Ollama，再重启 Web 服务。数学对象模式需要支持图像输入的模型；本机使用 `qwen3.5:9b`，建议开启 `ZHIJIANG_OLLAMA_SEMANTIC_THINKING=true`。`.env.local`、模型权重、上传资料和生成物均被 Git 忽略。网页也可配置单次任务；外部服务须确认发送文本、数学模式的教材页图像或讲稿，任务密钥仅在进程内存中保留。
 
-可选 `ZHIJIANG_OLLAMA_NUM_GPU` 控制 Ollama 的 GPU 层数，留空使用自动分配。本机 8GB 显存同时运行桌面应用时使用 `24` 保留余量；其他机器需按实际资源调整。数学构造调用使用 16K 上下文，推理速度与显存、内存及模型有关。
+可选 `ZHIJIANG_OLLAMA_NUM_GPU` 控制 Ollama 的 GPU 层数，留空使用自动分配。本机 8GB 显存同时运行桌面应用时使用 `24` 保留余量；其他机器需按实际资源调整。推理速度与显存、内存及模型有关。
+
+项目不设置模型生成 token 限额或推理总时长上限：所有 Ollama 阶段均请求 `num_predict=-1`，兼容 API 不传生成长度上限。上下文记忆容量默认沿用 Ollama 设置，也可用 `ZHIJIANG_OLLAMA_CONTEXT_TOKENS` 自行配置正整数，没有项目写死的最大值；本机配置为 `16384`。上游若仍截断，会重新请求完整结果并明确报告服务端原因，不将截断 JSON 标为成功。详见[生成配置与恢复](docs/生成配置与恢复.md)。
+
+普通语义推理阶段沿用模型/服务的采样配置，不再强制零温度；推理开关仍由用户控制。
 
 `ZHIJIANG_OLLAMA_THINKING_LEVEL` 可填写服务实际支持的推理档位，留空沿用服务默认值；不支持该档位会明确报错。只有布尔推理开关的模型仍使用 `ZHIJIANG_OLLAMA_SEMANTIC_THINKING`。不同模型、档位与硬件的结果不能直接当作模型能力排名。
 

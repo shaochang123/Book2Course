@@ -74,7 +74,8 @@ class JobProcessor:
         if options.provider == "ollama":
             return AIAgents(OllamaClient(options.base_url, options.model,
                 semantic_thinking=options.semantic_thinking,
-                num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level), teaching_prompt)
+                num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level,
+                context_tokens=self.settings.ollama_context_tokens), teaching_prompt)
         return AIAgents(
             OpenAICompatibleClient(
                 options.base_url,
@@ -162,13 +163,15 @@ class JobProcessor:
                 if options.math_model and options.math_model!=options.model:
                     math_planner=(OllamaClient(options.base_url,options.math_model,
                         semantic_thinking=options.semantic_thinking,prefer_json=True,progress=model_progress,
-                        num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level)
+                        num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level,
+                        context_tokens=self.settings.ollama_context_tokens)
                         if options.provider=='ollama' else OpenAICompatibleClient(
                             options.base_url,options.api_key,options.math_model))
                 if options.review_model and options.review_model!=options.model:
                     math_reviewer=(OllamaClient(options.base_url,options.review_model,
                         semantic_thinking=options.semantic_thinking,prefer_json=True,progress=model_progress,
-                        num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level)
+                        num_gpu=self.settings.ollama_num_gpu,thinking_level=self.settings.ollama_thinking_level,
+                        context_tokens=self.settings.ollama_context_tokens)
                         if options.provider=='ollama' else OpenAICompatibleClient(
                             options.base_url,options.api_key,options.review_model))
                 lesson=plan_constructed_lesson(agents.client,document,teaching_prompt,voice_mode,
