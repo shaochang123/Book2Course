@@ -29,6 +29,8 @@ node_modules/
 .secrets/
 secrets/
 credentials.json
+*.dpapi
+credentials.pending
 credentials.yaml
 credentials.yml
 secrets.json

@@ -14,7 +14,11 @@ let currentJobId = /^[0-9a-f]{32}$/.test(linkedJobId) ? linkedJobId : localStora
 let pollTimer = null;
 let config = null;
 let activeProvider = $("#llm-provider").value;
-const providerProfiles = new Map(); // Form values only; never persist API keys.
+const providerProfiles = new Map(); // Service descriptors only; keys are encrypted on the server.
+const credentialStates = {llm: {profile: "", saved: false, configured: false}, tts: {profile: "", saved: false, configured: false}};
+const credentialTimers = {};
+const credentialRequests = {llm: 0, tts: 0};
+const credentialWrites = {llm: Promise.resolve(), tts: Promise.resolve()};
 let shownSettingsJobId = null;
 let templateSelectionEdited = false;
 let voiceSelectionEdited = false;
@@ -51,6 +55,104 @@ function isLocalURL(value) {
   catch (_) { return false; }
 }
 
+function credentialProfile(kind) {
+  const provider = kind === "llm" ? $("#llm-provider").value : "openai";
+  const value = $(`#${kind}-base-url`).value || (kind === "tts" ? config?.tts_base_url : provider === config?.llm_provider ? config?.llm_base_url : "");
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return null;
+    return {kind, provider, base_url: url.href.replace(/\/+$/, "")};
+  } catch (_) { return null; }
+}
+function credentialIdentity(profile) { return profile ? JSON.stringify(profile) : ""; }
+function hasCredential(kind) {
+  const state = credentialStates[kind];
+  return state.profile === credentialIdentity(credentialProfile(kind)) && (state.saved || state.configured);
+}
+
+async function refreshCredential(kind) {
+  const profile = credentialProfile(kind), identity = credentialIdentity(profile);
+  const request = ++credentialRequests[kind];
+  credentialStates[kind] = {profile: identity, saved: false, configured: false};
+  $(`#clear-${kind}-key`).hidden = true;
+  if (!profile) { $(`#${kind}-key-state`).textContent = ""; updateConsent(); return; }
+  try {
+    const state = await getJSON(`/api/credentials/status?${new URLSearchParams(profile)}`);
+    if (request !== credentialRequests[kind] || identity !== credentialIdentity(credentialProfile(kind))) return;
+    credentialStates[kind] = {profile: identity, ...state};
+    $(`#${kind}-key-state`).textContent = state.saved ? "密钥已保存在本机" : state.configured ? "已使用本机配置中的密钥" : "";
+    $(`#clear-${kind}-key`).hidden = !state.saved;
+  } catch (error) {
+    if (request !== credentialRequests[kind]) return;
+    $(`#${kind}-key-state`).textContent = error.message;
+  }
+  updateConsent();
+}
+
+async function saveCredential(kind) {
+  const field = $(`#${kind}-api-key`), key = field.value.trim();
+  const profile = credentialProfile(kind), identity = credentialIdentity(profile);
+  if (!key || !profile || !$(`#remember-${kind}-key`).checked || !config?.credential_persistence) return;
+  rememberServiceFields();
+  try {
+    const write = credentialWrites[kind].catch(() => {}).then(() => getJSON("/api/credentials", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({...profile, api_key: key})}));
+    credentialWrites[kind] = write;
+    await write;
+    if (identity !== credentialIdentity(credentialProfile(kind))) return;
+    ++credentialRequests[kind]; // A delayed status read must not overwrite this save.
+    credentialStates[kind] = {profile: identity, saved: true, configured: false};
+    $(`#${kind}-key-state`).textContent = "密钥已保存在本机";
+    $(`#clear-${kind}-key`).hidden = false;
+    updateConsent();
+    return true;
+  } catch (error) {
+    if (identity === credentialIdentity(credentialProfile(kind))) $(`#${kind}-key-state`).textContent = `密钥未保存：${error.message}`;
+  }
+  updateConsent();
+}
+
+function rememberServiceFields() {
+  const profile = credentialProfile("llm");
+  if (profile) providerProfiles.set(profile.provider, Object.fromEntries(
+    ["llm_base_url", "llm_model", "llm_review_model", "llm_math_model"].map(name => [name, form.elements[name].value])));
+  const voiceProfile = credentialProfile("tts");
+  const voice = voiceProfile ? Object.fromEntries(["tts_base_url", "tts_model", "tts_voice"].map(name => [name, form.elements[name].value])) : null;
+  const remember = Object.fromEntries(["llm", "tts"].map(kind => [kind, $(`#remember-${kind}-key`).checked]));
+  try { localStorage.setItem("zhijiang-service-profiles", JSON.stringify({provider: $("#llm-provider").value, profiles: [...providerProfiles], voice, remember})); }
+  catch (_) { /* Encryption still works when browser storage is unavailable. */ }
+}
+
+function updateSpeechPreview() {
+  if (!config) return;
+  const mode = selected("voice_mode");
+  const matches = mode === "system" || ($("#tts-base-url").value.replace(/\/$/, "") === config.tts_base_url?.replace(/\/$/, "") &&
+    $("#tts-model").value === config.tts_model && $("#tts-voice").value === config.tts_voice);
+  const preview = matches ? config.speech_previews?.[mode] : null;
+  const audio = $("#speech-preview-audio"), source = preview?.url || "";
+  $("#speech-preview").hidden = false;
+  $("#speech-preview-title").textContent = mode === "system" ? "系统声线试听" : "AI 声线试听";
+  $("#speech-preview").setAttribute("aria-label", $("#speech-preview-title").textContent);
+  audio.setAttribute("aria-label", $("#speech-preview-title").textContent);
+  if ((audio.getAttribute("src") || "") !== source) {
+    audio.pause();
+    if (source) audio.src = source; else audio.removeAttribute("src");
+    audio.load();
+  }
+  audio.hidden = !preview;
+  $("#speech-preview-status").hidden = !!preview;
+  $("#speech-preview-status").textContent = mode === "system" ? "当前系统声线暂不可用" : "当前 AI 声线尚未生成试听";
+}
+
+function clearSubmittedKeys() {
+  for (const kind of ["llm","tts"]) {
+    const state=credentialStates[kind];
+    if (!$(`#remember-${kind}-key`).checked || (state.saved && state.profile===credentialIdentity(credentialProfile(kind)))) {
+      $(`#${kind}-api-key`).value="";
+    }
+  }
+}
+
 function updateConsent() {
   const ai = selected("mode") === "ai";
   const aiVoice = selected("voice_mode") === "ai";
@@ -71,17 +173,18 @@ function updateConsent() {
     modelName === config?.llm_model;
   $("#llm-base-url").required = ai && provider !== config?.llm_provider;
   $("#llm-model").required = ai && provider !== config?.llm_provider;
-  $("#llm-api-key").required = ai && provider === "openai" && !(usesDefaultModel && config?.llm_ready);
-  $("#llm-api-key").placeholder = $("#llm-provider").value === "ollama" ? "本机 Ollama 可留空" : "填写 API 密钥";
+  $("#llm-api-key").required = ai && provider === "openai" && !hasCredential("llm") && !(usesDefaultModel && config?.llm_ready);
+  $("#llm-api-key").placeholder = hasCredential("llm") ? "已保存，留空即可使用" : provider === "ollama" ? "本机 Ollama 可留空" : "填写 API 密钥";
   for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
     form.elements[name].required = aiVoice;
   }
   const usesDefaultVoice = ttsURL === config?.tts_base_url &&
     $("#tts-model").value === config?.tts_model && $("#tts-voice").value === config?.tts_voice;
-  $("#tts-api-key").required = aiVoice && !localVoice && !(usesDefaultVoice && config?.ai_tts_ready);
-  $("#tts-api-key").placeholder = localVoice ? "本机服务可留空" : "填写 API 密钥";
+  $("#tts-api-key").required = aiVoice && !localVoice && !hasCredential("tts") && !(usesDefaultVoice && config?.ai_tts_ready);
+  $("#tts-api-key").placeholder = hasCredential("tts") ? "已保存，留空即可使用" : localVoice ? "本机服务可留空" : "填写 API 密钥";
   $("#ai-ready-label").textContent = modelName;
   $("#tts-ready-label").textContent = $("#tts-voice").value;
+  updateSpeechPreview();
 }
 
 function setFile(file) {
@@ -117,6 +220,8 @@ $("#llm-provider").addEventListener("change", () => {
   };
   for (const name of fields) form.elements[name].value = profile[name];
   $("#llm-api-key").value = "";
+  rememberServiceFields();
+  refreshCredential("llm");
   updateConsent();
 });
 $("#animation-mode").addEventListener("change", () => {
@@ -127,6 +232,43 @@ $("#llm-base-url").addEventListener("input", updateConsent);
 for (const name of ["llm_model", "llm_math_model", "llm_review_model", "tts_base_url", "tts_model", "tts_voice"]) {
   form.elements[name].addEventListener("input", updateConsent);
 }
+
+for (const kind of ["llm", "tts"]) {
+  $(`#${kind}-api-key`).addEventListener("input", () => {
+    clearTimeout(credentialTimers[kind]);
+    credentialTimers[kind] = setTimeout(() => saveCredential(kind), 450);
+  });
+  $(`#${kind}-api-key`).addEventListener("blur", async () => {
+    const field = $(`#${kind}-api-key`), key = field.value.trim();
+    const identity = credentialIdentity(credentialProfile(kind));
+    clearTimeout(credentialTimers[kind]);
+    const saved = await saveCredential(kind);
+    if (saved && key && field.value.trim() === key && identity === credentialIdentity(credentialProfile(kind))) field.value = "";
+  });
+  $(`#remember-${kind}-key`).addEventListener("change", () => { rememberServiceFields(); saveCredential(kind); });
+  $(`#clear-${kind}-key`).addEventListener("click", async () => {
+    const profile = credentialProfile(kind); if (!profile) return;
+    clearTimeout(credentialTimers[kind]); $(`#${kind}-api-key`).value = "";
+    try { await credentialWrites[kind].catch(() => {});
+      await getJSON(`/api/credentials?${new URLSearchParams(profile)}`, {method:"DELETE"});
+      await refreshCredential(kind);
+    } catch (error) { $(`#${kind}-key-state`).textContent = error.message; }
+  });
+  $(`#${kind}-base-url`).addEventListener("input", () => {
+    clearTimeout(credentialTimers[kind]);
+    $(`#${kind}-api-key`).value = "";
+    clearTimeout(credentialTimers[`${kind}-status`]);
+    credentialTimers[`${kind}-status`] = setTimeout(() => { rememberServiceFields(); refreshCredential(kind); }, 200);
+  });
+}
+for (const name of ["llm_model","llm_math_model","llm_review_model","tts_model","tts_voice"]) {
+  form.elements[name].addEventListener("change", rememberServiceFields);
+}
+$("#speech-preview-audio").addEventListener("error", () => {
+  if (!$("#speech-preview-audio").getAttribute("src") || !$("#speech-preview-audio").error) return;
+  $("#speech-preview-status").hidden = false;
+  $("#speech-preview-status").textContent = "试听暂不可用，请检查对应语音服务";
+});
 
 function showJob(job) {
   if (shownSettingsJobId !== job.id) {
@@ -156,6 +298,8 @@ function showJob(job) {
       $("#tts-voice").value = job.voice_settings.voice || "";
     }
     updateConsent();
+    rememberServiceFields();
+    refreshCredential("llm"); refreshCredential("tts");
     if (!$("#remote-consent-row").hidden) $("#remote-consent").checked = job.remote_consent;
   }
   $("#job-section").hidden = false;
@@ -299,6 +443,8 @@ form.addEventListener("submit", async (event) => {
   button.disabled = true;
   button.textContent = "正在提交…";
   try {
+    rememberServiceFields();
+    await Promise.all([saveCredential("llm"), saveCredential("tts")]);
     const body = new FormData();
     body.append("file", fileInput.files[0]);
     body.append("mode", selected("mode"));
@@ -320,8 +466,7 @@ form.addEventListener("submit", async (event) => {
       }
     }
     const job = await getJSON("/api/jobs", { method: "POST", body });
-    $("#llm-api-key").value = "";
-    $("#tts-api-key").value = "";
+    clearSubmittedKeys();
     currentJobId = job.id;
     localStorage.setItem("zhijiang-job-id", job.id);
     $("#lesson-result").hidden = true;
@@ -354,6 +499,8 @@ $("#retry-button").addEventListener("click", async () => {
   const button = $("#retry-button");
   button.disabled = true;
   try {
+    rememberServiceFields();
+    await Promise.all([saveCredential("llm"), saveCredential("tts")]);
     const body = new FormData();
     body.append("mode", selected("mode"));
     body.append("voice_mode", selected("voice_mode"));
@@ -374,8 +521,7 @@ $("#retry-button").addEventListener("click", async () => {
       }
     }
     const job = await getJSON(`/api/jobs/${currentJobId}/retry`, { method: "POST", body });
-    $("#llm-api-key").value = "";
-    $("#tts-api-key").value = "";
+    clearSubmittedKeys();
     $("#lesson-result").hidden = true;
     showJob(job);
     startPolling();
@@ -409,13 +555,31 @@ $("#retry-button").addEventListener("click", async () => {
       const preferredVoice = form.querySelector(`input[name="voice_mode"][value="${config.default_voice_mode || 'system'}"]`);
       if (preferredVoice) preferredVoice.checked = true;
     }
-    if (config.speech_preview) {
-      $("#speech-preview").hidden = false;
-      $("#speech-preview-audio").src = config.speech_preview.url;
+    try {
+      const saved = JSON.parse(localStorage.getItem("zhijiang-service-profiles") || "null");
+      for (const [provider, profile] of saved?.profiles || []) {
+        if (["openai", "ollama"].includes(provider) && profile && typeof profile === "object") providerProfiles.set(provider, profile);
+      }
+      const profile = providerProfiles.get(saved?.provider);
+      if (profile) {
+        $("#llm-provider").value = saved.provider; activeProvider = saved.provider;
+        for (const name of ["llm_base_url","llm_model","llm_review_model","llm_math_model"]) form.elements[name].value = typeof profile[name] === "string" ? profile[name] : "";
+      }
+      if (saved?.voice) for (const name of ["tts_base_url","tts_model","tts_voice"]) {
+        if (typeof saved.voice[name] === "string") form.elements[name].value = saved.voice[name];
+      }
+      for (const kind of ["llm", "tts"]) {
+        if (typeof saved?.remember?.[kind] === "boolean") $(`#remember-${kind}-key`).checked = saved.remember[kind];
+      }
+    } catch (_) { /* Ignore malformed browser preferences. */ }
+    for (const kind of ["llm","tts"]) {
+      $(`#remember-${kind}-key`).disabled = !config.credential_persistence;
+      if (!config.credential_persistence) $(`#remember-${kind}-key`).checked = false;
     }
     if (!config.llm_ready) $("#ai-settings").open = true;
     if (!config.ai_tts_ready) $("#tts-settings").open = true;
     updateConsent();
+    refreshCredential("llm"); refreshCredential("tts");
     if (currentJobId) startPolling();
   } catch (error) {
     $("#ai-ready-label").textContent = "配置读取失败";

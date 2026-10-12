@@ -5,10 +5,11 @@ from __future__ import annotations
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated,Literal
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile,Request
+from pydantic import BaseModel,ConfigDict,Field,field_validator
 from fastapi.responses import FileResponse, Response
 from zhijiang.presentation_templates import PPTTemplate, TEMPLATES, template_preview_svg
 from fastapi.staticfiles import StaticFiles
@@ -23,26 +24,45 @@ from zhijiang.pipeline import JobProcessor, JobRunner
 from zhijiang.storage import JobStore
 from zhijiang.speech_preview import preview_info, preview_path
 from zhijiang.runtime_lock import RuntimeLock
+from zhijiang.credentials import LocalCredentials,CredentialError,endpoint
 
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+class CredentialInput(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    kind:Literal['llm','tts']
+    provider:Literal['openai','ollama']='openai'
+    base_url:str
+    api_key:str=Field(min_length=1,repr=False)
+
+    @field_validator('base_url')
+    @classmethod
+    def valid_endpoint(cls,value):return endpoint(value)
+
+    @field_validator('api_key')
+    @classmethod
+    def nonempty_key(cls,value):
+        value=value.strip()
+        if not value:raise ValueError('请输入密钥。')
+        return value
+
+
 def model_options(settings: Settings, provider: str, base_url: str, model: str,
-                  api_key: str, prompt: str) -> GenerationOptions:
+                  api_key: str, prompt: str,credentials: LocalCredentials | None = None) -> GenerationOptions:
     if len(prompt) > 4000:
         raise HTTPException(400, "自定义提示词不能超过 4000 字。")
     if provider and provider != settings.llm_provider and (not base_url.strip() or not model.strip()):
         raise HTTPException(400, "切换模型提供方时，请同时填写对应 API 地址和模型名称。")
-    customized = bool(api_key or (provider and provider != settings.llm_provider)
-                      or (base_url and base_url.rstrip("/") != settings.llm_base_url.rstrip("/"))
-                      or (model and model != settings.llm_model))
+    same_destination = (not provider or provider == settings.llm_provider) and (
+        not base_url or base_url.strip().rstrip("/") == settings.llm_base_url.rstrip("/"))
     try:
         options = GenerationOptions(
             provider=provider or settings.llm_provider,
             base_url=(base_url or settings.llm_base_url).strip().rstrip("/"),
             model=(model or settings.llm_model).strip(),
-            api_key=api_key.strip() if customized else settings.llm_api_key,
+            api_key=api_key.strip() or (settings.llm_api_key if same_destination else ""),
             prompt=prompt.strip(),
             semantic_thinking=settings.ollama_semantic_thinking,
         )
@@ -52,26 +72,34 @@ def model_options(settings: Settings, provider: str, base_url: str, model: str,
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname
             or parsed.username or parsed.password or parsed.query or parsed.fragment):
         raise HTTPException(400, "请填写有效的 HTTP(S) 模型 API 地址。")
+    if not api_key.strip() and credentials:
+        try:options.api_key=credentials.get('llm',options.provider,options.base_url) or options.api_key
+        except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+        except CredentialError as exc:
+            if not options.api_key:raise HTTPException(503,str(exc)) from exc
     if not options.model or (options.provider == "openai" and not options.api_key):
         raise HTTPException(400, "请填写模型名称和所需的 API 密钥。")
     return options
 
 
 def speech_options(settings: Settings, base_url: str, model: str, voice: str,
-                   api_key: str) -> SpeechOptions:
-    customized = bool(api_key or (base_url and base_url.rstrip("/") != settings.tts_base_url.rstrip("/"))
-                      or (model and model != settings.tts_model)
-                      or (voice and voice != settings.tts_voice))
+                   api_key: str,credentials: LocalCredentials | None = None) -> SpeechOptions:
+    same_destination = not base_url or base_url.strip().rstrip("/") == settings.tts_base_url.rstrip("/")
     options = SpeechOptions(
         base_url=(base_url or settings.tts_base_url).strip().rstrip("/"),
         model=(model or settings.tts_model).strip(),
         voice=(voice or settings.tts_voice).strip(),
-        api_key=api_key.strip() if customized else settings.tts_api_key,
+        api_key=api_key.strip() or (settings.tts_api_key if same_destination else ""),
     )
     parsed = urlparse(options.base_url)
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname
             or parsed.username or parsed.password or parsed.query or parsed.fragment):
         raise HTTPException(400, "请填写有效的 HTTP(S) 语音 API 地址。")
+    if not api_key.strip() and credentials:
+        try:options.api_key=credentials.get('tts','openai',options.base_url) or options.api_key
+        except ValueError as exc:raise HTTPException(400,str(exc)) from exc
+        except CredentialError as exc:
+            if not options.api_key:raise HTTPException(503,str(exc)) from exc
     if not options.model or not options.voice:
         raise HTTPException(400, "请填写语音模型名称和音色。")
     if not Settings._is_loopback(options.base_url) and not options.api_key:
@@ -82,6 +110,7 @@ def speech_options(settings: Settings, base_url: str, model: str, voice: str,
 def create_app(settings: Settings | None = None, runner: JobRunner | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = JobStore(settings.data_dir)
+    credentials=LocalCredentials(settings.data_dir)
     processor = JobProcessor(settings, store)
     runner = runner or JobRunner(processor)
     @asynccontextmanager
@@ -94,6 +123,14 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
                 runner.shutdown()
 
     application = FastAPI(title="智讲 Agent", version="0.1.0", lifespan=lifespan)
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.exception_handlers import request_validation_exception_handler
+    from fastapi.responses import JSONResponse
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(request:Request,error:RequestValidationError):
+        if request.url.path.startswith('/api/credentials'):
+            return JSONResponse(status_code=422,content={'detail':'密钥类型、API 地址或输入格式无效。'})
+        return await request_validation_exception_handler(request,error)
     application.state.settings = settings
     application.state.store = store
     application.state.runner = runner
@@ -119,6 +156,8 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             "tts_voice": settings.tts_voice,
             "default_voice_mode": "ai" if settings.default_voice_mode == "ai" and settings.ai_tts_ready else "system",
             "speech_preview": preview_info(settings),
+            "speech_previews": {'ai':preview_info(settings),'system':preview_info(settings,VoiceMode.SYSTEM)},
+            "credential_persistence": credentials.supported,
             "demo_notice": "演示模式的知识选择和讲稿由确定性规则生成，并非 AI 生成。",
             "ppt_templates": [template.public() for template in TEMPLATES.values()],
             "ollama_semantic_thinking": settings.ollama_semantic_thinking,
@@ -132,11 +171,51 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         }
 
     @application.get('/api/speech-preview')
-    def speech_preview() -> FileResponse:
-        if preview_info(settings) is None:
+    def speech_preview(mode: VoiceMode = VoiceMode.AI) -> FileResponse:
+        if preview_info(settings,mode) is None:
             raise HTTPException(404, '当前配置还没有匹配的试听音频。')
-        return FileResponse(preview_path(settings), media_type='audio/wav',
+        if mode==VoiceMode.SYSTEM:
+            from zhijiang.speech_preview import ensure_system_preview
+            from zhijiang.speech import SpeechError
+            try:ensure_system_preview(settings)
+            except SpeechError as exc:raise HTTPException(503,str(exc)) from exc
+        return FileResponse(preview_path(settings,mode), media_type='audio/wav',
                             headers={'Cache-Control': 'no-cache'})
+
+    def local_request(request):
+        if request.url.hostname not in {'localhost','127.0.0.1','::1','testserver'}:
+            raise HTTPException(403,'密钥保存仅允许从本机网站操作。')
+        if request.client and request.client.host not in {'127.0.0.1','::1','testclient','localhost'}:
+            raise HTTPException(403,'密钥保存仅允许从本机网站操作。')
+        origin=request.headers.get('origin')
+        if origin and origin.rstrip('/')!=str(request.base_url).rstrip('/'):
+            raise HTTPException(403,'密钥操作须来自本机网站。')
+
+    @application.get('/api/credentials/status')
+    def credential_status(request:Request,response:Response,kind:Literal['llm','tts'],provider:Literal['openai','ollama'],base_url:str):
+        local_request(request)
+        response.headers['Cache-Control']='no-store'
+        try:saved=bool(credentials.get(kind,provider,endpoint(base_url)))
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+        except CredentialError as exc:raise HTTPException(503,str(exc)) from exc
+        configured=(kind=='llm' and provider==settings.llm_provider and base_url.rstrip('/')==settings.llm_base_url.rstrip('/')
+                    and bool(settings.llm_api_key)) or (kind=='tts' and base_url.rstrip('/')==settings.tts_base_url.rstrip('/')
+                    and bool(settings.tts_api_key))
+        return {'saved':saved,'configured':bool(configured),'supported':credentials.supported}
+
+    @application.post('/api/credentials')
+    def save_credential(request:Request,payload:CredentialInput):
+        local_request(request)
+        try:credentials.save(payload.kind,payload.provider,payload.base_url,payload.api_key)
+        except CredentialError as exc:raise HTTPException(503,str(exc)) from exc
+        return {'saved':True}
+
+    @application.delete('/api/credentials',status_code=204)
+    def remove_credential(request:Request,kind:Literal['llm','tts'],provider:Literal['openai','ollama'],base_url:str):
+        local_request(request)
+        try:credentials.remove(kind,provider,base_url)
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+        except CredentialError as exc:raise HTTPException(503,str(exc)) from exc
 
     @application.get('/api/ppt-templates')
     def ppt_templates() -> list[dict]:
@@ -172,7 +251,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         if not rights_confirmed:
             raise HTTPException(400, "请先确认拥有资料使用权。")
         options = model_options(settings, llm_provider, llm_base_url, llm_model,
-                                llm_api_key, custom_prompt) if mode == Mode.AI else GenerationOptions()
+                                llm_api_key, custom_prompt,credentials) if mode == Mode.AI else GenerationOptions()
         options.review_model=llm_review_model.strip() if mode==Mode.AI else ''
         options.math_model=llm_math_model.strip() if mode==Mode.AI else ''
         if mode == Mode.DEMO and animation_mode in {"math","visual","geometry"}:
@@ -188,7 +267,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         if options.animation_mode=='geometry' and not visual_capabilities().get('geometry_ready'):
             raise HTTPException(400, "数学对象推演环境未就绪：" + visual_capabilities().get('geometry_reason','缺少 TeX'))
         voice_options = speech_options(settings, tts_base_url, tts_model, tts_voice,
-                                       tts_api_key) if voice_mode == VoiceMode.AI else SpeechOptions()
+                                       tts_api_key,credentials) if voice_mode == VoiceMode.AI else SpeechOptions()
         external_text = mode == Mode.AI and any(Settings.model_is_remote(options.provider,options.base_url,name)
             for name in [options.model,options.review_model,options.math_model] if name)
         external_voice = voice_mode == VoiceMode.AI and not Settings._is_loopback(voice_options.base_url)
@@ -316,7 +395,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             options = model_options(settings, provider if options.base_url else llm_provider or "",
                 base_url, options.model if llm_model is None else llm_model,
                 llm_api_key or (options.api_key if same_destination else ""),
-                ("" if replace_settings else options.prompt) if custom_prompt is None else custom_prompt)
+                ("" if replace_settings else options.prompt) if custom_prompt is None else custom_prompt,credentials)
             options.review_model=(llm_review_model.strip() if llm_review_model is not None else
                 ('' if replace_settings or not same_destination else store.get_options(job_id).review_model))
             options.math_model=(llm_math_model.strip() if llm_math_model is not None else
@@ -342,7 +421,7 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
             voice_options = speech_options(settings, base_url,
                 voice_options.model if tts_model is None else tts_model,
                 voice_options.voice if tts_voice is None else tts_voice,
-                tts_api_key or (voice_options.api_key if same_destination else ""))
+                tts_api_key or (voice_options.api_key if same_destination else ""),credentials)
         else:
             voice_options = SpeechOptions()
         external_text = mode == Mode.AI and any(Settings.model_is_remote(options.provider,options.base_url,name)

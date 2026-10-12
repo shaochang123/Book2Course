@@ -30,6 +30,12 @@ button, input, select, textarea { font: inherit; }
 .advanced-fields label { font-size: 17px; }
 .advanced-fields input, .advanced-fields select, .advanced-fields textarea { font-size: 17px; }
 .advanced-fields .consent { display: flex; align-items: center; gap: 12px; margin: 0; }
+.credential-controls { display:flex;align-items:center;justify-content:space-between;gap:16px; }
+.credential-controls label { display:flex;align-items:center;gap:10px;margin:0; }
+.credential-controls input[type="checkbox"] { width:18px;height:18px;margin:0; }
+.credential-state { color:var(--mint);font-size:17px;min-height:0; }
+.credential-state:empty { display:none; }
+#speech-preview-status { font-size:17px; }
 .consent input { width: 20px; height: 20px; accent-color: var(--mint); }
 .template-picker img { margin: 6px 0 12px; }
 .settings-panel { margin: 0 0 24px; border: 1px solid #3c5965; border-radius: 16px; background: #0d2632; }

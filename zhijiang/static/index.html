@@ -55,6 +55,8 @@
                 <input id="llm-model" name="llm_model" type="text" placeholder="例如 qwen3.5:9b">
                 <label for="llm-api-key">API 密钥</label>
                 <input id="llm-api-key" name="llm_api_key" type="password" autocomplete="off" placeholder="本机 Ollama 可留空">
+                <div class="credential-controls"><label><input id="remember-llm-key" type="checkbox" checked>在本机记住密钥</label><button id="clear-llm-key" class="text-button" type="button" hidden>清除保存</button></div>
+                <span id="llm-key-state" class="credential-state" aria-live="polite"></span>
                 <label for="custom-prompt">讲解要求</label>
                 <textarea id="custom-prompt" name="custom_prompt" rows="3" maxlength="4000" placeholder="面向谁讲？重点讲什么？希望什么风格？"></textarea>
                 <details class="secondary-settings">
@@ -101,11 +103,14 @@
                 <input id="tts-voice" name="tts_voice" type="text" placeholder="例如 notebook-reference">
                 <label for="tts-api-key">API 密钥</label>
                 <input id="tts-api-key" name="tts_api_key" type="password" autocomplete="off" placeholder="本机服务可留空">
+                <div class="credential-controls"><label><input id="remember-tts-key" type="checkbox" checked>在本机记住密钥</label><button id="clear-tts-key" class="text-button" type="button" hidden>清除保存</button></div>
+                <span id="tts-key-state" class="credential-state" aria-live="polite"></span>
               </div>
             </details>
             <section id="speech-preview" class="voice-preview" aria-label="默认声线试听" hidden>
-              <h3>声线试听</h3>
+              <h3 id="speech-preview-title">声线试听</h3>
               <audio id="speech-preview-audio" controls preload="none" aria-label="默认讲解声线试听"></audio>
+              <p id="speech-preview-status" hidden></p>
             </section>
             <div class="consents">
               <label><input id="rights-confirmed" type="checkbox" required><span>我拥有这份资料的使用权</span></label>

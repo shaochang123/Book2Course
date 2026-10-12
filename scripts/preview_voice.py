@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 
 from zhijiang.config import Settings
 from zhijiang.speech import AISpeech
+from zhijiang.speech_preview import PREVIEW_TEXT
 
-TEXT = '学机器学习，可以先问一个简单的问题：电脑怎样从例子中学会判断？我们先看一个具体例子，再把它背后的思路讲清楚。'
+TEXT = PREVIEW_TEXT
 
 
 def main():
