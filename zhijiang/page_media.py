@@ -12,7 +12,7 @@ import imageio_ffmpeg
 def media_fingerprint(lesson, audio_files):
     from zhijiang.visual_assets import AssetCatalog
     from zhijiang.presentation_templates import get_template,template_backdrop_svg
-    digest = hashlib.sha256(('shared-pages-v22-adaptive-semantic-shapes'+lesson.model_dump_json()).encode())
+    digest = hashlib.sha256(('shared-pages-v23-bounded-illustration-support'+lesson.model_dump_json()).encode())
     digest.update(AssetCatalog().fingerprint.encode())
     template=get_template(lesson.ppt_template)
     digest.update(repr(template).encode())

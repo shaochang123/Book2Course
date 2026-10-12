@@ -120,7 +120,23 @@ Windows 网页默认勾选“在本机记住密钥”：模型与语音密钥由
 | [AI Coding 过程](docs/AI_Coding_全过程.md) | Codex 的实际用途、反馈、修复与提交。 |
 | [来源与许可](docs/第三方来源与许可.md) | 依赖、模型和验证资料。 |
 
-`zhijiang/` 为应用与生成模块，`tests/` 为自动测试，`scripts/` 为示例、验收和文档工具，`examples/` 为原创输入与来源清单。`data/`、`demo/`、`submission/`、`output/` 为忽略提交的本机数据或生成物；仓库保留生成脚本和说明，见[历史材料](docs/archive/2026-09/README.md)。
+`zhijiang/` 为应用与生成模块，`tests/` 为自动测试，`scripts/` 为示例、验收和文档工具，`examples/` 为原创输入与来源清单，`benchmarks/` 为公开基准定义与测试协议。`data/`、`demo/`、`submission/`、`output/` 为忽略提交的本机数据或生成物；仓库保留生成脚本和说明，见[历史材料](docs/archive/2026-09/README.md)。
+
+## 教材 Benchmark
+
+提供[配对教材基准](benchmarks/textbooks_v1/README.md)：数据库、地质学、心理学、商业管理四个领域，各取 2、6、12 页，分别使用原生文字 PDF 和同内容纯图像 PDF，共 24 项。使用真实生产 Agent 输出课程、PPT 与完整视频，分别记录首次生成、OCR、耗时、token、媒体检查及人工教学抽查。来源与评价定义公开，教材、输出和实测数据存入已忽略的 `data/textbook-benchmark/`。
+
+本轮采用本机模型的快速配置（可选深度推理关闭）和系统语音；基准脚本拒绝远程配置与云模型标签，不调用 DeepSeek API。恢复导出另行记录，保留首次失败；`audit` 可重新检查生成物，`package --include-media` 可打包完整 PPT 与视频。
+
+素材绑定时，超出当前讲稿范围的句子编号不再使 PPT/视频导出崩溃；程序跳过该句子的配图回退，不把它绑定到另一个句子。新画面缓存使用更新的版本，已生成文件保持可访问。
+
+```powershell
+.\.venv\Scripts\python scripts/benchmark_textbooks.py prepare
+.\.venv\Scripts\python scripts/benchmark_textbooks.py run
+.\.venv\Scripts\python scripts/benchmark_textbooks.py report
+```
+
+工程成功、关键词出现和教学正确性分别评价；清晰模拟扫描与英文选章的结果不代表拍照、手写、中文教材或整本书的性能。
 
 ## Git 提交与本地数据
 

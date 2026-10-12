@@ -30,7 +30,11 @@ def story_illustration_bindings(visual, refs, narration):
         candidates=direct
         if not candidates and visual['representation'] not in {'process','relationship'}:
             candidates=[i for i,item in enumerate(visual['items'])
-                if ref.anchor_text in sentences[item['sentence_id']-1]]
+                if type(item.get('sentence_id')) is int
+                and 1 <= item['sentence_id'] <= len(sentences)
+                and ref.anchor_text in sentences[item['sentence_id']-1]]
+            # Draft sentence numbering may become stale after speech cleanup.
+            # Ignore unsupported fallback bindings; never clamp to another sentence.
         for i in candidates:
             if i not in bindings:
                 bindings[i]=ref;break

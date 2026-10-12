@@ -1,0 +1,41 @@
+{
+  "version": "textbooks-v1-rubric",
+  "frozen_before_runs": true,
+  "limits": "Keyword anchors measure mention coverage only. They do not establish correct knowledge or diagrams. Manual source and frame review is recorded separately. Each case has one complete production attempt; internal model repair calls are included in metrics.",
+  "anchors": {
+    "database": [
+      {"id": "entity", "page": 1, "claim": "实体是具有独立存在、可识别的对象；实体集与实体类型的用途不同。", "groups": ["实体|entity", "对象|独立|object|exist"]},
+      {"id": "weak-entity", "page": 2, "claim": "教材区分强实体和依赖其他实体的弱实体；不能仅凭名字就改变依赖关系。", "groups": ["强实体|strong", "弱实体|weak|依赖"]},
+      {"id": "attributes", "page": 4, "claim": "简单属性与复合属性不同；复合属性可进一步分解，派生属性由其他值计算。", "groups": ["简单属性|simple", "复合属性|组合属性|composite", "派生|derived"]},
+      {"id": "candidate-key", "page": 5, "claim": "候选键同时具有唯一性和最小性；复合键不是单一字段键。", "groups": ["候选|candidate", "唯一|unique", "最小|极小|minimal"]},
+      {"id": "foreign-key", "page": 6, "claim": "外键引用另一表的主键；原书讨论可为空的情形，不能反转引用方向。", "groups": ["外键|foreign", "主键|primary", "引用|参考|refer"]},
+      {"id": "relationship", "page": 9, "claim": "一对多、多对多等基数关系与一元、二元、三元关系的参与实体数量不同。", "groups": ["一对多|one.to.many|1[:：].*[Nn]|1.*多", "多对多|many.to.many", "一元|二元|三元|unary|binary|ternary"]}
+    ],
+    "geology": [
+      {"id": "stress-strain", "page": 1, "claim": "应力是施加的作用，应变是岩石响应应力发生的变形，二者不能互换。", "groups": ["应力|stress", "应变|变形|strain"]},
+      {"id": "elastic-plastic", "page": 2, "claim": "弹性变形可以恢复，塑性变形不会在卸载后完全恢复；达到强度还可能破裂。", "groups": ["弹性|elastic", "塑性|plastic", "恢复|可逆|return|recover"]},
+      {"id": "stress-types", "page": 3, "claim": "压缩、拉伸和剪切对应不同的受力与变形方向。", "groups": ["压缩|挤压|compression", "拉伸|张力|tension", "剪切|shear"]},
+      {"id": "fold", "page": 5, "claim": "褶皱形态与受压有关，教材区分不同的褶皱形状及姿态。", "groups": ["褶皱|fold", "挤压|压缩|受压|squeez|compress"]},
+      {"id": "joint-fault", "page": 8, "claim": "节理和断层都是裂隙，但断层存在相对位移；裂隙不能一概画成有滑动的断层。", "groups": ["节理|joint", "断层|fault", "位移|移动|displace|movement"]},
+      {"id": "normal-reverse", "page": 10, "claim": "正断层上盘相对下移，逆断层上盘相对上移；伸展与压缩条件不同。", "groups": ["正断层|normal.fault", "逆断层|reverse.fault", "上盘|hanging.wall"]}
+    ],
+    "psychology": [
+      {"id": "classical", "page": 1, "claim": "经典条件作用建立刺激之间的关联，不是把原先的中性刺激当成先天刺激。", "groups": ["经典条件|古典条件|条件反射|classical", "中性刺激|neutral", "关联|联结|联系|associat"]},
+      {"id": "cs-us", "page": 2, "claim": "食物引发唾液属于未学习的反应；条件建立后音调才可引发条件反应。", "groups": ["食物|food", "唾液|唾|流涎|salivat", "条件刺激|conditioned.stimulus|CS"]},
+      {"id": "recovery", "page": 4, "claim": "消退后经停顿可发生自发恢复，不能说消退就完全抹除了学习。", "groups": ["消退|extinction", "自发恢复|自然恢复|spontaneous"]},
+      {"id": "generalization", "page": 5, "claim": "泛化与辨别不同，辨别是对相似但不相同刺激作出不同反应。", "groups": ["泛化|generaliz", "辨别|分辨|区分|discrimin"]},
+      {"id": "operant", "page": 9, "claim": "操作性条件作用关注行为及其后果，强化提高行为再次出现的可能性。", "groups": ["操作性|操作条件|工具性|operant", "强化|增强|reinforc", "增加|提高|increase"]},
+      {"id": "negative-reinforcement", "page": 12, "claim": "负强化通过移除不愉快刺激增加行为，不是惩罚；惩罚减少行为。", "groups": ["负强化|负向强化|negative.reinforc", "惩罚|punish", "移除|去除|消除|remove"]}
+    ],
+    "business": [
+      {"id": "price-value", "page": 1, "claim": "定价是营销组合的一部分，价格不能脱离产品及客户价值。", "groups": ["价格|定价|pric", "营销|marketing|价值|value"]},
+      {"id": "skimming-penetration", "page": 2, "claim": "撇脂定价初始价高，渗透定价初始价低，目标市场与规模条件不同。", "groups": ["撇脂|掠脂|skim", "渗透|penetrat", "高|high", "低|low"]},
+      {"id": "cost-pricing", "page": 3, "claim": "例子生产成本40美元加10美元利润得到50美元；成本定价忽略客户愿意支付的价值。", "groups": ["成本|cost", "40|四十", "10|十", "50|五十"]},
+      {"id": "demand-pricing", "page": 4, "claim": "需求相关定价会随需求和容量条件变化，航空与酒店例子不是固定利润保证。", "groups": ["需求|demand", "酒店|旅馆|hotel|航空|航班|airline"]},
+      {"id": "life-cycle", "page": 8, "claim": "产品生命周期包含引入、增长、成熟和衰退；不是每个产品都能走完整个周期。", "groups": ["生命周期|life.cycle", "引入|导入|introduction", "成长|增长|growth", "成熟|matur", "衰退|declin"]},
+      {"id": "competitive", "page": 11, "claim": "成熟市场中竞争加剧，成本优势或差异化可支持竞争优势，而非保证销量永远增长。", "groups": ["竞争|competit", "成本|cost", "差异|differentiat"]}
+    ]
+  },
+  "manual_review_fields": ["source_facts", "conditions_and_direction", "diagram_meaning", "legibility", "visual_variety", "notes"],
+  "manual_scale": {"pass": "Reviewed sample matches source and is legible", "partial": "An omission or ambiguous drawing remains", "fail": "Wrong statement/relationship or unusable layout", "not_reviewed": "No manual judgment yet"}
+}

@@ -1,0 +1,15 @@
+{
+  "version": "textbooks-v1",
+  "page_counts": [2, 6, 12],
+  "formats": ["text", "ocr"],
+  "scan_dpi": 180,
+  "scan_jpeg_quality": 85,
+  "prompt": "忠实讲解教材选页中的核心概念、具体实例与成立条件，使用中文口播。不要把练习编号、目录、作者介绍或配图来源当成知识结论。",
+  "preset": {"animation_mode": "auto", "content_checks": "warn", "ppt_template": "academic", "use_illustrations": true, "semantic_thinking": false, "voice_mode": "system"},
+  "sources": [
+    {"id": "database", "domain": "计算机与数据库", "title": "Database Design - 2nd Edition", "author": "Adrienne Watt; Nelson Eng", "year": 2014, "section": "Entity Relationship Data Model", "start_page": 39, "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/247", "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/247/16/Database-Design-2nd-Edition-1540829576.pdf", "license": "CC BY 4.0, except where otherwise noted", "license_url": "https://creativecommons.org/licenses/by/4.0/", "license_page": 4, "sha256": "d6311d2fcc2344c7809f3be03d93e195a3ab063425bdd5aa24c6a723a4f87e44"},
+    {"id": "geology", "domain": "地质学", "title": "Physical Geology - 2nd Edition", "author": "Steven Earle; Karla Panchuk", "year": 2019, "section": "Stress, Strain, Folding and Faulting", "start_page": 416, "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/713", "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/713/3/Physical-Geology-2nd-Edition-1591817334.pdf", "license": "CC BY 4.0, except where otherwise noted", "license_url": "https://creativecommons.org/licenses/by/4.0/", "license_page": 3, "sha256": "3607a6831733c482776dbcdfb9891bc4683e363d5b23111686071ec0d6c4393a"},
+    {"id": "psychology", "domain": "心理学", "title": "Beginning Psychology v1.0", "author": "Saylor archive; original publisher/author attribution removed at publisher request in this PDF", "year": 2012, "section": "Classical and Operant Conditioning", "start_page": 340, "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/609", "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/609/1/beginning-psychology.pdf", "license": "CC BY-NC-SA 3.0, except where otherwise noted", "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/", "license_page": 2, "sha256": "0b9ce0887f934e331832edede0c06552ed2d4b9f09d4a672ee94715fd00d34e6"},
+    {"id": "business", "domain": "商业管理与定价", "title": "Fundamentals of Business", "author": "Stephen J. Skripak and contributors; Virginia Tech", "year": 2016, "section": "Pricing Strategy and Product Life Cycle", "start_page": 323, "url": "https://openlibrary-repo.ecampusontario.ca/jspui/handle/123456789/610", "pdf_url": "https://openlibrary-repo.ecampusontario.ca/jspui/bitstream/123456789/610/1/Fundamentals%20of%20Business%20%28complete%29.pdf", "license": "CC BY-NC-SA 3.0; chapter 14; original per-page attribution retained in inputs", "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/us/", "license_page": 2, "sha256": "0e4f264399b13ff4326b5e9f28982024e2d0d2526ee29985d04c021c1916100e"}
+  ]
+}

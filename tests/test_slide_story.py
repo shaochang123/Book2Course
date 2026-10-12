@@ -462,6 +462,26 @@ def test_pictures_prioritize_visible_object_not_first_shared_sentence():
     assert story_illustration_bindings(visual,[ref],'果实记录：颜色绿色。')=={0:ref}
 
 
+@pytest.mark.parametrize('sentence_id', [9, 0, -1, None, '1', 1.5, True])
+def test_picture_sentence_fallback_ignores_invalid_ids_without_guessing(sentence_id):
+    from types import SimpleNamespace
+    from zhijiang.rich_deck import story_illustration_bindings
+    visual={'representation':'table','items':[
+        {'label':'颜色','caption':'绿色','sentence_id':sentence_id}]}
+    ref=SimpleNamespace(anchor_text='果实')
+    assert story_illustration_bindings(visual,[ref],'果实记录：颜色绿色。')=={}
+
+
+def test_picture_fallback_handles_empty_speech_and_keeps_named_entity_priority():
+    from types import SimpleNamespace
+    from zhijiang.rich_deck import story_illustration_bindings
+    ref=SimpleNamespace(anchor_text='果实')
+    visual={'representation':'table','items':[{'label':'颜色','caption':'绿色','sentence_id':1}]}
+    assert story_illustration_bindings(visual,[ref],'')=={}
+    visual['items'][0].update(label='果实',sentence_id=99)
+    assert story_illustration_bindings(visual,[ref],'')=={0:ref}
+
+
 def test_closing_removes_discourse_but_preserves_negation_conditions_and_full_source(tmp_path):
     from zhijiang.slide_story import closing_display_text
     assert closing_display_text('第三，模型不能直接推广')=='模型不能直接推广'

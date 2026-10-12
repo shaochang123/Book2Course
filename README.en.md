@@ -120,7 +120,23 @@ Creation and retry APIs accept `use_illustrations`, enabled by default; omitted 
 | [AI Coding record](docs/AI_Coding_全过程.md) | Actual Codex use, feedback, fixes and commits. |
 | [Sources and licenses](docs/第三方来源与许可.md) | Dependencies, models and source documents. |
 
-The index and main product documents are in Chinese; configuration and animation references have English equivalents. `zhijiang/` holds application and generation modules, `tests/` automated checks, `scripts/` sample/validation/document tools, and `examples/` original inputs and source manifests. `data/`, `demo/`, `submission/` and `output/` contain ignored local data or generated artifacts; the repository retains their scripts and documentation. See the [archive](docs/archive/2026-09/README.md).
+The index and main product documents are in Chinese; configuration and animation references have English equivalents. `zhijiang/` holds application and generation modules, `tests/` automated checks, `scripts/` sample/validation/document tools, `examples/` original inputs and source manifests, and `benchmarks/` public benchmark definitions and protocols. `data/`, `demo/`, `submission/` and `output/` contain ignored local data or generated artifacts; the repository retains their scripts and documentation. See the [archive](docs/archive/2026-09/README.md).
+
+## Textbook benchmark
+
+The [paired textbook benchmark](benchmarks/textbooks_v1/README.md) contains database design, geology, psychology and business management excerpts at 2, 6 and 12 pages. Each has a native-text and an image-only PDF counterpart, giving 24 cases. The real production Agent generates courses, PPT and complete videos, recording first-attempt outcomes, OCR, latency, tokens, media checks and separate manual teaching reviews. Sources and evaluation definitions are versioned; books, outputs and measured results stay in Git-ignored `data/textbook-benchmark/`.
+
+This run uses the local model's fast configuration (optional deep thinking disabled) and system speech. The benchmark rejects remote configurations and cloud model tags, without calling the DeepSeek API. Export recoveries are recorded separately while preserving first failures. `audit` rechecks retained artifacts; `package --include-media` bundles complete slides and videos.
+
+Illustration sentence IDs outside the current narration no longer crash PPT/video exports. The renderer skips the unsupported fallback binding instead of attaching the asset to a different sentence. New page caches use an updated version; existing generated files remain accessible.
+
+```powershell
+.\.venv\Scripts\python scripts/benchmark_textbooks.py prepare
+.\.venv\Scripts\python scripts/benchmark_textbooks.py run
+.\.venv\Scripts\python scripts/benchmark_textbooks.py report
+```
+
+Engineering success, keyword mentions and teaching correctness are evaluated separately. Clear simulated scans of English excerpts do not establish performance for photographs, handwriting, Chinese textbooks or complete books.
 
 ## Git commits and local data
 
