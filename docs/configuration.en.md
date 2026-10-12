@@ -121,6 +121,8 @@ With speech running, execute `.\.venv\Scripts\python -m scripts.preview_voice`. 
 
 Checks cover text preservation, reference integrity, invalid/silent audio, explicit errors, and audition matching. Local transcription and pitch statistics support comparison; listening is needed to judge voice similarity, emphasis, pauses, and naturalness. See [the Chinese speech guide](自然讲解配音.md) and [validation records](验证与验收.md).
 
+The website also supports auditions for the currently entered speech endpoint, model and voice. It automatically looks up a matching local clip; click “生成试听” to create a missing clip or “重新生成试听” to update one. The same `AISpeech` adapter and entered, saved or environment credential resolution are used as for lesson narration. Only fixed original sample text is sent, and external services require consent. Auditions are cached by canonical endpoint, model, voice, text and version under Git-ignored `data/voice-preview/ai/`, without API keys. Invalid or incomplete WAV files are rejected. Changing settings stops the previous voice; unsupported models/voices report errors without falling back to default audio. The command-line tool above remains compatible for default auditions.
+
 ## Use local AI narration
 
 The configuration template now selects Qwen. The following Kokoro service is a lighter alternative; explicitly change its model and voice values. Start either speech service on port 8766.

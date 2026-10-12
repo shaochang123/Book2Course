@@ -48,6 +48,7 @@ button, input, select, textarea { font: inherit; }
 .settings-panel:focus-within { border-color: var(--mint); }
 .voice-preview h3 { font-size: 22px; margin: 0 0 14px; }
 .voice-preview audio { display: block; margin: 0; }
+.voice-preview #generate-speech-preview { margin-top: 16px; font-size: 18px; }
 .consents label { font-size: 16px; line-height: 1.6; }
 .consents input { width: 20px; height: 20px; }
 .primary-button { font-size: 21px; padding: 20px 24px; }

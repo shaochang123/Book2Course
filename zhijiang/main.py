@@ -9,6 +9,7 @@ from typing import Annotated,Literal
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile,Request
+from fastapi import Path as PathParameter
 from pydantic import BaseModel,ConfigDict,Field,field_validator
 from fastapi.responses import FileResponse, Response
 from zhijiang.presentation_templates import PPTTemplate, TEMPLATES, template_preview_svg
@@ -47,6 +48,21 @@ class CredentialInput(BaseModel):
         value=value.strip()
         if not value:raise ValueError('请输入密钥。')
         return value
+
+
+class SpeechPreviewInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    base_url: str = ''
+    model: str = ''
+    voice: str = ''
+    api_key: str = Field(default='', repr=False)
+    remote_consent: bool = False
+    force: bool = False
+
+    @field_validator('base_url')
+    @classmethod
+    def valid_endpoint(cls, value):
+        return endpoint(value) if value.strip() else ''
 
 
 def model_options(settings: Settings, provider: str, base_url: str, model: str,
@@ -130,6 +146,8 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
     async def validation_error(request:Request,error:RequestValidationError):
         if request.url.path.startswith('/api/credentials'):
             return JSONResponse(status_code=422,content={'detail':'密钥类型、API 地址或输入格式无效。'})
+        if request.url.path == '/api/speech-preview' and request.method == 'POST':
+            return JSONResponse(status_code=422,content={'detail':'语音模型、音色、API 地址或输入格式无效。'})
         return await request_validation_exception_handler(request,error)
     application.state.settings = settings
     application.state.store = store
@@ -190,6 +208,40 @@ def create_app(settings: Settings | None = None, runner: JobRunner | None = None
         origin=request.headers.get('origin')
         if origin and origin.rstrip('/')!=str(request.base_url).rstrip('/'):
             raise HTTPException(403,'密钥操作须来自本机网站。')
+
+    @application.get('/api/speech-preview/selected')
+    def selected_speech_preview(request: Request, response: Response, base_url: str, model: str, voice: str):
+        local_request(request)
+        response.headers['Cache-Control'] = 'no-store'
+        from zhijiang.speech_preview import selected_preview_info
+        try:
+            if not model.strip() or not voice.strip():
+                raise ValueError('请填写语音模型和音色。')
+            return {'preview': selected_preview_info(settings, base_url, model, voice)}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @application.post('/api/speech-preview')
+    def generate_speech_preview(request: Request, payload: SpeechPreviewInput):
+        local_request(request)
+        options = speech_options(settings, payload.base_url, payload.model, payload.voice,
+                                 payload.api_key, credentials)
+        if not Settings._is_loopback(options.base_url) and not payload.remote_consent:
+            raise HTTPException(400, '请先同意将原创试听文本发送到所选语音服务。')
+        from zhijiang.speech_preview import generate_ai_preview
+        from zhijiang.speech import SpeechError
+        try:
+            return generate_ai_preview(settings, options, force=payload.force)
+        except SpeechError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    @application.get('/api/speech-previews/{preview_id}')
+    def selected_speech_audio(preview_id: Annotated[str, PathParameter(pattern='^[0-9a-f]{64}$')]):
+        from zhijiang.speech_preview import cached_preview_info, selected_preview_path
+        if cached_preview_info(settings, preview_id) is None:
+            raise HTTPException(404, '该声线试听不存在或需要重新生成。')
+        return FileResponse(selected_preview_path(settings, preview_id), media_type='audio/wav',
+                            headers={'Cache-Control': 'no-store'})
 
     @application.get('/api/credentials/status')
     def credential_status(request:Request,response:Response,kind:Literal['llm','tts'],provider:Literal['openai','ollama'],base_url:str):

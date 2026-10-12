@@ -19,6 +19,9 @@ const credentialStates = {llm: {profile: "", saved: false, configured: false}, t
 const credentialTimers = {};
 const credentialRequests = {llm: 0, tts: 0};
 const credentialWrites = {llm: Promise.resolve(), tts: Promise.resolve()};
+let speechPreviewState = {identity: "", info: null, loading: false, generating: false, error: ""};
+let speechPreviewRequest = 0;
+let speechPreviewTimer = null;
 let shownSettingsJobId = null;
 let templateSelectionEdited = false;
 let voiceSelectionEdited = false;
@@ -123,15 +126,40 @@ function rememberServiceFields() {
   catch (_) { /* Encryption still works when browser storage is unavailable. */ }
 }
 
+function selectedSpeechProfile() {
+  const destination = credentialProfile("tts");
+  const model = $("#tts-model").value.trim(), voice = $("#tts-voice").value.trim();
+  return destination && model && voice ? {base_url: destination.base_url, model, voice} : null;
+}
+function speechIdentity(profile) { return profile ? JSON.stringify(profile) : ""; }
+
+async function readSelectedSpeechPreview(profile, identity, request) {
+  try {
+    const result = await getJSON(`/api/speech-preview/selected?${new URLSearchParams(profile)}`);
+    if (request !== speechPreviewRequest || identity !== speechIdentity(selectedSpeechProfile())) return;
+    speechPreviewState = {identity, info: result.preview, loading: false, generating: false, error: ""};
+  } catch (error) {
+    if (request !== speechPreviewRequest || identity !== speechIdentity(selectedSpeechProfile())) return;
+    speechPreviewState = {identity, info: null, loading: false, generating: false, error: error.message};
+  }
+  updateSpeechPreview();
+}
+
 function updateSpeechPreview() {
   if (!config) return;
   const mode = selected("voice_mode");
-  const matches = mode === "system" || ($("#tts-base-url").value.replace(/\/$/, "") === config.tts_base_url?.replace(/\/$/, "") &&
-    $("#tts-model").value === config.tts_model && $("#tts-voice").value === config.tts_voice);
-  const preview = matches ? config.speech_previews?.[mode] : null;
+  const profile = selectedSpeechProfile(), identity = speechIdentity(profile);
+  if (mode === "ai" && speechPreviewState.identity !== identity) {
+    clearTimeout(speechPreviewTimer);
+    const request = ++speechPreviewRequest;
+    speechPreviewState = {identity, info: null, loading: !!profile, generating: false, error: ""};
+    if (profile) speechPreviewTimer = setTimeout(() => readSelectedSpeechPreview(profile, identity, request), 200);
+  }
+  const state = speechPreviewState;
+  const preview = mode === "system" ? config.speech_previews?.system : state.info;
   const audio = $("#speech-preview-audio"), source = preview?.url || "";
   $("#speech-preview").hidden = false;
-  $("#speech-preview-title").textContent = mode === "system" ? "系统声线试听" : "AI 声线试听";
+  $("#speech-preview-title").textContent = mode === "system" ? "系统声线试听" : `AI 声线试听${profile ? ` · ${profile.voice}` : ""}`;
   $("#speech-preview").setAttribute("aria-label", $("#speech-preview-title").textContent);
   audio.setAttribute("aria-label", $("#speech-preview-title").textContent);
   if ((audio.getAttribute("src") || "") !== source) {
@@ -141,8 +169,38 @@ function updateSpeechPreview() {
   }
   audio.hidden = !preview;
   $("#speech-preview-status").hidden = !!preview;
-  $("#speech-preview-status").textContent = mode === "system" ? "当前系统声线暂不可用" : "当前 AI 声线尚未生成试听";
+  $("#speech-preview-status").textContent = mode === "system" ? "当前系统声线暂不可用" :
+    !profile ? "填写语音 API 地址、模型和音色即可试听" : state.generating ? "正在生成当前声线的试听…" :
+    state.loading ? "正在读取试听…" : state.error || "当前声线暂无试听，点击生成";
+  const button = $("#generate-speech-preview");
+  button.hidden = mode !== "ai";
+  button.disabled = !profile || state.generating || state.loading;
+  button.textContent = state.generating ? "正在生成…" : preview ? "重新生成试听" : "生成试听";
 }
+
+$("#generate-speech-preview").addEventListener("click", async () => {
+  const profile = selectedSpeechProfile();
+  if (!profile || selected("voice_mode") !== "ai") return;
+  const identity = speechIdentity(profile), force = !!speechPreviewState.info;
+  clearTimeout(speechPreviewTimer);
+  const request = ++speechPreviewRequest;
+  speechPreviewState = {identity, info: null, loading: false, generating: true, error: ""};
+  updateSpeechPreview();
+  try {
+    if (!isLocalURL(profile.base_url) && !$("#remote-consent").checked) throw new Error("请先勾选发送到所选语音服务的同意选项");
+    rememberServiceFields();
+    await saveCredential("tts");
+    if (request !== speechPreviewRequest || identity !== speechIdentity(selectedSpeechProfile())) return;
+    const info = await getJSON("/api/speech-preview", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({...profile, api_key: $("#tts-api-key").value.trim(), remote_consent: $("#remote-consent").checked, force})});
+    if (request !== speechPreviewRequest || identity !== speechIdentity(selectedSpeechProfile())) return;
+    speechPreviewState = {identity, info, loading: false, generating: false, error: ""};
+  } catch (error) {
+    if (request !== speechPreviewRequest || identity !== speechIdentity(selectedSpeechProfile())) return;
+    speechPreviewState = {identity, info: null, loading: false, generating: false, error: error.message};
+  }
+  updateSpeechPreview();
+});
 
 function clearSubmittedKeys() {
   for (const kind of ["llm","tts"]) {
@@ -262,6 +320,7 @@ for (const kind of ["llm", "tts"]) {
   });
 }
 for (const name of ["llm_model","llm_math_model","llm_review_model","tts_model","tts_voice"]) {
+  form.elements[name].addEventListener("input", rememberServiceFields);
   form.elements[name].addEventListener("change", rememberServiceFields);
 }
 $("#speech-preview-audio").addEventListener("error", () => {
