@@ -32,6 +32,8 @@ def model_options(settings: Settings, provider: str, base_url: str, model: str,
                   api_key: str, prompt: str) -> GenerationOptions:
     if len(prompt) > 4000:
         raise HTTPException(400, "自定义提示词不能超过 4000 字。")
+    if provider and provider != settings.llm_provider and (not base_url.strip() or not model.strip()):
+        raise HTTPException(400, "切换模型提供方时，请同时填写对应 API 地址和模型名称。")
     customized = bool(api_key or (provider and provider != settings.llm_provider)
                       or (base_url and base_url.rstrip("/") != settings.llm_base_url.rstrip("/"))
                       or (model and model != settings.llm_model))

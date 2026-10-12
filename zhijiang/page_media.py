@@ -11,8 +11,12 @@ import imageio_ffmpeg
 
 def media_fingerprint(lesson, audio_files):
     from zhijiang.visual_assets import AssetCatalog
-    digest = hashlib.sha256(('shared-pages-v21-edge-labels'+lesson.model_dump_json()).encode())
+    from zhijiang.presentation_templates import get_template,template_backdrop_svg
+    digest = hashlib.sha256(('shared-pages-v22-adaptive-semantic-shapes'+lesson.model_dump_json()).encode())
     digest.update(AssetCatalog().fingerprint.encode())
+    template=get_template(lesson.ppt_template)
+    digest.update(repr(template).encode())
+    digest.update(template_backdrop_svg(template).encode())
     for audio in audio_files:
         if Path(audio).is_file():
             digest.update(Path(audio).read_bytes())

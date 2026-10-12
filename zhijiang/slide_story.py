@@ -73,6 +73,8 @@ class VisualItem(BaseModel):
     label: str = Field(min_length=1, max_length=16)
     caption: str = Field(default='', max_length=32)
     sentence_id: int = Field(ge=1)
+    # Semantic roles choose program-owned geometry; legacy plans use auto.
+    shape: Literal['auto', 'concept', 'process', 'decision', 'data', 'document', 'result'] = 'auto'
 
 
 class VisualLink(BaseModel):

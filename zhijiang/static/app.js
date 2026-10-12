@@ -13,6 +13,8 @@ const linkedJobId = new URLSearchParams(window.location.search).get("job") || ""
 let currentJobId = /^[0-9a-f]{32}$/.test(linkedJobId) ? linkedJobId : localStorage.getItem("zhijiang-job-id");
 let pollTimer = null;
 let config = null;
+let activeProvider = $("#llm-provider").value;
+const providerProfiles = new Map(); // Form values only; never persist API keys.
 let shownSettingsJobId = null;
 let templateSelectionEdited = false;
 let voiceSelectionEdited = false;
@@ -63,7 +65,13 @@ function updateConsent() {
   $("#remote-consent-row").hidden = !remote;
   $("#remote-consent").required = remote;
   if (!remote) $("#remote-consent").checked = false;
-  $("#llm-api-key").required = ai && $("#llm-provider").value === "openai" && !config?.llm_ready;
+  const provider = $("#llm-provider").value;
+  const usesDefaultModel = provider === config?.llm_provider &&
+    modelURL.replace(/\/$/, "") === config?.llm_base_url?.replace(/\/$/, "") &&
+    modelName === config?.llm_model;
+  $("#llm-base-url").required = ai && provider !== config?.llm_provider;
+  $("#llm-model").required = ai && provider !== config?.llm_provider;
+  $("#llm-api-key").required = ai && provider === "openai" && !(usesDefaultModel && config?.llm_ready);
   $("#llm-api-key").placeholder = $("#llm-provider").value === "ollama" ? "本机 Ollama 可留空" : "填写 API 密钥";
   for (const name of ["tts_base_url", "tts_model", "tts_voice"]) {
     form.elements[name].required = aiVoice;
@@ -96,7 +104,21 @@ dropzone.addEventListener("drop", (event) => {
 fileInput.addEventListener("change", () => { if (fileInput.files.length) $("#file-label").textContent = fileInput.files[0].name; });
 form.querySelectorAll('input[type="radio"]').forEach((input) => input.addEventListener("change", updateConsent));
 form.querySelectorAll('input[name="voice_mode"]').forEach(input => input.addEventListener("change", () => { voiceSelectionEdited = true; }));
-$("#llm-provider").addEventListener("change", updateConsent);
+$("#llm-provider").addEventListener("change", () => {
+  const fields = ["llm_base_url", "llm_model", "llm_review_model", "llm_math_model"];
+  providerProfiles.set(activeProvider, Object.fromEntries(fields.map(name => [name, form.elements[name].value])));
+  activeProvider = $("#llm-provider").value;
+  const defaults = activeProvider === config?.llm_provider ? config : null;
+  const profile = providerProfiles.get(activeProvider) || {
+    llm_base_url: defaults?.llm_base_url || (activeProvider === "ollama" ? "http://127.0.0.1:11434" : ""),
+    llm_model: defaults?.llm_model || "",
+    llm_review_model: defaults?.llm_review_model || "",
+    llm_math_model: defaults?.llm_math_model || "",
+  };
+  for (const name of fields) form.elements[name].value = profile[name];
+  $("#llm-api-key").value = "";
+  updateConsent();
+});
 $("#animation-mode").addEventListener("change", () => {
   if (["math","visual","geometry"].includes($("#animation-mode").value)) form.querySelector('input[name="mode"][value="ai"]').checked = true;
   updateConsent();
@@ -119,6 +141,7 @@ function showJob(job) {
     updateTemplatePreview();
     if (job.mode === "ai" && job.model_settings) {
       $("#llm-provider").value = job.model_settings.provider || "openai";
+      activeProvider = $("#llm-provider").value;
       $("#llm-base-url").value = job.model_settings.base_url || "";
       $("#llm-model").value = job.model_settings.model || "";
       $("#llm-review-model").value = job.model_settings.review_model || "";
@@ -366,9 +389,17 @@ $("#retry-button").addEventListener("click", async () => {
 (async function initialize() {
   try {
     config = await getJSON("/api/config");
+    const chosenTemplate = $("#ppt-template").value;
+    $("#ppt-template").replaceChildren(...config.ppt_templates.map(template => {
+      const option = document.createElement("option");
+      option.value = template.id; option.textContent = template.name;
+      return option;
+    }));
+    $("#ppt-template").value = chosenTemplate || "paper";
     updateTemplatePreview();
     $("#pdf-limits").textContent = `文字版 / 扫描版 · ${Math.round(config.max_pdf_bytes / 1024 / 1024)} MB 以内`;
     $("#llm-provider").value = config.llm_provider === "ollama" ? "ollama" : "openai";
+    activeProvider = $("#llm-provider").value;
     $("#llm-base-url").value = config.llm_base_url || "";
     $("#llm-model").value = config.llm_model || "";
     $("#tts-base-url").value = config.tts_base_url || "";

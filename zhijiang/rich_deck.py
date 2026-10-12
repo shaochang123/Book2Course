@@ -100,7 +100,7 @@ def header(page, title):
     size = page.template.title_size
     lines = wrap_lines(title, width, size)
     height = len(lines)*round(size*96/72)*1.25/96+.12
-    page.text(title, (left,.38,width,height), size=size, min_size=size, bold=True)
+    page.text(title, (left,.38,width,height), size=size, min_size=size, bold=True,align=page.template.title_align)
     return max(1.6, .38+height+.2)
 
 
@@ -227,7 +227,7 @@ def render_shared_deck(lesson, output, *, audio_files=None):
     cover.rect((left,1.12,10.6,.09),template.accent)
     title_lines = wrap_lines(lesson.title,10.6,44)
     th = len(title_lines)*59*1.25/96+.15
-    cover.text(lesson.title,(left,1.45,10.6,th),size=44,min_size=44,bold=True)
+    cover.text(lesson.title,(left,1.45,10.6,th),size=44,min_size=44,bold=True,align=template.cover_align)
     y = max(3.8,1.45+th+.3)
     cover_text=' · '.join(g['label'] for g in navigation['groups']) if navigation else lesson.objective
     objective_parts = text_pages([cover_text],10.6,6.95-y,24)
@@ -295,13 +295,18 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             exhibit=legacy_exhibit(story_visual,refs,segment.narration);exhibit_fallback=True
         semantic=bool(choice.visual_groups) and not computed and not story_visual and not exhibit
         specs=[]
-        exhibit_parts=None;full_exhibit=exhibit
+        exhibit_parts=None;story_parts=None;full_exhibit=exhibit
         if exhibit:
             from zhijiang.exhibit_svg import exhibit_pages
             exhibit_parts=exhibit_pages(exhibit,template,round((PAGE_W-left-.75)*96),round((body_h-.1)*96),layout=choice.layout)
             groups=[[] for _ in exhibit_parts]
         elif story_visual:
-            groups=[[]]
+            from zhijiang.story_svg import visual_pages
+            bindings=story_illustration_bindings(story_visual,refs,segment.narration)
+            story_width=PAGE_W-left-.75-(1.4 if story_visual['representation']=='table' and bindings else 0)
+            story_parts=visual_pages(story_visual,template,round(story_width*96),round((body_h-.1)*96),
+                                     art_slots=bindings)
+            groups=[[] for _ in story_parts]
         elif semantic:
             details={item['id']:item['text'] for item in visual_details(segment)}
             for group_id,(group,box) in enumerate(zip(choice.visual_groups,semantic_panels(choice,left,body_y,body_h)),1):
@@ -340,6 +345,7 @@ def render_shared_deck(lesson, output, *, audio_files=None):
         states=[]; state_fractions=[]; body_numbers=[]; viewport=None
         for group_number, group in enumerate(groups):
             if exhibit_parts:exhibit=exhibit_parts[group_number][0]
+            if story_parts:story_visual=story_parts[group_number]
             active_specs=[]
             if semantic:
                 active=[(i,spec) for i,spec in enumerate(specs) if group_number<len(spec['parts'])]
@@ -374,7 +380,7 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                     box=(left,body_y,width,body_h-.1)
                     svg,node_boxes=visual_svg(story_visual,template,round(width*96),round(box[3]*96),
                                              reveal=reveal,art_slots=bindings)
-                    path=media/f'story-{index}-{reveal}.png'
+                    path=media/f'story-{index}-{group_number}-{reveal}.png'
                     path.write_bytes(resvg_py.svg_to_bytes(svg_string=svg.decode(),font_family='Microsoft YaHei'))
                     picture(page,path,box,svg)
                     for art_index,(ni,ref) in enumerate(bindings.items()):

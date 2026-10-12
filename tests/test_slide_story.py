@@ -358,7 +358,7 @@ def test_relation_candidates_preserve_active_clause_roles_instead_of_noun_cooccu
     assert ordered_source_relation('程序利用数据产生模型','程序','利用数据产生','模型')
 
 
-def test_branch_connectors_leave_tall_source_through_the_side_at_target_height():
+def test_branch_connectors_join_the_actual_oval_outlines():
     import re
     visual={'representation':'relationship','items':[
         {'label':'输入'},{'label':'结果甲'},{'label':'结果乙'}],
@@ -368,8 +368,9 @@ def test_branch_connectors_leave_tall_source_through_the_side_at_target_height()
     paths=[p for p in ET.fromstring(svg).findall('.//{http://www.w3.org/2000/svg}path') if p.get('marker-end')]
     for path,target in zip(paths,boxes[1:]):
         x1,y1,x2,y2=map(float,re.findall(r'-?\d+(?:\.\d+)?',path.get('d')))
-        assert x1==pytest.approx(boxes[0][0]+boxes[0][2]) and x2==pytest.approx(target[0])
-        assert y1==y2 and target[1]<y2<target[1]+target[3]
+        for (x,y),(bx,by,w,h) in zip([(x1,y1),(x2,y2)],[boxes[0],target]):
+            assert ((x-bx-w/2)/(w/2))**2+((y-by-h/2)/(h/2))**2==pytest.approx(1)
+        assert x1<x2 and target[1]<y2<target[1]+target[3]
 
 
 def test_rejected_object_is_removed_from_native_repair_contract(tmp_path):

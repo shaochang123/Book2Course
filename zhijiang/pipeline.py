@@ -277,7 +277,8 @@ class JobProcessor:
                     continue
                 audio = folder / f"audio-{index}.wav"
                 try:
-                    speech.synthesize(segment.narration, audio)
+                    from zhijiang.speech_cache import synthesize_cached
+                    synthesize_cached(speech, segment.narration, audio)
                 except SpeechError:
                     if not direct_draft or voice_mode != VoiceMode.AI:
                         raise
@@ -292,7 +293,7 @@ class JobProcessor:
                         'segment_id':index+1, 'stage':'speech', 'message':message})
                     # Recreate every earlier clip too: no mixed voice labelled as one voice.
                     for earlier in range(index+1):
-                        speech.synthesize(lesson.segments[earlier].narration, folder/f'audio-{earlier}.wav')
+                        synthesize_cached(speech, lesson.segments[earlier].narration, folder/f'audio-{earlier}.wav')
                     self.store.save_lesson(job_id, lesson)
                     (folder/'teaching-draft'/'warnings.json').write_text(json.dumps(
                         lesson.animation_report['warnings'],ensure_ascii=False,indent=2),encoding='utf-8')
@@ -353,11 +354,12 @@ class JobProcessor:
                 agents.client.close()
             if speech is not None and isinstance(speech, AISpeech):
                 speech.close()
-            for pattern in ("audio-*.wav", "audio-normal-*.wav", "slide-*.png"):
-                for path in folder.glob(pattern):
-                    path.unlink(missing_ok=True)
-            for name in ("narration.wav", "slides.txt"):
-                (folder / name).unlink(missing_ok=True)
+            if self.store.get(job_id)['status'] == JobStatus.COMPLETED:
+                for pattern in ("audio-*.wav", "audio-*.voice.json", "audio-normal-*.wav", "slide-*.png"):
+                    for path in folder.glob(pattern):
+                        path.unlink(missing_ok=True)
+                for name in ("narration.wav", "slides.txt"):
+                    (folder / name).unlink(missing_ok=True)
 
 
 class JobRunner:

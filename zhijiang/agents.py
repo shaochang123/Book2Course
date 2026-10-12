@@ -317,6 +317,12 @@ class OpenAICompatibleClient:
                 last_error = _validation_summary(exc)
                 last_hints = _validation_repair_hints(schema,exc)
                 if isinstance(exc, httpx.HTTPError):
+                    if isinstance(exc,httpx.HTTPStatusError):
+                        status=exc.response.status_code
+                        hint={400:'请检查模型名与请求格式',401:'请检查 API 密钥',
+                              403:'请检查服务访问权限',404:'请检查 API 地址和模型名',
+                              429:'模型服务正在限流，请稍后重试'}.get(status,'上游服务暂不可用，请稍后重试')
+                        raise GenerationError(f'模型服务不可用（HTTP {status}）；{hint}。') from exc
                     raise GenerationError("模型服务不可用；请检查地址、密钥和网络。") from exc
         raise GenerationError("模型两次返回不符合数据契约的 JSON："+last_error)
 

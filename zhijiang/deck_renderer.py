@@ -46,6 +46,17 @@ class Page:
         self.folder, self.number = folder, number
         self.slide.background.fill.solid()
         self.slide.background.fill.fore_color.rgb = _color(template.background)
+        if template.decoration != 'none':
+            import resvg_py
+            import hashlib
+            from zhijiang.presentation_templates import template_backdrop_svg
+            self.folder.mkdir(parents=True,exist_ok=True)
+            source=template_backdrop_svg(template)
+            key=hashlib.sha256(source.encode()).hexdigest()[:12]
+            background=self.folder/f'background-{template.id}-{key}.png'
+            if not background.is_file():
+                background.write_bytes(resvg_py.svg_to_bytes(svg_string=source))
+            self.picture(background,(0,0,PAGE_W,PAGE_H))
         if template.id == 'paper':
             # Original ruled-paper accent, no reference artwork.
             for y in (1.3, 6.95):
@@ -70,7 +81,7 @@ class Page:
         else:
             self.draw.rectangle(bounds, fill='#'+color)
 
-    def text(self, value, box, *, size=24, min_size=24, color=None, bold=False):
+    def text(self, value, box, *, size=24, min_size=24, color=None, bold=False, align='left'):
         x, y, w, h = box
         value, size = _fit_text(value, w, h, size, min_size)
         shape = self.slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
@@ -80,12 +91,16 @@ class Page:
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.line_spacing = 1.25
             p.space_after = Pt(0)
+            if align!='left':
+                from pptx.enum.text import PP_ALIGN
+                p.alignment=PP_ALIGN.CENTER if align=='center' else PP_ALIGN.RIGHT
             run = p.add_run(); run.text = line
             run.font.name = 'Microsoft YaHei'; run.font.size = Pt(size)
             run.font.bold = bold; run.font.color.rgb = _color(color or self.template.ink)
         font = _font(round(size*96/72), bold=bold)
         for i, line in enumerate(value.splitlines()):
-            self.draw.text((x*96, y*96+i*font.size*1.25), line,
+            offset=(w*96-self.draw.textlength(line,font=font))*(.5 if align=='center' else 1) if align!='left' else 0
+            self.draw.text((x*96+offset, y*96+i*font.size*1.25), line,
                            fill='#'+(color or self.template.ink), font=font)
 
     def picture(self, path, box):

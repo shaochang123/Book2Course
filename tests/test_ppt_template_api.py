@@ -7,7 +7,8 @@ def test_template_catalog_and_preview_share_allowed_ids(tmp_path):
     client, store = make_client(tmp_path)
     with client:
         catalog = client.get('/api/ppt-templates').json()
-        assert [item['id'] for item in catalog] == ['classic', 'paper', 'academic', 'editorial']
+        from zhijiang.presentation_templates import TEMPLATES
+        assert [item['id'] for item in catalog] == list(TEMPLATES)
         assert client.get('/api/config').json()['ppt_templates'] == catalog
         bodies = []
         for item in catalog:
@@ -15,7 +16,7 @@ def test_template_catalog_and_preview_share_allowed_ids(tmp_path):
             assert response.status_code == 200
             assert response.headers['content-type'].startswith('image/svg+xml')
             ET.fromstring(response.content); bodies.append(response.content)
-        assert len(set(bodies)) == 4
+        assert len(set(bodies)) == len(TEMPLATES)
         assert client.get('/api/ppt-templates/unknown/preview').status_code == 422
 
 
