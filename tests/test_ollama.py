@@ -15,6 +15,42 @@ from zhijiang.agents import source_candidates
 from zhijiang.pdf import read_pdf
 
 
+def test_semantic_repair_hints_use_schema_rules_without_echoing_error_values():
+    from pydantic import BaseModel,ValidationError,model_validator
+    from zhijiang.agents import _validation_repair_hints
+    class Contract(BaseModel):
+        """Actual position requires a declared control, never a free variable."""
+        coordinate: str
+        @model_validator(mode='after')
+        def rule(self):raise ValueError('secret-response-value-'+self.coordinate)
+    try:Contract(coordinate='private-source-fragment')
+    except ValidationError as exc:hints=_validation_repair_hints(Contract,exc)
+    assert 'declared control' in hints and 'free variable' in hints
+    assert 'private-source-fragment' not in hints and 'secret-response-value' not in hints
+
+
+def test_object_patch_repair_sees_its_complete_rejected_candidate():
+    from zhijiang.automatic_construction import graph_patch_schema
+    from zhijiang.math_construction import MathConstructionDraft
+    graph=MathConstructionDraft(title='真实函数与动点',objective='保留函数来源并修复实际点的参数绑定。',
+        source_id=1,parameters={'u':0},constructions=[
+            {'id':'f','op':'function','expr':['sin(x)']},
+            {'id':'p','op':'point_on_function','refs':['f'],'expr':['0']}])
+    schema=graph_patch_schema(graph,'p');requests=[]
+    bad={'upserts':[{'id':'p','op':'point_on_function','refs':['f'],'expr':['x']}]}
+    good={'upserts':[{'id':'p','op':'point_on_function','refs':['f'],'expr':['u']}]}
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        requests.append(json.loads(request.content))
+        return httpx.Response(200,json={'message':{'content':json.dumps(bad if len(requests)==1 else good)}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','local',http_client,semantic_thinking=False)
+        result=client.generate(schema,'repair actual point','complete source and graph')
+    assert result.upserts[0].expr==['u'] and len(requests)==2
+    assert any(m['role']=='assistant' and json.loads(m['content'])==bad for m in requests[1]['messages'])
+    assert '函数自由变量' in requests[1]['messages'][-1]['content']
+
+
 def test_source_revision_returns_invalid_complete_response_to_page_repair_once():
     from zhijiang.draft_source_repair import _revision_schema,RevisedPage
     from zhijiang.agents import ModelContractError

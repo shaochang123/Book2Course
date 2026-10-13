@@ -4,10 +4,11 @@ from pydantic import Field,create_model
 from zhijiang.math_construction import MathConstructionObject
 
 
-def typed_construction():
+def typed_construction(*,object_ids=None):
     # Types describe general operators, not subjects or textbook templates.
     groups=[
-        (('point','parametric','locus'),(0,0),(2,2)),
+        (('point',),(0,0),(2,2)),
+        (('parametric','locus'),(0,0),(2,2)),
         (('rectangle',),(0,0),(4,4)),
         (('function',),(0,0),(1,1)),
         (('segment','ray','line','midpoint','projection'),(2,2),(0,0)),
@@ -28,6 +29,9 @@ def typed_construction():
         return (list[element],Field(min_length=low,max_length=high,
             **({'default_factory':list} if low==0 else {})))
     for names,refs,expr in groups:
-        variants.append(create_model('Tool_'+names[0],__base__=MathConstructionObject,
-            op=(Literal[names],...),refs=arguments(refs,reference=True),expr=arguments(expr)))
+        fields={'op':(Literal[names],...), 'refs':arguments(refs,reference=True), 'expr':arguments(expr)}
+        if object_ids:fields['id']=(Literal[tuple(object_ids)],...)
+        rule=('expr表示函数或轨迹，可使用函数自变量x。' if names[0] in {'parametric','function','locus'} else
+              'expr表示实际对象位置或参数，禁止函数自由变量x/y；使用已声明控制参数、具体常数或此前点的坐标。')
+        variants.append(create_model('Tool_'+names[0],__base__=MathConstructionObject,__doc__=rule,**fields))
     return Annotated[Union[tuple(variants)],Field(discriminator='op')]

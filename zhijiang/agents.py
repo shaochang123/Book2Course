@@ -232,7 +232,7 @@ def _validation_repair_hints(schema: type[BaseModel], exc: Exception) -> str:
             if not isinstance(node,dict):
                 node={};break
         node=resolve(node)
-        expected={k:node[k] for k in ('type','const','minimum','maximum','minLength','maxLength','pattern','minItems','maxItems','minProperties','maxProperties') if k in node}
+        expected={k:node[k] for k in ('type','const','description','minimum','maximum','minLength','maxLength','pattern','minItems','maxItems','minProperties','maxProperties') if k in node}
         if 'enum' in node:
             expected['enum']=node['enum'] if len(node['enum'])<=16 else '必须从完整Schema的枚举中选择，不新增值'
         if expected:
@@ -571,6 +571,15 @@ class OllamaClient:
                     raise ModelContractError("本机 Ollama 返回不符合数据契约的 JSON："+detail,content=content,schema=schema) from exc
                 if isinstance(exc, json.JSONDecodeError):
                     json_fallback = True
+                if schema.__name__=='MathConstructionPatch' and isinstance(content,str):
+                    # The repairer already received this graph and authored
+                    # this response. Show its complete rejected patch so it can
+                    # edit that candidate, rather than repeatedly copying the
+                    # original broken graph. Never replay truncated fragments.
+                    try:
+                        if isinstance(json.loads(content),dict):
+                            messages.append({'role':'assistant','content':content})
+                    except (ValueError,TypeError):pass
                 guidance = ''
                 if schema.__name__ == 'SourceFactsDraft' and 'literal_error' in detail:
                     guidance = '事实只选有完整原文支持的断言；没有来源的推算或残片不输出，禁止-1或新增编号。facts不必覆盖所有sources，保留有依据的事实即可。'

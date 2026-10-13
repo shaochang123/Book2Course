@@ -21,22 +21,15 @@ class MathConstructionPatch(StrictMathModel):
         return self
 
 
-def apply_construction_patch(program,patch):
-    """Preserve untouched definitions and restore a stable dependency order.
+def dependency_order(constructions, parameters):
+    """Order complete definitions without changing expressions or identities.
 
-    This composes data, never model code. Callers must compile the entire graph
-    and run all source, relationship, SVG and motion checks before acceptance.
+    Model list order carries no mathematical meaning. Missing references,
+    duplicate identities and cycles remain errors, never guessed repairs.
     """
-    base=MathConstructionDraft.model_validate(program.model_dump(exclude={'operations','claims','roles'}))
-    objects={item.id:item for item in base.constructions}
-    if len(patch.remove)!=len(set(patch.remove)) or set(patch.remove)-set(objects):
-        raise VisualSceneError('构造补丁删除编号重复或不存在。')
-    upsert_ids=[item.id for item in patch.upserts]
-    if len(upsert_ids)!=len(set(upsert_ids)) or set(upsert_ids)&set(patch.remove):
-        raise VisualSceneError('构造补丁不能重复更新或同时删除同一对象。')
-    for name in patch.remove:del objects[name]
-    for item in patch.upserts:objects[item.id]=item
-    parameters={**base.parameters,**patch.parameters}
+    objects={item.id:item for item in constructions}
+    if len(objects)!=len(constructions):
+        raise VisualSceneError('数学构造对象ID重复，不能覆盖或猜选其中一个定义。')
     if set(parameters)&set(objects):
         raise VisualSceneError('控制参数与数学对象ID不能同名。')
     dependencies={}
@@ -66,7 +59,33 @@ def apply_construction_patch(program,patch):
     while len(done)<len(objects):
         ready=[name for name in objects if name not in done and dependencies[name]<=done]
         if not ready:raise VisualSceneError('构造补丁产生循环依赖。')
-        for name in ready:ordered.append(objects[name]);done.add(name)
-    return MathConstructionDraft.model_validate({**base.model_dump(),
-        'parameters':parameters,'constructions':ordered,
-        'objective':patch.objective or base.objective})
+        # Resolve one earliest-ready definition at a time. Already valid list
+        # order remains unchanged, including intentional painter ordering.
+        name=ready[0];ordered.append(objects[name]);done.add(name)
+    return ordered
+
+
+def apply_construction_patch(program,patch):
+    """Preserve untouched definitions and restore a stable dependency order.
+
+    This composes data, never model code. Callers must compile the entire graph
+    and run all source, relationship, SVG and motion checks before acceptance.
+    """
+    base_data=program.model_dump(exclude={'operations','claims','roles'})
+    # The existing typed candidate may be precisely what needs repair. Validate
+    # the full merged draft below, rather than vetoing its replacement first.
+    if len({item.id for item in program.constructions})!=len(program.constructions):
+        raise VisualSceneError('数学构造对象ID重复，不能覆盖或猜选其中一个定义。')
+    objects={item.id:item for item in program.constructions}
+    if len(patch.remove)!=len(set(patch.remove)) or set(patch.remove)-set(objects):
+        raise VisualSceneError('构造补丁删除编号重复或不存在。')
+    upsert_ids=[item.id for item in patch.upserts]
+    if len(upsert_ids)!=len(set(upsert_ids)) or set(upsert_ids)&set(patch.remove):
+        raise VisualSceneError('构造补丁不能重复更新或同时删除同一对象。')
+    for name in patch.remove:del objects[name]
+    for item in patch.upserts:objects[item.id]=item
+    parameters={**program.parameters,**patch.parameters}
+    ordered=dependency_order(list(objects.values()),parameters)
+    return MathConstructionDraft.model_validate({**base_data,
+        'parameters':parameters,'constructions':[item.model_dump() for item in ordered],
+        'objective':patch.objective or program.objective})

@@ -26,6 +26,17 @@ Op=Literal['point','segment','ray','line','polygon','rectangle','circle','functi
            'angle_arc','partition','transform','align','locus','inverse','series','label']
 
 
+class ConstructionLayoutError(VisualSceneError):
+    """The actual drawing requires a graph/domain edit, not rewritten speech."""
+
+
+class ConstructionObjectError(VisualSceneError):
+    """A computed error tied to one real object, for targeted data repair."""
+    def __init__(self,object_id,message):
+        super().__init__(message)
+        self.object_id=object_id
+
+
 class StrictMathModel(BaseModel):
     model_config={'extra':'forbid'}
 
@@ -117,6 +128,15 @@ class MathConstructionObject(Construction):
     op: Literal['point','segment','ray','line','polygon','rectangle','circle','function','parametric',
         'point_on_function','point_on_curve','polar_point','midpoint','projection','intersection','square','angle_arc','partition','transform','align','locus','inverse','series']
 
+    @model_validator(mode='after')
+    def concrete_coordinates(self):
+        if self.op not in {'function','parametric','locus'}:
+            for expression in self.expr:
+                names={node.id for node in ast.walk(expression_tree(expression)) if isinstance(node,ast.Name)}
+                if names&{'x','y'}:
+                    raise ValueError('实际对象位置不能使用函数自由变量x/y；请声明连续控制参数，并绑定到该对象的expr。')
+        return self
+
 
 MathConstructionDraft.model_rebuild()
 
@@ -197,6 +217,7 @@ def numeric_string(expr):
 
 class Compiler:
     def __init__(self,program):
+        from zhijiang.math_graph_repair import dependency_order
         self.program=program;self.items={};self.shapes=[];self.derived={};self.groups={};self.proofs=[];self.label_checks=[];self.arc_checks=[];self.alignment_checks=[];self.intersection_checks=[];self.curve_point_checks=[];self.display_expressions={};self.render_symbols={};self.actor_of={}
         if set(program.parameters)&{item.id for item in program.constructions}:
             raise VisualSceneError('控制参数与数学对象ID不能同名。')
@@ -216,7 +237,11 @@ class Compiler:
         if dynamic-set(program.parameters):raise VisualSceneError('数学步骤改变未声明参数：'+str(sorted(dynamic-set(program.parameters))))
         self.x=sp.Symbol('x',real=True);self.y=sp.Symbol('y',real=True)
         self.symbols.update(x=self.x,y=self.y)
-        for item in program.constructions:self.add(item)
+        self.dependency_order=dependency_order(program.constructions,program.parameters)
+        for item in self.dependency_order:
+            try:self.add(item)
+            except VisualSceneError as exc:
+                raise ConstructionObjectError(item.id,str(exc)) from exc
 
     def parse(self,text):return scalar(text,self.symbols,self.measure)
 
@@ -672,7 +697,7 @@ def compile_program(program,evidence,source_map):
     if focus:
         fx,fy=zip(*focus)
         if max(max(fx)-min(fx),max(fy)-min(fy))<60:
-            raise VisualSceneError('函数绘图区间的极端值将核心动点/对应关系压缩到不足六十像素。请重规划合理的函数domain，覆盖教材例子和所有运动点但避免不必要远端极值；保持等单位坐标，不用额外远处对象撑大窗口。')
+            raise ConstructionLayoutError('函数绘图区间的极端值将核心动点/对应关系压缩到不足六十像素。请重规划合理的函数domain，覆盖教材例子和所有运动点但避免不必要远端极值；保持等单位坐标，不用额外远处对象撑大窗口。')
     placed=[]
     def overlap(a,b):
         return max(0,min(a[2],b[2])-max(a[0],b[0]))*max(0,min(a[3],b[3])-max(a[1],b[1]))

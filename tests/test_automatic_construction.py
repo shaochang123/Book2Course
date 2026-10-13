@@ -183,3 +183,80 @@ def test_optional_object_generation_failure_preserves_entire_course(tmp_path,mon
         folder=tmp_path,pdf_path=pdf,progress=lambda *args:None)
     assert [s.model_dump() for s in lesson.segments]==before
     assert '模型服务不可用' in lesson.animation_report['warnings'][0]['message']
+
+
+@pytest.mark.parametrize('problem',['nonfinite_coordinate','compressed_view'])
+def test_graph_errors_are_patched_before_rewriting_behavior(tmp_path,problem):
+    calls=[]
+    class Client:
+        def generate(self,schema,instruction,material,**kwargs):
+            calls.append(schema.__name__)
+            if schema.__name__=='MathConstructionDraft':
+                raw=candidate()
+                # Forward references are harmless ordering errors, repaired by
+                # the compiler. The remaining error really needs a graph edit.
+                raw['constructions'].reverse()
+                if problem=='nonfinite_coordinate':raw['constructions'][0]['expr']=['sqrt(-1)']
+                else:raw['constructions'].append({'id':'far','op':'point','expr':['10000','0']})
+                return schema.model_validate({k:v for k,v in raw.items() if k not in {'operations','claims','roles'}})
+            if schema.__name__=='MathConstructionPatch':
+                if problem=='nonfinite_coordinate':
+                    assert '有限实数' in instruction
+                    return schema(upserts=[candidate()['constructions'][1]])
+                assert '不足六十像素' in instruction
+                return schema(upserts=[{'id':'far','op':'point','expr':['1','0']}])
+            if schema.__name__=='MathBehaviorDraft':
+                return schema.model_validate({'operations':candidate()['operations'],
+                    'claims':[{'source_id':1,'left':{'terms':[{'kind':'ycoord','point':'p'}]},
+                               'right':{'terms':[{'kind':'value','function':'f','at':'u'}]}}]})
+            assert schema.__name__=='MathProgramReview'
+            return schema.model_validate({'approved':True,'checks':[
+                {'aspect':a,'supported':True,'observation':'实际曲线和对应动点完整保持原有函数关系。'}
+                for a in ['source','geometry','motion']],'source_coverage':['函数与动点。'],
+                'issues':[],'step_checks':reviewed_steps()})
+    scene=build_scene(Client(),source(),[{'segment_id':1}],folder=tmp_path)
+    assert scene.verification['passed']
+    assert calls.count('MathConstructionDraft')==1 and calls.count('MathConstructionPatch')==1
+    assert calls.index('MathConstructionPatch')<calls.index('MathProgramReview')
+    if problem=='nonfinite_coordinate':assert calls.index('MathConstructionPatch')<calls.index('MathBehaviorDraft')
+    attempts=json.loads((tmp_path/'attempts.json').read_text(encoding='utf-8'))
+    expected=['f','p'] if problem=='nonfinite_coordinate' else ['f','p','far']
+    assert attempts[0]['dependency_order']==expected
+    assert attempts[0]['error'] and attempts[1]['construction_patch']
+
+
+def test_invalid_object_repair_requires_its_real_definition():
+    from pydantic import ValidationError
+    from zhijiang.math_construction import MathConstructionDraft
+    from zhijiang.automatic_construction import graph_patch_schema
+    raw=candidate();raw['constructions'][1]['expr']=['0']
+    graph=MathConstructionDraft.model_validate({k:v for k,v in raw.items() if k not in {'operations','claims'}})
+    schema=graph_patch_schema(graph,'p')
+    for patch in [{},{'upserts':[]},{'objective':'仅改目标，实际错误依然没有得到修复。'},
+                  {'upserts':[raw['constructions'][0]]},{'upserts':[raw['constructions'][1]]}]:
+        with pytest.raises(ValidationError):schema.model_validate(patch)
+    good=schema.model_validate({'upserts':[candidate()['constructions'][1]]})
+    assert good.upserts[0].id=='p'
+
+
+@pytest.mark.parametrize('op,expr,refs',[
+    ('point',['x','0'],[]),('point_on_function',['x'],['f']),
+    ('transform',['0','x','0'],['p']),
+])
+def test_concrete_object_schema_rejects_free_function_coordinates(op,expr,refs):
+    from pydantic import ValidationError
+    from zhijiang.math_tool_schema import typed_construction
+    from pydantic import TypeAdapter
+    with pytest.raises(ValidationError,match='函数自由变量'):
+        TypeAdapter(typed_construction()).validate_python({'id':'p','op':op,'expr':expr,'refs':refs})
+
+
+def test_trajectory_tools_keep_their_real_free_variable_contract():
+    from pydantic import TypeAdapter
+    from zhijiang.math_tool_schema import typed_construction
+    adapter=TypeAdapter(typed_construction())
+    curve=adapter.validate_python({'id':'curve','op':'parametric','expr':['cos(x)','sin(x)']})
+    assert curve.expr==['cos(x)','sin(x)']
+    schema=adapter.json_schema()
+    actual=schema['$defs']['Tool_parametric']['description']
+    assert '可使用函数自变量x' in actual and '禁止' not in actual

@@ -80,6 +80,38 @@ def test_actual_point_coordinate_control_collision_still_rejected():
         Compiler(result)
 
 
+def test_compiler_orders_forward_refs_and_measurement_dependencies_without_rewriting():
+    graph=MathConstructionDraft(title='依赖图中的实际距离',objective='按真实依赖编译对象，保留表达式与来源身份。',
+        source_id=8,parameters={'u':.5},constructions=[
+            {'id':'edge','op':'segment','refs':['a','b']},
+            {'id':'circle','op':'circle','refs':['a'],'expr':['distance(a,b)']},
+            {'id':'b','op':'point','expr':['a_x+u','a_y']},
+            {'id':'a','op':'point','expr':['0','0']}])
+    original=graph.model_dump()
+    compiler=Compiler(graph)
+    assert [item.id for item in compiler.dependency_order]==['a','b','edge','circle']
+    assert graph.model_dump()==original
+    assert str(compiler.items['circle']['radius'])=='Abs(u)'
+
+
+@pytest.mark.parametrize('definitions',[
+    [{'id':'a','op':'point','expr':['0','0']},{'id':'a','op':'point','expr':['u','0']}],
+    [{'id':'edge','op':'segment','refs':['a','missing']},{'id':'a','op':'point','expr':['0','u']}],
+    [{'id':'a','op':'point','expr':['b_x','u']},{'id':'b','op':'point','expr':['a_x','0']}],
+])
+def test_compiler_never_guesses_duplicate_missing_or_cyclic_definitions(definitions):
+    graph=MathConstructionDraft.model_validate({**source_graph().model_dump(),'constructions':definitions})
+    with pytest.raises(VisualSceneError):Compiler(graph)
+
+
+def test_patch_can_repair_a_missing_dependency_in_the_original_graph():
+    graph=MathConstructionDraft.model_validate({**source_graph().model_dump(),'constructions':[
+        {'id':'edge','op':'segment','refs':['a','b']},{'id':'a','op':'point','expr':['0','u']}]})
+    repaired=apply_construction_patch(graph,MathConstructionPatch(upserts=[
+        {'id':'b','op':'point','expr':['1','u']}]))
+    assert Compiler(repaired).items['edge']['type']=='line'
+
+
 def test_different_repeated_behavior_errors_escalate_to_graph_patch():
     from zhijiang.mathematical_planning import plan_constructed_lesson
     from zhijiang.models import SourceDocument,PageText

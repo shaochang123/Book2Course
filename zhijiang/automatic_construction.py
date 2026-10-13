@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import create_model, Field
+from pydantic import create_model, Field,model_validator
 from zhijiang.agents import GenerationError, ModelContractError
 from zhijiang.models import Evidence, SourceDocument
 
@@ -31,9 +31,29 @@ def step_review_schema(program):
                         step_checks=(tuple[tuple(entries)],Field()))
 
 
+def graph_patch_schema(graph, object_id=None):
+    from zhijiang.math_graph_repair import MathConstructionPatch
+    from zhijiang.math_tool_schema import typed_construction
+    known={item.id for item in graph.constructions}
+    # An invalid initial value has a concrete object identity. Require its
+    # actual replacement; an empty or metadata-only patch cannot repair it.
+    target=object_id if object_id in known else None
+    def actual_edit(value):
+        if target:
+            before=next(item for item in graph.constructions if item.id==target)
+            if value.upserts[0].model_dump()==before.model_dump():
+                raise ValueError('错误对象的替换定义与原定义完全相同；必须实际修正expr/refs，而不是重复原候选。')
+        return value
+    return create_model('MathConstructionPatch',__base__=MathConstructionPatch,
+        __doc__='upserts须实际修改错误对象的expr/refs；空补丁、重复原定义或只改教学目标不能修复图形。',
+        __validators__={'actual_edit':model_validator(mode='after')(actual_edit)},
+        upserts=(list[typed_construction(object_ids=(target,) if target else None)],
+                 Field(min_length=1,max_length=1) if target else Field(default_factory=list,max_length=16)))
+
+
 def build_scene(client, document, requests, *, folder, source_image_loader=None,planning_client=None,review_client=None):
     from zhijiang.mathematical_planning import source_material, CONTRACT, review_step_states
-    from zhijiang.math_construction import MathProgramDraft, MathConstructionDraft, MathematicalClaim, MathProgramReview, compile_program, Compiler
+    from zhijiang.math_construction import MathProgramDraft, MathConstructionDraft, MathematicalClaim, MathProgramReview, ConstructionLayoutError, compile_program, Compiler
     from zhijiang.math_tool_schema import typed_construction
     from zhijiang.math_behavior import behavior_schema, decode_behavior, attach_measurement_glyphs
     from zhijiang.math_inventory import computed_inventory, validate_initial_geometry
@@ -74,23 +94,26 @@ def build_scene(client, document, requests, *, folder, source_image_loader=None,
         if saved['fingerprint']==fingerprint:
             return compile_candidate(schema.model_validate(saved['program']))
     except (OSError,ValueError,KeyError):pass
-    attempts=[];feedback='';previous=None;graph=None;repair_graph=False
+    attempts=[];feedback='';previous=None;graph=None;repair_graph=False;repair_object_id=None
     material=source+'\n本组要解释的完整讲稿与问题：'+json.dumps(requests,ensure_ascii=False)
     for attempt in range(3):
         entry={'attempt':attempt+1};attempts.append(entry)
         try:
             if graph is not None and repair_graph:
-                from zhijiang.math_graph_repair import MathConstructionPatch,apply_construction_patch
-                patch_type=create_model('MathConstructionPatch',__base__=MathConstructionPatch,
-                    upserts=(list[typed_construction()],Field(default_factory=list,max_length=16)))
-                patch=planning_client.generate(patch_type,CONTRACT+
-                    '\n仅修复已编译但缺少实际自由度的对象图。输出MathConstructionPatch。'
+                from zhijiang.math_graph_repair import apply_construction_patch
+                patch_type=graph_patch_schema(graph,repair_object_id)
+                patch=planning_client.generate(patch_type,
+                    '只修复反馈指出的对象错误，不重新设计课程。输出MathConstructionPatch。'
                     'parameters增改控制参数，upserts按真实对象ID增改构造，remove只删除冗余或错误对象。'
-                    '把连续控制参数显式用于对象expr的坐标、函数或变换，不能只声明一个未使用的参数。'
-                    '保留来源主题与正确对象。错误：'+feedback,
+                    '初态必须能计算成有限实数；函数自由变量不能直接充当点的实际坐标，需绑定已声明控制参数。'
+                    '绘图范围错误时修改相应对象domain，仍覆盖来源例子与整个运动。'
+                    '自由度错误时把控制参数显式用于对象expr，不能只声明未使用的参数。'
+                    '保留来源主题与正确对象，不改讲稿来掩盖图形错误。'
+                    +(f'本次必须替换错误对象 {repair_object_id} 的实际定义，其余正确对象保留。' if repair_object_id else '')+
+                    '错误：'+feedback,
                     material+'\n当前待修对象图：'+graph.model_dump_json())
                 entry['construction_patch']=patch.model_dump(mode='json')
-                graph=apply_construction_patch(graph,patch);repair_graph=False
+                graph=apply_construction_patch(graph,patch);repair_graph=False;repair_object_id=None
             if graph is None:
                 graph=planning_client.generate(graph_schema,CONTRACT+
                 '\n这是普通课程里的具体数学或科学演示。保持本组原题的对象身份、条件、角边对应与数值；'
@@ -104,12 +127,13 @@ def build_scene(client, document, requests, *, folder, source_image_loader=None,
             entry['construction']=graph.model_dump(mode='json')
             try:
                 compiler=Compiler(graph)
+                entry['dependency_order']=[item.id for item in compiler.dependency_order]
                 ledger=computed_inventory(compiler)
+                entry['computed_inventory']=ledger
                 validate_initial_geometry(ledger)
-            except GenerationError:
-                previous=graph.model_dump_json();graph=None
+            except GenerationError as exc:
+                previous=graph.model_dump_json();repair_graph=True;repair_object_id=getattr(exc,'object_id',None)
                 raise
-            entry['computed_inventory']=ledger
             try:
                 behavior_type=behavior_schema(graph,mapping)
             except GenerationError:
@@ -141,7 +165,7 @@ def build_scene(client, document, requests, *, folder, source_image_loader=None,
             try:
                 scene=compile_candidate(program)
             except GenerationError as exc:
-                if '实际数学关系失败' in str(exc):repair_graph=True
+                if isinstance(exc,ConstructionLayoutError) or '实际数学关系失败' in str(exc):repair_graph=True
                 raise
             images=[source_image_loader(page.page) for page in document.pages] if source_image_loader else []
             for n in range(len(scene.beats)):

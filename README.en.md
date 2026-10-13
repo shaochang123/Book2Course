@@ -189,6 +189,8 @@ The source scope is generated against original page images, then independently c
 
 Construction repair supports bounded additions, replacements and removals, preserving untouched valid objects and restoring actual dependency order. Two consecutive behavior failures return to construction repair even when error wording differs. Drafts allow at most 32 definitions; expanded core objects remain capped at 48 and the rendering contract, including point labels, at 64. Patches cannot bypass source or actual-animation checks.
 
+The compiler also resolves dependency order in newly generated complete graphs, preserving expressions, object identities and valid drawing order. Duplicate IDs, missing references and cycles are never guessed away. Non-finite initial states and drawing ranges that compress the teaching objects in ordinary-course demonstrations return directly to graph repair instead of repeatedly rewriting unrelated narration. Local records retain candidates, actual compilation order and rejection reasons.
+
 
 Source coverage and construction readiness are reviewed in batches of two, retaining every requirement and rejection in the aggregate. The program binds the reviewed Chinese source summary verbatim to explanation cards and speech: definitions and conditions precede motion, and worked examples accompany their demonstration steps. Cards are not mathematical proofs. Dynamic values still come from actual object measurements, and free narration retains numeric validation. Mathematical motion starts after the source cards finish; the script includes those explanations. Acceptance inspects both source cards and actual motion frames.
 

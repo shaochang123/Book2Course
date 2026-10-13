@@ -7,7 +7,7 @@ import sympy as sp
 from zhijiang.visual_planning import VisualSceneError
 from typing import Literal
 from pydantic import Field, create_model
-from zhijiang.math_construction import StrictMathModel
+from zhijiang.math_construction import StrictMathModel,ConstructionObjectError
 
 
 def computed_inventory(compiler):
@@ -83,14 +83,14 @@ def validate_initial_geometry(ledger):
     A hidden auxiliary point is still a dependency and cannot start at infinity.
     It is not a source verdict or a substitute for checking moving states.
     """
-    def walk(value,path):
+    def walk(value,path,object_id):
         if isinstance(value,dict):
             if 'initial' in value and value['initial'] is None:
-                raise VisualSceneError('初态数学构造不能得到有限实数：'+path+' / '+str(value.get('formula')))
-            for key,child in value.items():walk(child,path+'.'+key)
+                raise ConstructionObjectError(object_id,'初态数学构造不能得到有限实数：'+path+' / '+str(value.get('formula')))
+            for key,child in value.items():walk(child,path+'.'+key,object_id)
         elif isinstance(value,list):
-            for i,child in enumerate(value):walk(child,path+f'[{i}]')
-    for name,record in ledger['objects'].items():walk(record,name)
+            for i,child in enumerate(value):walk(child,path+f'[{i}]',object_id)
+    for name,record in ledger['objects'].items():walk(record,name,name)
 
 
 def _check_construction_readiness_batch(client,requirements,program,ledger,source,operator_reference):
