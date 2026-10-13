@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import math
 import re
 import time
 import unicodedata
 from threading import Event, Thread
 from collections import Counter
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, Literal, TypeVar
 
@@ -352,6 +355,7 @@ class OllamaClient:
         self.invalid_outputs: list[dict] = []
         self.progress = progress
         self._json_decoding_stages: dict[str, str] = {}
+        self._reasoning_despite_disable = False
 
     def close(self) -> None:
         if self._owns_client:
@@ -401,7 +405,8 @@ class OllamaClient:
         # stalls were observed, but decoder cost was not isolated causally.
         # The full schema remains in the prompt and is validated in the program.
         json_fallback = self.prefer_json or observed_endpoint is not None or schema.__name__ in {
-            'VisualLayoutDraft','VisualSequenceDraft','MotionParameterBindings','GeometryConstraintsDraft'}
+            'VisualLayoutDraft','VisualSequenceDraft','MotionParameterBindings','GeometryConstraintsDraft',
+            'SourcePictureReading','SourceFigureAlignment','TeachingDraftRevision'}
         if schema.__name__ in {'MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}:
             json_fallback=self.prefer_json or observed_endpoint is not None
         if schema.__name__ in {'DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection',
@@ -424,12 +429,19 @@ class OllamaClient:
                     "options": {"temperature": 0, "num_predict": -1},
                     "keep_alive": "10m",
                 }
-                semantic_stage=schema.__name__ in {'TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft','TopicSourceScope','TopicScopeReview','MathSourceReview','MathProgramReview','MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness','MathOperationsRepair','MathClaimsRepair','MathRolesRepair','MathConstructionIntent','MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}
+                cloud_model=self.model.casefold().endswith((':cloud','-cloud'))
+                if cloud_model:
+                    # Cloud adapters may translate -1 into an invalid negative
+                    # max_tokens. Omit the setting; do not add an application cap.
+                    payload['options'].pop('num_predict')
+                semantic_stage=schema.__name__ in {'TeachingDraftBatch','TeachingDraftRevision','SourcePictureReading','SourceFigureAlignment','TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft','TopicSourceScope','TopicScopeReview','MathSourceReview','MathProgramReview','MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness','MathOperationsRepair','MathClaimsRepair','MathRolesRepair','MathConstructionIntent','MathProgramDraft','MathAutomaticProgram','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}
                 thinking = self._thinking_option(semantic_stage)
                 # Preserve server/model sampling for semantic deliberation;
                 # forcing greedy decoding can turn reasoning into repetition.
                 # Exact non-thinking selection keeps deterministic sampling.
                 if semantic_stage and self.semantic_thinking and thinking is not False:
+                    payload['options'].pop('temperature',None)
+                if semantic_stage and self._reasoning_despite_disable:
                     payload['options'].pop('temperature',None)
                 advertised=self._model_info.get('capabilities') if self._model_info else None
                 if images and isinstance(advertised,list) and 'vision' not in advertised:
@@ -437,9 +449,9 @@ class OllamaClient:
                 if schema.__name__.startswith('Math'):
                     payload['options'].update(temperature=.6,top_p=.95,top_k=20,min_p=0,
                         repeat_penalty=1.0,presence_penalty=0,seed=42)
-                if self.context_tokens is not None:
+                if self.context_tokens is not None and not cloud_model:
                     payload['options']['num_ctx']=self.context_tokens
-                if self.num_gpu is not None:
+                if self.num_gpu is not None and not cloud_model:
                     payload['options']['num_gpu']=self.num_gpu
                 if thinking is not None:
                     payload["think"] = thinking
@@ -456,13 +468,16 @@ class OllamaClient:
                 self.call_requests.append({'stage':schema.__name__,'endpoint':endpoint,'thinking':thinking,
                     'format':'json' if json_fallback else 'schema','options':dict(payload['options'])})
                 result = self._request(endpoint, payload, schema.__name__)
+                if thinking is False and result.get('internal_characters',0):
+                    self._reasoning_despite_disable=True
                 self.call_metrics.append({
                     "stage": schema.__name__, "attempt": attempt + 1,
                     "thinking": thinking,"endpoint":endpoint,
                     'context_tokens':payload['options'].get('num_ctx'),
-                    'output_token_limit':payload['options']['num_predict'],
+                    'output_token_limit':payload['options'].get('num_predict'),
                     'sampling':{key:payload['options'][key] for key in ('temperature','top_p','top_k','min_p','repeat_penalty','seed') if key in payload['options']},
                     'decoding': 'json' if json_fallback else 'schema',
+                    'reasoning_observed':bool(result.get('internal_characters',0)),
                     **{key: result.get(key) for key in (
                         "done_reason", "eval_count", "prompt_eval_count", "total_duration",'internal_characters')},
                 })
@@ -518,8 +533,14 @@ class OllamaClient:
             except httpx.HTTPStatusError as exc:
                 self.call_metrics.append({'stage':schema.__name__,'attempt':attempt+1,
                     'http_status':exc.response.status_code,'error':'upstream_http_error'})
+                if exc.response.status_code==429:
+                    try:service_error=str(exc.response.json().get('error','')).casefold()
+                    except (ValueError,httpx.ResponseNotRead):service_error=''
+                    if 'monthly usage limit' in service_error:
+                        self.call_metrics[-1]['error']='upstream_monthly_usage_limit'
+                        raise GenerationError('Ollama 云服务的月度额度已用尽，请切换本机模型或调整服务账户；本项目没有设置生成额度。') from exc
                 if exc.response.status_code in {429,502,503,504} and attempt<2:
-                    time.sleep([2,5][attempt])
+                    self._wait_retry(exc.response,attempt)
                     continue
                 if exc.response.status_code==500 and attempt==0:
                     # Native runners can reject a malformed model completion
@@ -557,11 +578,34 @@ class OllamaClient:
                     _validation_repair_hints(schema,exc)})
         raise GenerationError("本机 Ollama 未能生成有效内容。")
 
+    def _wait_retry(self, response, attempt):
+        limited=response.status_code==429
+        cloud=self.model.casefold().endswith((':cloud','-cloud'))
+        delay=([30,60] if cloud and limited else [2,5])[attempt]
+        header=response.headers.get('Retry-After')
+        if header:
+            try:
+                value=float(header)
+            except ValueError:
+                try:value=(parsedate_to_datetime(header)-datetime.now(timezone.utc)).total_seconds()
+                except (ValueError,TypeError,OverflowError):value=float('nan')
+            if math.isfinite(value):delay=max(0,value)
+        if limited:self.call_metrics[-1]['retry_after_seconds']=delay
+        if not self.progress:
+            time.sleep(delay);return
+        remaining=delay
+        while remaining>0:
+            if limited:self.progress(f'模型服务限流，等待 {math.ceil(remaining)} 秒后重试',0,0)
+            interval=min(5,remaining);time.sleep(interval);remaining-=interval
+
     def _request(self, endpoint: str, payload: dict, stage: str) -> dict:
         if self.progress is None:
             response = self.http_client.post(f"{self.base_url}{endpoint}", json=payload, timeout=_GENERATION_TIMEOUT)
             response.raise_for_status()
-            return response.json()
+            result=response.json()
+            thought=result.get('message',{}).get('thinking',result.get('thinking',''))
+            if isinstance(thought,str):result['internal_characters']=len(thought)
+            return result
         started = time.monotonic()
         last_update = started
         chunks = []
@@ -581,6 +625,7 @@ class OllamaClient:
         try:
             with self.http_client.stream('POST', f"{self.base_url}{endpoint}", json=payload,
                                          timeout=_GENERATION_TIMEOUT) as response:
+                if response.is_error:response.read()
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line.strip():

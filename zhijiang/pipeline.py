@@ -114,6 +114,7 @@ class JobProcessor:
 
         def model_progress(stage, elapsed, characters):
             self.store.set_progress(job_id,
+                f'{active_stage[0]} · {stage}' if stage.startswith('模型服务限流') else
                 f'{active_stage[0]} · 模型生成中（{elapsed}秒，{characters}字）', active_stage[1])
 
         try:
@@ -142,7 +143,7 @@ class JobProcessor:
                         cache_dir=folder/'math-source-pages',progress=lambda done,total,label:
                             progress(f'{label}（{done}/{total} 页）',8+done*13//total)))
             else:
-                document=checkpoint(folder/'parsed-source.json','pdf-v2:'+source_hash,SourceDocument,
+                document=checkpoint(folder/'parsed-source.json','pdf-v3-glyph-recovery:'+source_hash,SourceDocument,
                     lambda:read_pdf(source_bytes,job['filename'], cache_dir=folder/'parsed-pages',
                         progress=lambda done,total,label:progress(
                             f'解析 PDF（{done}/{total} 页）：{label}', 8 + done * 13 // total)))
@@ -165,7 +166,8 @@ class JobProcessor:
                     use_math = False
                     use_visual = False
                     fallback_reason = "动画环境未就绪，自动模式使用基础图示：" + capability["reason"]
-            if use_visual and options.animation_mode=='geometry':
+            if mode==Mode.AI and (options.animation_mode=='geometry' or
+                                 direct_draft and options.animation_mode in {'auto','visual'}):
                 if options.math_model and options.math_model!=options.model:
                     math_planner=(OllamaClient(options.base_url,options.math_model,
                         semantic_thinking=options.semantic_thinking,prefer_json=True,progress=model_progress,
@@ -180,6 +182,7 @@ class JobProcessor:
                         context_tokens=self.settings.ollama_context_tokens)
                         if options.provider=='ollama' else OpenAICompatibleClient(
                             options.base_url,options.api_key,options.review_model))
+            if use_visual and options.animation_mode=='geometry':
                 lesson=plan_constructed_lesson(agents.client,document,teaching_prompt,voice_mode,
                     progress,draft_output=folder/'visual-planning.json',review_client=math_reviewer,
                     planning_client=math_planner,
@@ -194,13 +197,13 @@ class JobProcessor:
                 # Input or model/prompt changes invalidate the analysis cache.
                 # An unchecked extraction must not become a strict-mode cache hit.
                 extraction_options = options.model_dump()
-                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v8-sentence-wrap',
+                batch_fingerprint=hashlib.sha256(json.dumps({'version':'content-selection-v9-complete-source-glyph-recovery',
                     'source':source_hash,'mode':mode,'options':extraction_options},sort_keys=True).encode()).hexdigest()
                 fingerprint=hashlib.sha256(('quantity-binding-v1:'+batch_fingerprint).encode()).hexdigest()
                 bundle=checkpoint(folder/'knowledge.json',fingerprint,KnowledgeBundle,
                     lambda:agents.extract_knowledge(document, cache_dir=folder/'knowledge-batches',
                         cache_fingerprint=batch_fingerprint,
-                        complete_sources=options.animation_mode=='geometry',
+                        complete_sources=options.animation_mode=='geometry' or direct_draft,
                         teaching_preference=(options.prompt+' 只选择需要数学对象推演的核心数学知识与必要条件，不选人物历史背景或泛泛回顾。'
                             if options.animation_mode=='geometry' else options.prompt),
                         progress=lambda done,total,label:progress(
@@ -212,7 +215,10 @@ class JobProcessor:
                     from zhijiang.draft_generation import build_draft_lesson
                     lesson = build_draft_lesson(agents.client, bundle, document, teaching_prompt, voice_mode,
                         template_id=options.ppt_template, use_illustrations=options.use_illustrations,
-                        folder=folder/'teaching-draft', progress=progress)
+                        folder=folder/'teaching-draft', progress=progress,repair_sources=True,
+                        pdf_path=folder/'source.pdf',animation_mode=options.animation_mode,
+                        construction_client=math_planner,construction_reviewer=math_reviewer)
+                    use_visual=any(segment.visual_scene for segment in lesson.segments)
                 elif use_visual:
                     source_assets=prepare_source_assets(folder/'source.pdf',folder/'source-pages',document,
                         progress=lambda done,total,label:progress(f'{label}（{done}/{total} 页）',38+done*4//total))
@@ -265,8 +271,23 @@ class JobProcessor:
                     lambda stage, value: self.store.set_progress(job_id, stage, value))
                 self.store.save_lesson(job_id, lesson)
             if use_visual:
-                render_visual_assets(lesson,speech,folder,
-                    lambda stage,value: self.store.set_progress(job_id,stage,value))
+                try:
+                    render_visual_assets(lesson,speech,folder,
+                        lambda stage,value: self.store.set_progress(job_id,stage,value))
+                except (GenerationError,MathAnimationError,SpeechError) as exc:
+                    if not direct_draft:raise
+                    # Optional animation must not discard a usable full course.
+                    from zhijiang.models import Evidence
+                    for number,original in lesson.animation_report.get('construction_fallbacks',{}).items():
+                        segment=lesson.segments[int(number)-1]
+                        segment.visual_scene=None;segment.narration=original['narration']
+                        segment.evidence=Evidence.model_validate(original['evidence'])
+                    lesson.animation_report.setdefault('warnings',[]).append({
+                        'stage':'construction_render','message':str(exc)})
+                    lesson.animation_report['construction_groups']=[]
+                    lesson.animation_report['prepared_scenes']=[]
+                (folder/'presentation-plan.json').write_text(
+                    json.dumps(lesson.deck_plan,ensure_ascii=False,indent=2),encoding='utf-8')
                 self.store.save_lesson(job_id,lesson)
             for index, segment in enumerate(lesson.segments):
                 if segment.math_scene:

@@ -105,7 +105,7 @@ def prepare(root):
     cases = []; input_dir = root / 'inputs'; input_dir.mkdir(exist_ok=True)
     for source in spec['sources']:
         original = download(source, root); reader = PdfReader(original)
-        license_text = reader.pages[source['license_page'] - 1].extract_text() or ''
+        license_text = source.get('license_notice') or reader.pages[source['license_page'] - 1].extract_text() or ''
         (root / 'sources' / (source['id'] + '-license.txt')).write_text(license_text, encoding='utf-8')
         for count in spec['page_counts']:
             numbers = list(range(source['start_page'], source['start_page'] + count))
@@ -128,6 +128,7 @@ def prepare(root):
             for form, path in [('text', text_pdf), ('ocr', scan)]:
                 cases.append({'id': base_id + '-' + form, 'source_id': source['id'],
                     'domain': source['domain'], 'title': source['title'], 'pages': count, 'format': form,
+                    'language': source.get('language', 'en'), 'level': source.get('level'),
                     'original_pages': numbers, 'input': path.relative_to(root).as_posix(),
                     'sha256': digest(path), 'source_sha256': source['sha256'],
                     'reference': (references / (base_id + '.json')).relative_to(root).as_posix(),
@@ -144,17 +145,17 @@ def prepare(root):
 def introduction(spec):
     counts = ' / '.join(map(str, spec['page_counts']))
     total = len(spec['sources']) * len(spec['page_counts']) * len(spec['formats'])
-    text = ['# Book2Course Textbook Benchmark v1', '',
-        f"{len(spec['sources'])} 个领域，{counts} 页，原生文字 PDF 与同内容纯图像 PDF 配对，共 {total} 个案例。",
+    text = ['# Book2Course Textbook Benchmark ' + spec['version'], '',
+        f"{len(spec['sources'])} 个学科/学段组，{counts} 页，原生文字 PDF 与同内容纯图像 PDF 配对，共 {total} 个案例。",
         f"选页保留原版布局、表格、图片及原书页码映射；纯图像版以 {spec['scan_dpi']} DPI、JPEG {spec['scan_jpeg_quality']} 生成，没有隐藏文字层。",
-        '图像版为可控模拟扫描，未加入手机拍照、污渍或旋转干扰；本轮输入为英文，Agent 输出中文。', '',
+        '图像版为可控模拟扫描，未加入手机拍照、污渍或旋转干扰；输入语言和学段逐教材记录，Agent 输出中文。', '',
         '## 来源与许可', '']
     for source in spec['sources']:
         text.append(f"- **{source['domain']}**：{source['title']}，{source['author']}，{source['year']}；原 PDF 从第 {source['start_page']} 页开始。来源：{source['url']}；许可：{source['license']}（{source['license_url']}）。")
     text += ['', '本轮用途为非商业评估。原始教材与衍生选页遵循各书许可，保留原图的单独署名；它们不改为项目 MIT 许可。', '',
         '## 固定生成条件', '', json.dumps(spec['preset'], ensure_ascii=False), '',
         '只传 PDF 和固定通用教学偏好；评价锚点、答案、图形坐标与人为分镜不传给 Agent。每个案例创建新任务，使用真实模型、正常解析、课程规划、图示、配音、PPT 与视频合成。',
-        '本轮使用本机 Ollama qwen3.5:9b 的快速配置（可选深度推理关闭）和 Windows 系统语音，未调用 DeepSeek 或其他云模型 API；不代表更强模型、深度推理或其他模板的最好效果。', '',
+        '通过 Ollama 接入模型并使用 Windows 系统语音。默认本地模型；仅明确启用的公开输入对照可使用非 DeepSeek 云模型。实际模型、远程标记和推理设置见 run.json；不同配置分开记录，不代表其他模型或模板的最好效果。', '',
         '## 指标与范围', '',
         '- 首次任务成功率：是否完成全部正常生成步骤；内部模型结构修复调用包含在耗时和 token 中。',
         '- 解析：页数、OCR 页数、文字量、相对文字版提取的词项 F1；参考提取可能拼接单词，F1 不是 OCR 准确率，也不衡量语序、语义或公式正确性。',
@@ -202,7 +203,7 @@ def _ffmpeg(*args):
     return subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-v', 'error', *map(str, args)], capture_output=True)
 
 
-def artifact_checks(folder, lesson, review_dir):
+def artifact_checks(folder, lesson, review_dir, *, review_all=False):
     from xml.etree import ElementTree as ET
     review_dir.mkdir(parents=True, exist_ok=True)
     ppt = folder / 'lesson.pptx'; video = folder / 'lesson.mp4'
@@ -210,6 +211,8 @@ def artifact_checks(folder, lesson, review_dir):
     with ZipFile(ppt) as archive:
         archive_ok = archive.testzip() is None
         svgs = [name for name in archive.namelist() if name.endswith('.svg')]
+        embedded_media=[name for name in archive.namelist() if name.startswith('ppt/media/') and
+            Path(name).suffix.lower() in {'.mp4','.wav','.mp3','.m4a','.avi','.wmv'}]
         for name in svgs: ET.fromstring(archive.read(name))
     deck = Presentation(ppt)
     notes = '\n'.join(slide.notes_slide.notes_text_frame.text for slide in deck.slides)
@@ -233,6 +236,7 @@ def artifact_checks(folder, lesson, review_dir):
     audio_rms = float(np.sqrt(np.mean(samples ** 2))) if len(samples) else 0
     frame_checks = []; cursor = sum(b['duration'] for b in manifest.get('bookends', []) if b['kind'] == 'cover')
     selected = {0, len(manifest.get('segments', [])) // 2, max(0, len(manifest.get('segments', [])) - 1)}
+    if review_all:selected=set(range(len(manifest.get('segments',[]))))
     contact = Image.new('RGB', (1280, 390 * max(1, (len(selected) + 1) // 2)), '#eef1f4')
     draw = ImageDraw.Draw(contact); slot = 0
     for n, entry in enumerate(manifest.get('segments', [])):
@@ -256,6 +260,15 @@ def artifact_checks(folder, lesson, review_dir):
                 motion = round(float(np.mean(np.max(change, axis=2) > 12)), 5)
             frame_checks.append({'segment_id': entry['segment_id'], 'page': entry['pages'][-1], 'time': stamp,
                                  'ppt_video_mean_pixel_error': round(difference, 3), 'changed_pixel_fraction': motion})
+            scene=lesson.segments[entry['segment_id']-1].visual_scene
+            if scene:
+                for part,fraction in [('early',.1),('middle',.5)]:
+                    raw_scene=_ffmpeg('-ss',cursor+seconds*fraction,'-i',video,'-frames:v',1,
+                        '-f','rawvideo','-pix_fmt','rgb24','-')
+                    if raw_scene.returncode or len(raw_scene.stdout)!=1280*720*3:
+                        raise RuntimeError('Could not decode computed scene review frame')
+                    Image.frombytes('RGB',(1280,720),raw_scene.stdout).save(
+                        review_dir/f"segment-{entry['segment_id']:03d}-{part}.png")
             x, y = slot % 2 * 640, slot // 2 * 390
             contact.paste(frame.resize((640, 360)), (x, y))
             draw.text((x + 12, y + 363), f"Segment {entry['segment_id']} / actual MP4 frame", fill='black')
@@ -269,6 +282,10 @@ def artifact_checks(folder, lesson, review_dir):
         if not frames: continue
         changed.append({'segment_id': entry['segment_id'], 'unique_frames': len({digest(p) for p in frames})})
     return {'pptx_valid': archive_ok, 'slides': len(deck.slides), 'svg_count': len(svgs), 'notes_complete': notes_complete,
+        'embedded_audio_video_count':len(embedded_media),'static_deck':not embedded_media,
+        'computed_scene_segments':sum(bool(s.math_scene or (s.visual_scene and s.visual_scene.mathematical_model))
+                                     for s in lesson.segments),
+        'source_figure_pages':sum(bool(p.get('source_figure')) for p in pages),
         'segment_count_matches': len(segment_entries) == len(lesson.segments),
         'cover_and_closing_present': {entry['kind'] for entry in manifest.get('bookends', [])} >= {'cover','ending'},
         'full_video_duration_matches_segments': abs(expected_duration - duration) < .5,
@@ -335,11 +352,12 @@ def grade(root, case, store, job_id, generation_seconds=None):
         write_json(root / 'reviews' / case['id'] / 'script.json', {'case': case['id'], 'anchors': anchors,
             'segments': [{'title': s.title, 'page': s.evidence.page, 'narration': s.narration} for s in lesson.segments]})
     if store.get(job_id)['status'] == 'completed' and lesson:
-        result['artifacts'] = artifact_checks(folder, lesson, root / 'reviews' / case['id'])
+        result['artifacts'] = artifact_checks(folder, lesson, root / 'reviews' / case['id'],
+                                            review_all=read_json(SPEC).get('version')=='textbooks-v2')
     return result
 
 
-def run(root, model=None, selected=None):
+def run(root, model=None, selected=None, *, allow_ollama_cloud=False):
     dataset = read_json(root / 'dataset.json')
     if not dataset or dataset['spec_sha256'] != digest(SPEC) or dataset['rubric_sha256'] != digest(RUBRIC):
         raise ValueError('Prepare the frozen corpus before running; spec/rubric must match')
@@ -347,22 +365,37 @@ def run(root, model=None, selected=None):
     if local.llm_provider != 'ollama' or not local.llm_is_local:
         raise ValueError('This benchmark uses a local Ollama model; remote keys and private inputs are excluded')
     chosen = model or local.llm_model
-    if chosen.lower().endswith((':cloud', '-cloud')): raise ValueError('Use a local model tag')
+    if 'deepseek' in chosen.casefold(): raise ValueError('DeepSeek is excluded from this benchmark')
+    cloud=Settings.model_is_remote('ollama',local.llm_base_url,chosen)
+    if cloud and not allow_ollama_cloud: raise ValueError('Use a local model tag, or explicitly enable the public-input Ollama cloud comparison')
     if selected and set(selected) - {case['id'] for case in dataset['cases']}:
         raise ValueError('Unknown benchmark case ID')
     root_settings = replace(local, data_dir=root / 'tasks')
     options = GenerationOptions(provider='ollama', base_url=local.llm_base_url, model=chosen,
         prompt=spec['prompt'], **{k: v for k, v in spec['preset'].items() if k != 'voice_mode'})
     config = {'model': chosen, 'provider': 'ollama', 'semantic_thinking': options.semantic_thinking,
-        'context_tokens': local.ollama_context_tokens, 'gpu_layers': local.ollama_num_gpu,
+        'context_tokens': None if cloud else local.ollama_context_tokens, 'gpu_layers': None if cloud else local.ollama_num_gpu,
         'voice': 'Windows system speech', 'preset': spec['preset'], 'prompt': spec['prompt'],
         'git_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip(),
         'python': platform.python_version(), 'platform': platform.system(),
         'benchmark_script_sha256': digest(Path(__file__)),
+        'remote_model':cloud,'public_input_transmission_consent':bool(cloud and allow_ollama_cloud),
+        'production_sha256': {p.relative_to(REPO).as_posix(): digest(p)
+            for p in sorted((REPO / 'zhijiang').glob('*.py'))},
         'started_at': datetime.now(timezone.utc).isoformat()}
     existing = read_json(root / 'run.json')
-    if existing and any(existing[k] != config[k] for k in ('model', 'preset', 'prompt', 'context_tokens', 'gpu_layers', 'git_commit')):
+    if existing and any(existing[k] != config[k] for k in ('model', 'preset', 'prompt', 'context_tokens', 'gpu_layers')):
         raise ValueError('Run configuration changed; use a new output directory')
+    if existing and existing.get('production_sha256', config['production_sha256']) != config['production_sha256']:
+        raise ValueError('Production code changed; use a separate run directory to preserve comparisons')
+    if existing and existing.get('git_commit') != config['git_commit']:
+        # A documentation commit does not alter the frozen production bytes.
+        # Retain the original revision and record each identical-code resumption.
+        revisions=existing.setdefault('resume_revisions',[])
+        if not revisions or revisions[-1]['git_commit'] != config['git_commit']:
+            revisions.append({'git_commit':config['git_commit'],'at':config['started_at'],
+                              'production_sha256_unchanged':True})
+            write_json(root/'run.json',existing)
     if not existing: write_json(root / 'run.json', config)
     store = ObservedStore(root / 'tasks'); processor = JobProcessor(root_settings, store)
     results = read_json(root / 'results.json', {})
@@ -374,7 +407,7 @@ def run(root, model=None, selected=None):
         if case['id'] in results: continue
         input_pdf = root / case['input']
         if digest(input_pdf) != case['sha256']: raise ValueError('Benchmark input changed: ' + case['id'])
-        job = store.create(input_pdf.name, Mode.AI, VoiceMode.SYSTEM, True, False, input_pdf.read_bytes(), options)
+        job = store.create(input_pdf.name, Mode.AI, VoiceMode.SYSTEM, True, bool(cloud and allow_ollama_cloud), input_pdf.read_bytes(), options)
         job_id = job['id']; store.labels[job_id] = case['id']
         write_json(root / 'current.json', {'case_id': case['id'], 'job_id': job_id, 'started_at': datetime.now(timezone.utc).isoformat()})
         started = time.perf_counter(); print('START', case['id'], job_id, flush=True)
@@ -435,7 +468,7 @@ def recover_exports(root):
                'generation_rerun': False, 'tts_rerun': False,
                'notes': '沿用首轮课程与配音，知识与图示评价不重置。'}
         try:
-            for directory in ('math','visual','source-pages'):
+            for directory in ('math','visual','source-pages','source-figures'):
                 if (folder / directory).is_dir(): shutil.copytree(folder / directory, output / directory, dirs_exist_ok=True)
             audio = []
             for n, path in enumerate(paths):
@@ -629,11 +662,13 @@ def report_html(root, dataset, results, manual, overview, gallery):
                 links.append(f'<li>{escape(name)}：恢复导出 {display(row.get("export_seconds"))} 秒；<a href="recoveries/{escape(name)}/lesson.pptx">PPT</a> · <a href="recoveries/{escape(name)}/lesson.mp4">视频</a>。{note}<br><img src="recovery-reviews/{escape(name)}/frames.png" loading="lazy" alt="恢复后的实际视频帧"></li>')
             else: links.append(f'<li>{escape(name)}：{escape(row["status"])}；{note}</li>')
         recovery_html = '<section><h2>修复后的独立恢复记录</h2><p>沿用首次任务的课程与音频重新导出，不再请求模型。首次失败状态与计量保留；工程恢复不修正原讲稿中的知识错误。</p><ul>'+''.join(links)+'</ul></section>'
+    spec = read_json(SPEC)
+    description = f"{len(spec['sources'])} 个学科／学段 × {' / '.join(map(str, spec['page_counts']))} 页 × 文字版 / 纯图像版，共 {len(dataset['cases'])} 项。"
     return '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Book2Course 教材 Benchmark</title>
 <style>body{font:17px/1.7 system-ui;margin:0;background:#f4f7fb;color:#17283a}main{max-width:1440px;margin:36px auto;padding:0 28px}h1{font-size:38px;margin-bottom:8px}h2{font-size:27px}.cards{display:flex;gap:16px;flex-wrap:wrap}.card,section,.table{background:white;border:1px solid #d8e1ed;border-radius:14px;padding:22px;margin:18px 0}.card strong{display:block;font-size:30px;color:#1762a8}.filters{display:flex;gap:16px;flex-wrap:wrap;margin:22px 0}select{font:inherit;padding:8px 14px;border:1px solid #aebccc;border-radius:8px}.table{overflow:auto;padding:0}table{border-collapse:collapse;font-size:16px;width:100%}th,td{padding:12px;border-bottom:1px solid #d8e1ed;text-align:left;white-space:nowrap}th{background:#edf3fb}.detail td{white-space:normal;color:#526377;padding-top:0}a{color:#1762a8}img{max-width:100%;border-radius:8px}.method{color:#4d6077}summary{cursor:pointer;font-weight:650}section{break-inside:avoid}@media print{select,.filters{display:none}body{background:white}.table{overflow:visible}table{font-size:11px}main{padding:0}}</style><main>
-<p>Book2Course · 真实生产流程评估</p><h1>多领域教材与 OCR Benchmark</h1><p>4 个领域 × 2 / 6 / 12 页 × 文字版 / 纯图像版，共 24 项。英文教材输入，中文课程输出。</p>
+<p>Book2Course · 真实生产流程评估</p><h1>多领域教材与 OCR Benchmark</h1><p>''' + escape(description) + '''</p>
 <div class="cards"><div class="card">已执行<strong>''' + str(overview['executed']) + ' / ' + str(overview['expected']) + '''</strong></div><div class="card">首次生成完成<strong>''' + str(overview['completed']) + '''</strong></div><div class="card">首次生成失败<strong>''' + str(overview['failed']) + '''</strong></div><div class="card">尝试耗时中位数<strong>''' + display(round(overview['median_generation_seconds'],1) if overview['median_generation_seconds'] is not None else None) + ''' 秒</strong></div></div>
-<p class="method">模型：''' + escape(config.get('model','未运行')) + '''；可选深度推理关闭；系统语音；学术课堂；直接生成。一次外层尝试，内部修复计入耗时与 token。工程完成不等于教学正确；人工评价只覆盖已注明的抽查。</p>
+<p class="method">模型：''' + escape(config.get('model','未运行')) + '''；可选深度推理：''' + ('开启' if config.get('semantic_thinking') else '关闭') + '''；系统语音；学术课堂；直接生成。一次外层尝试，内部修复计入耗时与 token。工程完成不等于教学正确；人工评价只覆盖已注明的抽查。</p>
 <p><strong>''' + quality + '''</strong></p>
 <p><a href="INTRODUCTION.md">完整 Benchmark 介绍</a> · <a href="results.csv">CSV 数据</a> · <a href="results.json">原始统计</a> · <a href="REPORT.md">文字报告</a>''' + findings_link + '''</p>
 <div class="filters"><label>领域 <select id="domain"><option value="">全部</option>''' + domains + '''</select></label><label>页数 <select id="pages"><option value="">全部</option><option>2</option><option>6</option><option>12</option></select></label><label>输入 <select id="format"><option value="">全部</option><option value="text">文字</option><option value="ocr">OCR</option></select></label></div>
@@ -667,16 +702,23 @@ def package(root, include_media=False):
 
 
 def main():
+    global SPEC, RUBRIC
     if hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['prepare','run','audit','recover','report','package'])
     parser.add_argument('--root', type=Path, default=Path('data/textbook-benchmark'))
+    parser.add_argument('--suite', type=Path, help='Versioned directory containing spec.json and rubric.json; defaults to textbooks_v1')
     parser.add_argument('--model')
-    parser.add_argument('--cases', help='Optional comma-separated case IDs; omit for all 24 cases')
+    parser.add_argument('--allow-ollama-cloud',action='store_true',
+        help='Explicitly consent to a separate Ollama cloud comparison on hash-pinned public inputs; DeepSeek remains excluded')
+    parser.add_argument('--cases', help='Optional comma-separated case IDs; omit for the complete suite')
     parser.add_argument('--include-media', action='store_true', help='Include final PPT/videos in the review ZIP, never model caches or credentials')
     args = parser.parse_args(); root = args.root.resolve()
+    if args.suite:
+        SPEC = args.suite.resolve() / 'spec.json'; RUBRIC = args.suite.resolve() / 'rubric.json'
     if args.command == 'prepare': prepare(root)
-    elif args.command == 'run': run(root, args.model, args.cases.split(',') if args.cases else None)
+    elif args.command == 'run': run(root, args.model, args.cases.split(',') if args.cases else None,
+                                  allow_ollama_cloud=args.allow_ollama_cloud)
     elif args.command == 'audit': audit(root)
     elif args.command == 'recover': recover_exports(root)
     elif args.command == 'report': print(json.dumps(report(root), ensure_ascii=False))

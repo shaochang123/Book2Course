@@ -61,9 +61,9 @@ def visual_summary_svg(scene, state_index=-1) -> str:
     functions=[obj for obj in scene.objects if obj.kind=='curve' and obj.id in state['visible']] if scene.mathematical_model else []
     if len(functions)>6:raise ValueError('单画面最多同时显示六条函数及公式，请分步显示。')
     parts+=['</g>','<rect width="1200" height="78" fill="#10283A"/>','<rect y="540" width="1200" height="135" fill="#10283A"/>',
-            f'<text x="50" y="570" font-size="19" fill="#6DE2C0">{html.escape(parameter_label)}</text>',
-            f'<text x="50" y="602" font-size="19" fill="#FFA458">{html.escape(calculation_label)}</text>',
-            f'<text x="50" y="642" font-size="19" fill="#AEC4D0">{html.escape(scene.domain)} · PDF 第 {scene.evidence.page} 页 · 示意与计算检查，领域解释需复核</text>']
+            '' if scene.mathematical_model else f'<text x="50" y="570" font-size="19" fill="#6DE2C0">{html.escape(parameter_label)}</text>',
+            f'<text x="50" y="602" font-size="{28 if scene.mathematical_model else 19}" fill="#FFA458">{html.escape(calculation_label)}</text>',
+            '']
     if functions:
         # Replace the two default footer lines with equations of the actual
         # plotted expressions. No model-authored equation label is trusted.
@@ -152,7 +152,7 @@ def teaching_summary_svg(scene):
         for i,line in enumerate(wrap_label(summary,54).splitlines()):
             parts.append(f'<text x="45" y="{555+i*27}" font-size="20" fill="#E5EEF3">{html.escape(line)}</text>')
     guide='原文关系图' if diagram.relations else '原文图示讲解'
-    parts.append(f'<text x="45" y="650" font-size="18" fill="#A7C0CC">PDF 第 {scene.evidence.page} 页 · {guide} · 动效表示解释顺序，非物理模拟</text></svg>')
+    parts.append('</svg>')
     return ''.join(parts)
 
 
@@ -242,5 +242,6 @@ def render_visual_assets(lesson,speech,folder,progress, *, reuse_audio=False):
         if not segment.visual_scene: continue
         progress(f'配音与渲染通用场景（{i+1}/{len(lesson.segments)}）：{segment.title}',74+i*15//len(lesson.segments))
         asset=render_visual_scene(segment.visual_scene,speech,folder/'visual'/f'scene-{i+1:02d}',reuse_audio=reuse_audio); asset['segment_index']=i; assets.append(asset)
+        segment.narration=' '.join(cue['text'] for cue in asset['timing'])
     lesson.animation_report['assets']=assets
     (folder/'scene-data.json').write_text(json.dumps({'lesson':lesson.model_dump(),'assets':assets},ensure_ascii=False,indent=2),encoding='utf-8')

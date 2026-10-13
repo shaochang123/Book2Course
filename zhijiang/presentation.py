@@ -460,13 +460,6 @@ def _set_title(slide, segment: LessonSegment, number: int, total: int,
     _background(slide)
     _textbox(slide, segment.title, 0.66, 0.25, 10.8, 0.7,
              size=32, bold=True)
-    label = ("点击播放数学推演 · 含配音" if animation else "SVG 数学摘要") if segment.math_scene else (
-        ("点击播放教学过程 · 含配音" if animation else "SVG 场景摘要") if segment.visual_scene else
-        ("点击播放动画" if animation else "SVG 教学图"))
-    _textbox(slide, f"{number:02d} / {total:02d}  ·  {label}",
-             0.69, 1.03, 11.8, 0.35, size=16, color=ACCENT, bold=True)
-    _textbox(slide, f"来源：PDF 第 {segment.evidence.page} 页",
-             0.69, 7.05, 5.8, 0.25, size=13, color=MUTED)
 
 
 def _patch_svg_parts(original: Path, output: Path,
@@ -525,12 +518,9 @@ def _patch_svg_parts(original: Path, output: Path,
 
 
 def render_presentation(lesson: Lesson, output: Path) -> None:
-    """Create a self-contained PPTX with one diagram and one animation per segment.
+    """Create static SVG/PNG teaching slides with complete speaker notes.
 
-    The visual diagram is embedded as an SVG object plus a PNG compatibility
-    fallback. Titles and footers are native editable text. Each animation is a
-    self-contained MP4 media shape playable in slideshow mode (scene clips include audio). Narration
-    and exact PDF excerpts are in speaker notes.
+    Continuous animations and spoken narration are exported separately as MP4.
     """
     if lesson.ppt_template != 'classic' or lesson.deck_plan:
         from zhijiang.deck_renderer import render_template_presentation
@@ -547,7 +537,7 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
         presentation.slide_height = Inches(7.5)
         presentation.core_properties.title = _safe_text(lesson.title)
         presentation.core_properties.subject = "PDF 教学课件"
-        presentation.core_properties.comments = "包含来源可追溯的 SVG 教学图和 MP4 动画。"
+        presentation.core_properties.comments = "静态 SVG 教学图；讲稿与来源保存在备注。"
         blank = presentation.slide_layouts[6]
         cover = presentation.slides.add_slide(blank)
         _background(cover)
@@ -556,21 +546,16 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
         bar.fill.solid()
         bar.fill.fore_color.rgb = _color(ACCENT)
         bar.line.fill.background()
-        _textbox(cover, "Book2Course · 教学课件", 1.03, 1.4, 8.8, 0.45,
-                 size=19, color=ACCENT, bold=True)
         _textbox(cover, lesson.title, 1.03, 2.0, 11.4, 1.4,
                  size=44, bold=True)
         _textbox(cover, lesson.objective, 1.03, 3.7, 10.6, 1.15,
                  size=24, color=MUTED)
-        _textbox(cover, f"{len(lesson.segments)} 个知识点 · SVG 图示与动画演示",
-                 1.03, 6.65, 10.5, 0.35, size=17, color=ACCENT)
         cover_notes = cover.notes_slide.notes_text_frame
         if cover_notes is not None:
             cover_notes.text = f"课程目标：{_safe_text(lesson.objective)}"
             attribution = lesson.animation_report.get("source_attribution", {})
             if attribution:
                 credit = f"原理来源：{attribution['author']} · {attribution['title']} · {attribution['license']}"
-                _textbox(cover, credit, 1.03, 5.65, 11.4, 0.6, size=15, color=MUTED)
                 cover_notes.text += f"\n{credit}\n{attribution['url']}\n{attribution['license_url']}\n本课数值例子、动画和中文解释为补充教学示例。"
 
         svg_assets: dict[int, tuple[int, bytes]] = {}
@@ -605,22 +590,14 @@ def render_presentation(lesson: Lesson, output: Path) -> None:
             _notes(diagram_slide, segment, animation=False,
                    spoken_steps=spoken_by_segment.get(index - 1))
 
-            if segment.math_scene or segment.visual_scene:
-                clip = math_folder / "clip.mp4"
-                poster = math_folder / "poster.png"
-            else:
-                clip = work / f"animation-{index}.mp4"
-                poster = work / f"animation-{index}.png"
-                _render_animation(segment, index, total, clip, poster)
-            animation_slide = presentation.slides.add_slide(blank)
-            _set_title(animation_slide, segment, index, total, animation=True)
-            animation_slide.shapes.add_movie(
-                str(clip), Inches(1.9915), Inches(1.48), Inches(9.35), Inches(5.2594),
-                poster_frame_image=str(poster), mime_type="video/mp4"
-            )
-            _notes(animation_slide, segment, animation=True,
-                   spoken_steps=spoken_by_segment.get(index - 1))
+            # Narrated animation is exported separately by render_video.
 
+        closing=presentation.slides.add_slide(blank);_background(closing)
+        _textbox(closing,'回顾这节课',.8,.5,11.7,.8,size=40,bold=True)
+        for row,segment in enumerate(lesson.segments[-3:]):
+            _textbox(closing,segment.bullets[0],.9,1.8+row*1.45,11.4,1.15,size=26)
+        closing.notes_slide.notes_text_frame.text='\n\n'.join(
+            s.narration+'\n'+s.evidence.model_dump_json() for s in lesson.segments[-3:])
         original = work / "presentation-base.pptx"
         presentation.save(original)
         patched = work / "presentation-final.pptx"

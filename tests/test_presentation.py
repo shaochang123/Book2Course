@@ -1,4 +1,4 @@
-"""Validate the deliverable PPTX, including embedded vector/video media."""
+"""Validate static vector courseware without embedded movie shapes."""
 
 from __future__ import annotations
 
@@ -48,19 +48,19 @@ def _lesson() -> Lesson:
     )
 
 
-def test_pptx_embeds_svg_and_animation_with_notes(tmp_path: Path) -> None:
+def test_pptx_embeds_static_svg_with_notes_and_bookends(tmp_path: Path) -> None:
     path = tmp_path / "lesson.pptx"
     render_presentation(_lesson(), path)
 
     deck = Presentation(path)
-    assert len(deck.slides) == 7  # cover, then diagram + animation for each point
-    for slide in (deck.slides[1],deck.slides[3],deck.slides[5]):
+    assert len(deck.slides) == 5  # cover, one static diagram per point, closing
+    for slide in (deck.slides[1],deck.slides[2],deck.slides[3]):
         picture=next(shape for shape in slide.shapes if shape.shape_type==13)
         pixels=picture.image.size
         assert abs(picture.width/picture.height-pixels[0]/pixels[1])<.0001
     assert "七年级概率导论" in " ".join(shape.text for shape in deck.slides[0].shapes
                                       if shape.has_text_frame)
-    assert "计算顺序 <A & B>" in " ".join(shape.text for shape in deck.slides[5].shapes
+    assert "计算顺序 <A & B>" in " ".join(shape.text for shape in deck.slides[3].shapes
                                               if shape.has_text_frame)
 
     with zipfile.ZipFile(path) as archive:
@@ -69,8 +69,7 @@ def test_pptx_embeds_svg_and_animation_with_notes(tmp_path: Path) -> None:
         svg_parts = sorted(name for name in names if name.endswith(".svg"))
         movies = sorted(name for name in names if name.endswith(".mp4"))
         assert len(svg_parts) == 3
-        assert len(movies) == 3
-        assert all(archive.getinfo(name).file_size > 1000 for name in movies)
+        assert movies == []
         svg_text = [archive.read(name).decode("utf-8") for name in svg_parts]
         for value in svg_text:
             ET.fromstring(value)
@@ -81,7 +80,7 @@ def test_pptx_embeds_svg_and_animation_with_notes(tmp_path: Path) -> None:
 
         drawing_ns = "http://schemas.microsoft.com/office/drawing/2016/SVG/main"
         relation_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-        for slide_number in (2, 4, 6):
+        for slide_number in (2, 3, 4):
             xml = ET.fromstring(archive.read(f"ppt/slides/slide{slide_number}.xml"))
             svg_refs = xml.findall(f".//{{{drawing_ns}}}svgBlip")
             assert len(svg_refs) == 1
@@ -95,18 +94,3 @@ def test_pptx_embeds_svg_and_animation_with_notes(tmp_path: Path) -> None:
         notes = archive.read("ppt/notesSlides/notesSlide2.xml").decode("utf-8")
         assert "The probability lies between 0 and 1." in notes
         assert "样本空间" in notes
-
-        clip = tmp_path / "first-animation.mp4"
-        clip.write_bytes(archive.read(movies[0]))
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    frames = []
-    for second in (0.2, 4.2):
-        result = subprocess.run(
-            [ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", str(second),
-             "-i", str(clip), "-frames:v", "1", "-vf", "scale=160:90",
-             "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
-            capture_output=True, check=True,
-        )
-        frames.append(result.stdout)
-    assert len(frames[0]) == len(frames[1]) == 160 * 90 * 3
-    assert frames[0] != frames[1]

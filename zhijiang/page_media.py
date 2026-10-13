@@ -1,4 +1,4 @@
-"""Shared full-slide clips for native PPT playback and the final video."""
+"""Separate narrated video, using the same layout as the static PPT."""
 from __future__ import annotations
 import hashlib
 import json
@@ -12,7 +12,14 @@ import imageio_ffmpeg
 def media_fingerprint(lesson, audio_files):
     from zhijiang.visual_assets import AssetCatalog
     from zhijiang.presentation_templates import get_template,template_backdrop_svg
-    digest = hashlib.sha256(('shared-pages-v23-bounded-illustration-support'+lesson.model_dump_json()).encode())
+    digest = hashlib.sha256(('shared-pages-v26-source-figure-aspect-static-deck'+lesson.model_dump_json()).encode())
+    # Program-selected source crops affect PPT and video, not just course JSON.
+    for figure in (lesson.deck_plan or {}).get('source_figures',{}).values():
+        if audio_files:
+            root=Path(audio_files[0]).parent
+            if root.name.startswith('scene-'):root=root.parent.parent
+            path=root/figure['file']
+            if path.is_file():digest.update(path.read_bytes())
     digest.update(AssetCatalog().fingerprint.encode())
     template=get_template(lesson.ppt_template)
     digest.update(repr(template).encode())
@@ -35,12 +42,13 @@ def _run(args, output):
     process = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-hide_banner', '-loglevel', 'error',
         '-y', *args], capture_output=True, timeout=900)
     if process.returncode or not Path(output).is_file():
+        Path(output).with_suffix('.ffmpeg.log').write_bytes(process.stderr)
         raise PresentationError('共享画面的视频合成失败：'+process.stderr.decode('utf-8', errors='replace')[-400:])
 
 
 def _encoding():
     return ['-r','30','-fps_mode','cfr','-c:v','libx264','-preset','veryfast','-crf','20',
-            '-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-movflags','+faststart']
+            '-threads','2','-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2','-movflags','+faststart']
 
 
 def narrated_pages(states, audio, output, *, fractions=None):

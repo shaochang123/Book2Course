@@ -108,8 +108,13 @@ def test_default_pipeline_exports_real_ppt_and_mp4(tmp_path,sample_pdf):
     class Model:
         model='mock';base_url='http://localhost';semantic_thinking=False
         def close(self):pass
-        def generate(self,schema,instruction,material):
+        def generate(self,schema,instruction,material,**kwargs):
             data=json.loads(material)
+            if schema.__name__=='TeachingDraftRevision':
+                points={p['source_id']:p for p in data['source']['points']}
+                return schema.model_validate({**data['draft'],'pages':[
+                    {**p,'title':points[p['source_id']]['title'],'render_kind':'story',
+                     'graphic_group':'','context_is_condition':False,'issues':[],'figure_page':0,'figure_box':[]} for p in data['draft']['pages']]})
             if schema.__name__=='DraftBookends':
                 return schema.model_validate({'cut_after':[], 'theme_labels':['二分查找'],
                     'closing_ids':[data['closing_candidates'][0]['id']]})

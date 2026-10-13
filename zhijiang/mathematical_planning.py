@@ -47,6 +47,7 @@ reference=true表示对照图，不计为新增主体；默认false为当前演�
 # Executable operator meanings, explicitly separate from textbook evidence.
 CONTRACT+='\n对齐工具 align refs=[原对象,源锚点,源方向点,目标锚点,目标方向点] expr=[连续进度]。进度由零到一，程序以两组真实点的方向计算旋转和平移，终点源锚点移至目标锚点、源方向与目标方向一致，保持长度和面积，不缩放。不要猜旋转角。对齐弧时，可用隐藏的point_on_curve取得真实首尾方向点。先确定角弧的首尾顺序，再设置目标方向，不能以角度和正确代替端点拼接。原对象隐藏或标为reference参照，辅助点隐藏。对齐不同片段可使用相同中心及前一片段的真实末端点，禁止猜写独立拼接坐标。'
 TOOL_REFERENCE=CONTRACT.split('通用构造接口')[1].split('operations为')[0]+CONTRACT.split('对齐工具')[1]
+CONTRACT+='\nnot_equal关系表示两个实际测量量不等，可表达差异与反例；需要说明终态或整个步骤中的适用范围，不能仅在一个测量点不等就声称全程不等。每个步骤的核心结论都需要相应实际关系，不只核验前几个步骤。'
 
 def source_material(document):
     mapping={};lines=[]

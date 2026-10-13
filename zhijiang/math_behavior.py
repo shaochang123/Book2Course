@@ -58,7 +58,7 @@ def behavior_schema(program,source_ids):
     claim=create_model('MeasuredClaim',__base__=StrictMathModel,
         source_id=(Literal[tuple(source_ids)],...),left=(value,...),right=(value,...),
         phase=(Literal['invariant','endpoint'],'invariant'),steps=(list[Annotated[int,Field(ge=1,le=10)]],Field(default_factory=list,max_length=10)),
-        relation=(Literal['equal','positive','nonnegative','at_most'],'equal'))
+        relation=(Literal['equal','not_equal','positive','nonnegative','at_most'],'equal'))
     return create_model('MathBehaviorDraft',__base__=StrictMathModel,
         operations=(list[step],Field(min_length=3,max_length=10)),claims=(list[claim],Field(min_length=1,max_length=12)),
         roles=(dict[Literal[tuple(inventory)],Annotated[str,Field(pattern=r'^[^=＝{}$\\^*/<>\n]{1,24}$',max_length=24)]],Field(default_factory=dict,max_length=32)))

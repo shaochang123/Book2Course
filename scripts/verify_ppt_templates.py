@@ -59,20 +59,9 @@ def main():
                 assert archive.testzip() is None
                 svgs = [name for name in archive.namelist() if name.endswith('.svg')]
                 movies = [name for name in archive.namelist() if name.endswith('.mp4')]
-                expected = sum(item['include_animation'] for item in variant.deck_plan['pages'])
-                # ZIP may deduplicate byte-identical movies; count native media
-                # shapes to verify requested per-segment animation pages.
                 deck = Presentation(path)
                 actual = sum('video' in shape._element.xml for slide in deck.slides for shape in slide.shapes)
-                assert actual == expected and len(svgs) >= len(variant.segments)
-                for i, name in enumerate(movies):
-                    decoded = folder/f'check-movie-{i+1}.mp4'
-                    decoded.write_bytes(archive.read(name))
-                    process = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-v', 'error',
-                        '-i', str(decoded), '-f', 'null', '-'], capture_output=True, timeout=180)
-                    if process.returncode:
-                        raise RuntimeError('PPT 内嵌视频完整解码失败。')
-                    decoded.unlink()
+                assert actual == 0 and movies == [] and len(svgs) >= len(variant.segments)
             result = {'template': template_id, 'planner': variant.deck_plan['planner'],
                       'source_lesson_sha256': hashlib.sha256(source).hexdigest(),
                       'pptx_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),

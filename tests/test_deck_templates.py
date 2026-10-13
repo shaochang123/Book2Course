@@ -24,13 +24,13 @@ def test_template_deck_is_self_contained_keeps_svg_media_and_notes(tmp_path, tem
     path = tmp_path/f'{template_id}.pptx'
     render_presentation(lesson, path)
     deck = Presentation(path)
-    assert len(deck.slides) == 6
+    assert len(deck.slides) == 5  # cover, question, roadmap, static content, closing
     assert template_id in json.loads((tmp_path/'presentation-preview/manifest.json').read_text(encoding='utf-8'))['template_id']
     with zipfile.ZipFile(path) as archive:
         assert archive.testzip() is None
         svgs = [name for name in archive.namelist() if name.endswith('.svg')]
         movies = [name for name in archive.namelist() if name.endswith('.mp4')]
-        assert len(svgs) == len(movies) == 1
+        assert len(svgs) == 1 and movies == []
         ET.fromstring(archive.read(svgs[0]))
         notes = archive.read('ppt/notesSlides/notesSlide4.xml').decode('utf-8')
         assert lesson.segments[0].evidence.quote in notes

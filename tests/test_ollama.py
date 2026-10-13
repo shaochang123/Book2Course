@@ -1,6 +1,7 @@
 """本机模型配置和原生结构化输出契约。"""
 
 import json
+from typing import Literal
 
 import httpx
 from fastapi.testclient import TestClient
@@ -168,7 +169,8 @@ def test_format_retry_supplies_enum_and_numeric_contract_without_echoing_input(p
         assert result.kind=='concept' and result.value==.785 and len(requests)==2
 
 
-@pytest.mark.parametrize('stage',['TopicSourceScope','TopicScopeReview'])
+@pytest.mark.parametrize('stage',['TopicSourceScope','TopicScopeReview','TeachingDraftBatch',
+    'TeachingDraftRevision','SourcePictureReading','SourceFigureAlignment'])
 @pytest.mark.parametrize('enabled',[True,False])
 def test_topic_scope_stages_follow_semantic_thinking_configuration(stage,enabled):
     from pydantic import create_model
@@ -184,6 +186,88 @@ def test_topic_scope_stages_follow_semantic_thinking_configuration(stage,enabled
     with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
         client=OllamaClient('http://localhost:11434','installed-model',http_client,semantic_thinking=enabled)
         assert client.generate(schema,'核对教学范围','source').reason=='原文覆盖当前范围'
+
+
+def test_ollama_cloud_omits_negative_limit_and_local_gpu_knobs():
+    from pydantic import create_model
+    schema=create_model('SourceFigureAlignment',reason=(str,...))
+    def handler(request):
+        if request.url.path=='/api/show':
+            return httpx.Response(200,json={'thinking':{'values':[False,True],'default':False}})
+        payload=json.loads(request.content)
+        assert not {'num_predict','num_gpu','num_ctx'}&set(payload['options'])
+        assert payload['think'] is True
+        return httpx.Response(200,json={'message':{'content':'{"reason":"完整生成"}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://127.0.0.1:11434','example:cloud',http_client,
+            semantic_thinking=True,context_tokens=16384,num_gpu=24)
+        assert client.generate(schema,'读取公开来源','source').reason=='完整生成'
+        assert client.call_metrics[-1]['output_token_limit'] is None
+
+
+def test_rate_limit_obeys_retry_after_and_retains_full_request(monkeypatch):
+    from pydantic import create_model
+    waited=[];requests=[]
+    monkeypatch.setattr('zhijiang.agents.time.sleep',waited.append)
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        requests.append(json.loads(request.content))
+        if len(requests)==1:return httpx.Response(429,json={'error':'limited'},headers={'Retry-After':'17'})
+        return httpx.Response(200,json={'message':{'content':'{"ready":true}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','example:cloud',http_client)
+        assert client.generate(create_model('Ready',ready=(bool,...)),'Return the complete object','public source').ready
+    assert waited==[17] and requests[0]==requests[1]
+    assert client.call_metrics[0]['retry_after_seconds']==17
+
+
+def test_monthly_provider_limit_is_not_retried_as_transient(monkeypatch):
+    from pydantic import create_model
+    from zhijiang.agents import GenerationError
+    waited=[];calls=[]
+    monkeypatch.setattr('zhijiang.agents.time.sleep',waited.append)
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        calls.append(request)
+        return httpx.Response(429,json={'error':'you have reached your monthly usage limit'})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','example:cloud',http_client)
+        with pytest.raises(GenerationError,match='月度额度已用尽'):
+            client.generate(create_model('Ready',ready=(bool,...)),'Return the object','public source')
+    assert len(calls)==1 and not waited and client.call_metrics[-1]['error']=='upstream_monthly_usage_limit'
+
+
+def test_semantic_sampler_recovers_when_runtime_thinks_despite_disabled_control():
+    from pydantic import create_model
+    bodies=[]
+    def handler(request):
+        if request.url.path=='/api/show':
+            return httpx.Response(200,json={'thinking':{'values':[False,True],'default':False}})
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200,json={'message':{'thinking':'Unexpected reasoning from this runtime.',
+            'content':'{"ready":true}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost','local',http_client,semantic_thinking=False)
+        for stage in ['SourcePictureReading','SourceFigureAlignment']:
+            assert client.generate(create_model(stage,ready=(bool,...)),'Read the source','source').ready
+    assert bodies[0]['think'] is False and bodies[0]['options']['temperature']==0
+    assert bodies[1]['think'] is False and 'temperature' not in bodies[1]['options']
+    assert client.call_metrics[-1]['reasoning_observed']
+
+
+@pytest.mark.parametrize('stage',['SourcePictureReading','SourceFigureAlignment','TeachingDraftRevision'])
+def test_vision_revision_uses_simple_json_decoding_and_full_contract(stage):
+    from pydantic import create_model
+    schema=create_model(stage,selected=(Literal[1,2],...))
+    calls=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        payload=json.loads(request.content);calls.append(payload)
+        assert payload['format']=='json'
+        return httpx.Response(200,json={'message':{'content':'{"selected":2}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        assert OllamaClient('http://localhost','local',http_client).generate(schema,'Use a valid ID','source').selected==2
+    assert calls and 'selected' in calls[0]['messages'][0]['content']+calls[0]['messages'][1]['content']
 
 
 def test_local_config_and_environment_precedence(tmp_path, monkeypatch):

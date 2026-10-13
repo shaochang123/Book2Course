@@ -1,0 +1,60 @@
+{
+  "version": "textbooks-v2-rubric",
+  "frozen_before_runs": true,
+  "limits": "Mention anchors are not correctness scores. Review knowledge, source conditions, actual diagram objects, numerical relations and meaningful continuous changes separately. Never send this file to a model during generation.",
+  "manual_dimensions": ["knowledge_and_conditions", "source_example_fidelity", "subject_specific_visual", "meaningful_animation", "narration_visual_alignment"],
+  "anchors": {
+    "math-junior": [
+      {"id":"correspondence","page":1,"claim":"相似多边形的对应角相等、对应边成比例；不是所有边相等。","groups":["对应|correspond","角|angle","比例|比值|ratio"]},
+      {"id":"scale","page":2,"claim":"比例因子对应同一方向的对应边比；比例变换保留形状，图上标注与边长方向一致。","groups":["比例|缩放|放大|scale","边|长度|side"]},
+      {"id":"perimeter","page":4,"claim":"周长按比例因子变化；不能把面积或全等关系混同为周长关系。","groups":["周长|perimeter","比例|ratio"]},
+      {"id":"AA","page":10,"claim":"三角形两组对应角相等可确定相似；对应关系有依据。","groups":["三角形|triangle","角|angle","相似|similar"]}
+    ],
+    "math-senior": [
+      {"id":"sine-law","page":1,"claim":"正弦定理配对每个角和其对边，不是任意相邻边。","groups":["正弦|sin","对边|所对|对应"]},
+      {"id":"AAS-example","page":2,"claim":"原书角42、73、65度与边12的对应关系不变；n约17.15，m约16.25，单位及角度准确。","groups":["42","73","65"]},
+      {"id":"ASA","page":6,"claim":"已知两角及夹边先确定第三角，再用正弦定理；画出的三角形有一致角边关系。","groups":["夹边|ASA|两角","正弦|sin"]},
+      {"id":"area","page":11,"claim":"面积使用两边及夹角的正弦公式；明确角是夹角，不与对边关系混用。","groups":["面积|area","正弦|sin"]}
+    ],
+    "math-university": [
+      {"id":"average-rate","page":1,"claim":"100英里、2小时的平均速度50mph不等于全程恒速。","groups":["100","50","平均|average"]},
+      {"id":"conditions","page":2,"claim":"中值定理要求闭区间连续、开区间可导；1/x²在[-1,1]不连续、|x|在0不可导。","groups":["连续|continu","可导|导数|different"]},
+      {"id":"Rolle","page":3,"claim":"端点函数值相等且满足连续可导条件，内点有导数零；不能忽略条件。","groups":["罗尔|Rolle","零|0","导数"]},
+      {"id":"monotonic","page":6,"claim":"单调性判断依据导数符号和区间，图上函数、切线和割线须使用同一坐标映射。","groups":["导数","增加|递增|单调|increas"]}
+    ],
+    "chinese-poetry": [
+      {"id":"deer-observation","page":1,"claim":"《鹿柴》不见人却听见人语；不见不等于山中无人。","groups":["不见人|不见","人语|声音|听"]},
+      {"id":"deer-light","page":2,"claim":"返景是进入深林并照到青苔的夕照，声与光形成幽静的阅读路径，阐释区别于原诗陈述。","groups":["夕|阳光|返景","青苔"]},
+      {"id":"autumn","page":4,"claim":"《山居秋暝》保留雨后秋夜，月光松间、清泉石上、浣女与渔舟的动作层次。","groups":["明月|月光","清泉|泉水","浣女|渔舟"]},
+      {"id":"bell-direction","page":6,"claim":"《枫桥夜泊》的寺钟到达客船；愁因不写成未经来源支持的确定人物事件。","groups":["钟声","客船"]},
+      {"id":"snow","page":8,"claim":"《江雪》广阔环境收束到孤舟人物；千、万是诗意概括，不能作为精确数量。","groups":["孤舟|蓑笠翁","孤|独"]},
+      {"id":"present-future","page":12,"claim":"《夜雨寄北》当下夜雨与未来相聚的愿望分开，不把未发生的事讲成已发生。","groups":["夜雨","未来|设想|盼|愿"]}
+    ],
+    "english": [
+      {"id":"patterns","page":1,"claim":"句型保留英文示例、主谓角色；直接宾语承受动作。","groups":["主语|subject","动词|谓语|verb","宾语|object"]},
+      {"id":"fragment","page":2,"claim":"Children helping in the kitchen.为残句；加often make a mess形成有谓语的完整句，不能将helping当作完整限定谓语。","groups":["helping|Children","残句|片段|不完整|fragment"]},
+      {"id":"preposition","page":4,"claim":"介词短语独立作句可能形成残句，需要完整主句，不是删除所有介词。","groups":["介词|preposition","完整|主句|句子"]},
+      {"id":"dependent","page":6,"claim":"从属片段要连接独立主句；从句前置时的逗号条件保留。","groups":["从属|从句|dependent","主句|独立|independent"]},
+      {"id":"infinitive","page":8,"claim":"to reach等不定式片段可并入完整句或补全主谓；讲解展示实际例句的修改。","groups":["to reach|不定式|infinitive","完整|句子"]}
+    ],
+    "chemistry": [
+      {"id":"reactant-product","page":1,"claim":"反应物→生成物方向明确；初始H2+O2→H2O不配平，不标称正确成品。","groups":["反应物","生成物|产物"]},
+      {"id":"balance","page":2,"claim":"2H2+O2→2H2O两侧4H、2O；改变系数而不改化学式下标。","groups":["系数","下标|化学式","守恒|配平|平衡"]},
+      {"id":"ethane","page":3,"claim":"乙烷燃烧配平为2C2H6+7O2→4CO2+6H2O；粒子数与系数一致。","groups":["乙烷|C2H6","7","6"]},
+      {"id":"state","page":5,"claim":"固液气与水溶液状态符号含义正确，aq不是纯液态。","groups":["状态|气体|液体","溶液|水溶|aq"]}
+    ],
+    "biology": [
+      {"id":"selective","page":1,"claim":"膜控制物质进出，房屋门窗为类比，不能当成细胞真实结构。","groups":["膜","进出|进入|运输"]},
+      {"id":"passive","page":2,"claim":"被动运输总体沿浓度梯度，不消耗细胞提供的能量，扩散不是所有粒子单向运动。","groups":["被动","浓度","能量"]},
+      {"id":"active","page":3,"claim":"主动运输逆浓度梯度且需要能量，不能反转方向。","groups":["主动","能量","低|逆"]},
+      {"id":"facilitated","page":4,"claim":"协助扩散依赖通道或载体而仍是被动运输，画面膜与蛋白位置有意义。","groups":["扩散","通道|载体|蛋白"]},
+      {"id":"homeostasis","page":6,"claim":"细胞运输参与维持内部稳态；胞吞胞吐中囊泡方向不同。","groups":["稳态|内环境","运输|膜"]}
+    ],
+    "physics": [
+      {"id":"medium","page":1,"claim":"介质局部暂时振动与波传播方向、能量传播相区别，不把水分子画成随波跨海平移。","groups":["介质|振动|分子","传播"]},
+      {"id":"longitudinal","page":2,"claim":"纵波有压缩疏松区，介质振动平行传播方向；横波垂直。","groups":["纵波","压缩|疏|平行"]},
+      {"id":"speed","page":3,"claim":"v=fλ、T=1/f与单位正确；94.9MHz电磁波波长约3.16m。","groups":["波长","频率","3.16|94.9"]},
+      {"id":"resonance","page":8,"claim":"共振与受迫频率、固有频率及适用条件有关，不保证所有振动无限增长。","groups":["共振|resonan","频率"]}
+    ]
+  }
+}

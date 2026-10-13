@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.util import Inches
 
-from zhijiang.deck_planning import DeckPageChoice, validate_choices, _validate_hook, visual_details
+from zhijiang.deck_planning import DeckPageChoice, validate_choices, _validate_hook, visual_details, _computed_segment
 from zhijiang.deck_renderer import Page, fit_picture, PAGE_W, PAGE_H
 from zhijiang.presentation import PresentationError, _font, _notes, _patch_svg_parts, _render_animation
 from zhijiang.presentation_templates import get_template
@@ -176,6 +176,13 @@ def render_shared_deck(lesson, output, *, audio_files=None):
     if plan.get('template_id') != template.id:
         raise PresentationError('PPT 模板与版式规划不一致。')
     choices = [DeckPageChoice.model_validate(item) for item in plan.get('pages', [])]
+    # A computed scene can be added after the ordinary page was planned. Keep
+    # its diagram viewport wide, including retained lessons being re-exported.
+    for choice in choices:
+        if not 1<=choice.segment_id<=len(lesson.segments):continue
+        segment=lesson.segments[choice.segment_id-1]
+        if _computed_segment(segment,lesson,choice.segment_id):
+            choice.layout='wide';choice.visual_groups=[]
     validate_choices(choices, lesson, template, range(1,len(lesson.segments)+1))
     _validate_hook(plan.get('hook_segment_id'), lesson)
     if [p.segment_id for p in choices] != list(range(1,len(lesson.segments)+1)):
@@ -279,8 +286,22 @@ def render_shared_deck(lesson, output, *, audio_files=None):
         body_y=max(1.6,.38+probe_height+.2); body_h=6.8-body_y
         refs=choice.asset_refs
         story_visual=story.get('visuals',{}).get(str(index),{}).get('visual') if not computed else None
+        source_figure=plan.get('source_figures',{}).get(str(index)) if not computed else None
+        if source_figure and not (root/source_figure['file']).is_file():source_figure=None
+        # Connections and long annotations need the full teaching viewport.
+        # A source illustration can use its own static page in the same segment;
+        # the segment's narration remains a single recording in the video.
+        separate_figure=bool(source_figure and story_visual and
+            (story_visual['representation'] in {'process','relationship','annotated'} or
+             any(len(i['label'])>30 or len(i['caption'])>45 for i in story_visual['items'])))
+        if source_figure:
+            # Wide source panels become unreadable beside another diagram.
+            with Image.open(root/source_figure['file']) as source_picture:
+                separate_figure=separate_figure or source_picture.width/source_picture.height>2.2
         exhibit_entry=plan.get('teaching_exhibits',{}).get('pages',{}).get(str(index),{}) if not computed else {}
         exhibit=exhibit_entry.get('exhibit') if exhibit_entry.get('accepted') else None
+        if source_figure and exhibit:
+            separate_figure=True
         if exhibit:
             from zhijiang.teaching_exhibits import TeachingExhibitDraft, validate_exhibit, exhibit_review_schema
             draft=TeachingExhibitDraft.model_validate(exhibit)
@@ -308,6 +329,7 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             from zhijiang.story_svg import visual_pages
             bindings=story_illustration_bindings(story_visual,refs,segment.narration)
             story_width=PAGE_W-left-.75-(1.4 if story_visual['representation']=='table' and bindings else 0)
+            if source_figure and not separate_figure:story_width*=.48
             story_parts=visual_pages(story_visual,template,round(story_width*96),round((body_h-.1)*96),
                                      art_slots=bindings)
             groups=[[] for _ in story_parts]
@@ -347,6 +369,31 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             text_width=original[2]-.65; text_height=min(body_h,original[3])-.5
             groups=text_pages(captions,text_width,text_height,gap=.45)
         states=[]; state_fractions=[]; body_numbers=[]; viewport=None
+        if separate_figure:
+            source_page=new('content',index);header(source_page,segment.title)
+            picture(source_page,root/source_figure['file'],(left,body_y,PAGE_W-left-.75,body_h-.1))
+            notes(source_page,segment,choice)
+            source_page.slide.notes_slide.notes_text_frame.text+='\n教材原图引用：'+json.dumps(source_figure,ensure_ascii=False)
+            source_page.save_preview();body_numbers.append(source_page.number)
+            pages[-1].update(source_figure=source_figure,representation='source_figure',layout='wide')
+            states.append(previews/f'page-{source_page.number:03d}.png')
+        if segment.visual_scene:
+            # Static teaching steps belong in the deck. Continuous movement and
+            # narration belong only in the separate full video below.
+            from zhijiang.visual_media import visual_summary_svg
+            from zhijiang.math_media import render_summary_png
+            viewport=(left,body_y,PAGE_W-left-.6,max(.8,body_h-.15))
+            for step in range(max(0,len(segment.visual_scene.beats)-1)):
+                step_page=new('content',index);header(step_page,segment.title)
+                svg_text=visual_summary_svg(segment.visual_scene,step)
+                svg_path=media/f'static-scene-{index}-{step+1}.svg'
+                svg_path.write_text(svg_text,encoding='utf-8')
+                png_path=svg_path.with_suffix('.png');render_summary_png(svg_path,png_path)
+                picture(step_page,png_path,viewport,svg_text.encode())
+                notes(step_page,segment,choice);step_page.save_preview()
+                body_numbers.append(step_page.number)
+                pages[-1].update(representation='computed_step',step=step+1,
+                                 layout='wide',composition='mathematical_objects')
         for group_number, group in enumerate(groups):
             if exhibit_parts:exhibit=exhibit_parts[group_number][0]
             if story_parts:story_visual=story_parts[group_number]
@@ -360,6 +407,11 @@ def render_shared_deck(lesson, output, *, audio_files=None):
             def compose(page, reveal, *, active=None, progress=1.):
                 nonlocal viewport
                 header(page,segment.title)
+                content_left=left
+                if source_figure and not separate_figure:
+                    full_width=PAGE_W-left-.75
+                    picture(page,root/source_figure['file'],(left,body_y,full_width*.49,body_h-.1))
+                    content_left=left+full_width*.52
                 if exhibit:
                     from zhijiang.exhibit_svg import exhibit_svg
                     width=PAGE_W-left-.75;box=(left,body_y,width,body_h-.1)
@@ -381,7 +433,8 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                     # float in the title bar or replace the main teaching graph.
                     record_art=story_visual['representation']=='table' and bool(bindings)
                     width=PAGE_W-left-.75-(1.4 if record_art else 0)
-                    box=(left,body_y,width,body_h-.1)
+                    if source_figure and not separate_figure:width*=.48
+                    box=(content_left,body_y,width,body_h-.1)
                     svg,node_boxes=visual_svg(story_visual,template,round(width*96),round(box[3]*96),
                                              reveal=reveal,art_slots=bindings)
                     path=media/f'story-{index}-{group_number}-{reveal}.png'
@@ -391,7 +444,7 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                         if ni>=reveal:continue
                         x,y,w,h=node_boxes[ni]
                         art_box=(left+width+.12,body_y+.4+art_index*1.2,1.05,1.05) if record_art else (
-                            left+(x+w-80)/96,body_y+(y+16)/96,.65,.65)
+                            content_left+(x+w-80)/96,body_y+(y+16)/96,.65,.65)
                         asset(page,ref,art_box)
                 elif semantic:
                     for gi,spec in enumerate(active_specs):
@@ -447,6 +500,9 @@ def render_shared_deck(lesson, output, *, audio_files=None):
                 len(story_visual['items']) if story_visual else len(active_specs) if semantic else max(len(group),len(refs),1))
             page=new('content',index); compose(page,reveal_count)
             notes(page,segment,choice); page.save_preview(); body_numbers.append(page.number)
+            if source_figure and not separate_figure:
+                pages[-1]['source_figure']=source_figure
+                page.slide.notes_slide.notes_text_frame.text+='\n教材原图引用：'+json.dumps(source_figure,ensure_ascii=False)
             pages[-1].update(layout=choice.layout,asset_ids=[ref.asset_id for ref in refs],part=group_number+1,
                              composition=choice.composition,illustration_regions=getattr(page,'asset_regions',[]))
             if exhibit:
@@ -523,15 +579,8 @@ def render_shared_deck(lesson, output, *, audio_files=None):
         if clip.is_file():
             segments.append({'segment_id':index,'pages':body_numbers,'clip':clip.relative_to(root).as_posix(),
                              'duration':duration,'asset_ids':[r.asset_id for r in refs]})
-        if choice.include_animation and clip.is_file():
-            animation=new('animation',index)
-            poster=previews/f'page-{body_numbers[-1]:03d}.png'
-            animation.picture(poster,(0,0,PAGE_W,PAGE_H))
-            pic=animation.slide.shapes[-1]; pic._element.getparent().remove(pic._element)
-            animation.slide.shapes.add_movie(str(clip),Inches(0),Inches(0),Inches(PAGE_W),Inches(PAGE_H),
-                poster_frame_image=str(poster),mime_type='video/mp4')
-            _notes(animation.slide,segment,animation=True)
-            animation.preview=Image.open(poster).convert('RGB'); animation.save_preview()
+        # Clips belong to the separate narrated MP4. The deck contains static
+        # editable diagrams, illustration images and speaker notes only.
     if navigation:
         from zhijiang.story_svg import visual_svg
         recap=new('ending');y=header(recap,'带走这些核心结论')

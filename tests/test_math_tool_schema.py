@@ -22,3 +22,9 @@ def test_operator_arity_rejected_in_planning_contract(op,refs,expr):
 def test_valid_operator_tools_preserve_data(op,refs,expr):
     item=TypeAdapter(typed_construction()).validate_python({'id':'obj','op':op,'refs':refs,'expr':expr})
     assert item.op==op and item.refs==refs and item.expr==expr
+
+
+@pytest.mark.parametrize('reference',[' ],expr: [','../../file'])
+def test_reference_tokens_are_object_ids_not_malformed_json_or_paths(reference):
+    with pytest.raises(ValidationError):TypeAdapter(typed_construction()).validate_python(
+        {'id':'edge','op':'segment','refs':['a',reference],'expr':[]})

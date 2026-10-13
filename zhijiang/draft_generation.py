@@ -51,16 +51,20 @@ def normalise_visual(visual, warning):
     if view in {'process','relationship'} and not links:
         view = 'comparison' if count>1 else 'key_idea'
     if count==1:view='key_idea'
+    if view=='table' and any(not item.caption.strip() for item in visual.items):
+        view='comparison' if count>1 else 'key_idea'
+        warning('标签缺少对应取值，按并列概念展示，不生成空白属性表。')
     return visual.model_copy(update={'links':links,'representation':view})
 
 
 def build_draft_lesson(client, bundle, document, prompt, voice_mode, *, template_id,
-                       use_illustrations, folder: Path, progress):
+                       use_illustrations, folder: Path, progress, repair_sources=False,
+                       pdf_path=None, animation_mode='auto',construction_client=None,construction_reviewer=None):
     """One content production pass, with per-batch resume and source fallback."""
     folder.mkdir(parents=True, exist_ok=True)
     template = get_template(template_id)
     catalog = AssetCatalog()
-    warnings=[]; visuals={}; choices=[]; segments=[]; records=[]
+    warnings=[]; visuals={}; choices=[]; segments=[]; records=[]; construction_requests=[]; source_figures={}; revision_batches=0
     title = document.filename.removesuffix('.pdf')
     if len(title)>80:title=title[:77]+'…'
     objective='理解教材中的核心概念、原有示例与适用条件，并能解释它们之间的关系。'
@@ -127,6 +131,16 @@ def build_draft_lesson(client, bundle, document, prompt, voice_mode, *, template
                 '\n用户偏好：'+prompt,json.dumps(material,ensure_ascii=False))
             path.write_text(json.dumps({'fingerprint':fingerprint,'data':draft.model_dump(mode='json'),
                 'content_review':'not_run'},ensure_ascii=False,indent=2),encoding='utf-8')
+        if repair_sources:
+            progress('对照原页修订讲稿与图示',42+start*22//len(ordered))
+            try:
+                from zhijiang.draft_source_repair import revise_batch
+                draft,revisions=revise_batch(client,draft,material,folder=folder,pdf_path=pdf_path)
+                revision_batches+=1
+                warnings.extend({'segment_id':start+r['source_id'],'stage':'source_revision','message':r['issue']}
+                                for r in revisions)
+            except GenerationError as exc:
+                warnings.append({'segment_id':start+1,'stage':'source_revision','message':str(exc)})
         if start==0:title=draft.title;objective=draft.objective
         by_id={}
         for value in draft.pages:
@@ -146,9 +160,18 @@ def build_draft_lesson(client, bundle, document, prompt, voice_mode, *, template
             visual=normalise_visual(value.visual,warn)
             for note in value.source_notes:
                 warn(note)
-            segment=LessonSegment(title=p.title,kind=p.kind,narration=value.narration,
+            segment=LessonSegment(title=getattr(value,'title',None) or p.title,kind=p.kind,narration=value.narration,
                 bullets=value.bullets,evidence=p.evidence.model_copy(deep=True))
             segments.append(segment)
+            if getattr(value,'render_kind','story')=='construction' and animation_mode in {'auto','visual'}:
+                construction_requests.append({'segment_id':index,'title':segment.title,
+                    'page':p.evidence.page,'narration':segment.narration,
+                    'graphic_group':getattr(value,'graphic_group','')})
+            if getattr(value,'figure_page',0) and pdf_path:
+                from zhijiang.source_figures import extract_figure
+                figure=extract_figure(pdf_path,value.figure_page,value.figure_box,
+                    folder=folder.parent/'source-figures',segment_id=index)
+                if figure:source_figures[str(index)]=figure
             refs=[]
             for asset_id in dict.fromkeys(value.asset_ids):
                 asset=next((a for a in candidates[index] if a['id']==asset_id),None)
@@ -173,16 +196,24 @@ def build_draft_lesson(client, bundle, document, prompt, voice_mode, *, template
     lesson=Lesson(title=title,objective=objective,segments=segments,mode=Mode.AI,voice_mode=voice_mode,
         ppt_template=template_id,notice='AI 生成草稿：引用页码由程序绑定；内容完整性与知识含义检查不阻止导出，请结合原文审阅。',
         animation_report={'renderer':'shared SVG progressive reveal','content_checks':'warn',
-            'content_review':'not_run','warnings':warnings,'source_point_count':len(bundle.points)},
+            'content_review':'same_model_revision' if revision_batches else 'revision_unavailable' if repair_sources else 'not_run',
+            'source_revision_batches':revision_batches,
+            'warnings':warnings,'source_point_count':len(bundle.points)},
         deck_plan={'version':2,'template_id':template_id,'use_illustrations':use_illustrations,
             'asset_catalog_fingerprint':catalog.fingerprint,'asset_retrieval':records,
             'planner':'model_teaching_draft','hook_segment_id':1,'pages':[p.model_dump(mode='json') for p in choices],
             'front_matter':['cover','question','roadmap'],'back_matter':['recap'],
+            'source_figures':source_figures,
             'visual_story':{'version':1,'visuals':visuals,'navigation':navigation.model_dump(mode='json'),
                 'planner':'model_teaching_draft','content_review':'not_run',
                 'bookend_seconds':{'cover':3.,'ending':5.}}})
+    if construction_requests and pdf_path:
+        from zhijiang.automatic_construction import enrich_constructions
+        enrich_constructions(lesson,document,client,construction_requests,folder=folder/'constructions',
+                            pdf_path=pdf_path,progress=progress,
+                            planning_client=construction_client,review_client=construction_reviewer)
     from zhijiang.draft_bookends import enrich_draft_bookends
     progress('规划学习路线与核心结论', 63)
     enrich_draft_bookends(lesson, client, folder=folder)
-    (folder/'warnings.json').write_text(json.dumps(warnings,ensure_ascii=False,indent=2),encoding='utf-8')
+    (folder/'warnings.json').write_text(json.dumps(lesson.animation_report.get('warnings',[]),ensure_ascii=False,indent=2),encoding='utf-8')
     return lesson

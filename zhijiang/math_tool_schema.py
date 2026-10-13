@@ -22,11 +22,12 @@ def typed_construction():
         (('align',),(5,5),(1,1)),
         (('series',),(1,1),(2,8))]
     variants=[]
-    def arguments(bounds):
+    def arguments(bounds, *, reference=False):
         low,high=bounds
-        return (list[str],Field(min_length=low,max_length=high,
+        element=Annotated[str,Field(pattern=r'^[a-z][a-z0-9_]*$')] if reference else str
+        return (list[element],Field(min_length=low,max_length=high,
             **({'default_factory':list} if low==0 else {})))
     for names,refs,expr in groups:
         variants.append(create_model('Tool_'+names[0],__base__=MathConstructionObject,
-            op=(Literal[names],...),refs=arguments(refs),expr=arguments(expr)))
+            op=(Literal[names],...),refs=arguments(refs,reference=True),expr=arguments(expr)))
     return Annotated[Union[tuple(variants)],Field(discriminator='op')]

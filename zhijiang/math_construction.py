@@ -33,7 +33,7 @@ class StrictMathModel(BaseModel):
 class Construction(StrictMathModel):
     id: str = Field(pattern=r'^[a-z][a-z0-9_]{0,23}$')
     op: Op
-    refs: list[str] = Field(default_factory=list,max_length=16)
+    refs: list[Annotated[str,Field(pattern=r'^[a-z][a-z0-9_]*$')]] = Field(default_factory=list,max_length=16)
     expr: list[str] = Field(default_factory=list,max_length=8)
     domain: list[float] = Field(default_factory=lambda:[-2,2],min_length=2,max_length=2)
     color: str = Field(default='#78BAFF',pattern=r'^#[0-9a-fA-F]{6}$')
@@ -46,7 +46,7 @@ class MathematicalClaim(StrictMathModel):
     source_id: int
     lhs: str = Field(min_length=1,max_length=300)
     rhs: str = Field(default='0',max_length=300)
-    relation: Literal['equal','positive','nonnegative','at_most'] = 'equal'
+    relation: Literal['equal','not_equal','positive','nonnegative','at_most'] = 'equal'
     phase: Literal['invariant','endpoint'] = 'invariant'
     steps: list[Annotated[int,Field(ge=1,le=10)]] = Field(default_factory=list,max_length=10)
 
@@ -56,8 +56,8 @@ class MathOperation(StrictMathModel):
     changes: dict[str,float] = Field(default_factory=dict)
     show: list[str] = Field(default_factory=list,max_length=40)
     hide: list[str] = Field(default_factory=list,max_length=40)
-    measurements: dict[Annotated[str,Field(min_length=1,max_length=24,pattern=r'^[^\d=＝{}]+$')],str] = Field(default_factory=dict,max_length=4,
-        description='Display labels must be plain Chinese or words without digits; values must be object measurement expressions, never numeric answers.')
+    measurements: dict[Annotated[str,Field(min_length=1,max_length=24,pattern=r'^[^=＝{}]+$')],str] = Field(default_factory=dict,max_length=4,
+        description='Display labels name the measured object (numbered point names are allowed); values must be object measurement expressions, never numeric answers.')
 
 
 class MathProgramDraft(StrictMathModel):
@@ -826,7 +826,7 @@ def validate_actual_claims(scene,geometry,parameters,*,step_index=None,endpoint=
         if claim.get('phase','invariant')=='endpoint' and not endpoint:continue
         left=float(scalar(claim['lhs'],parameters,measured));right=float(scalar(claim['rhs'],parameters,measured))
         tolerance=1e-6*max(1,abs(left),abs(right));difference=left-right
-        passed=({'equal':abs(difference)<=tolerance,'nonnegative':difference>=-tolerance,
+        passed=({'equal':abs(difference)<=tolerance,'not_equal':abs(difference)>tolerance,'nonnegative':difference>=-tolerance,
                  'positive':difference>tolerance,'at_most':difference<=tolerance}[claim['relation']])
         if not math.isfinite(left+right) or not passed:
             controls={k:parameters[k] for k in model['program']['parameters']}

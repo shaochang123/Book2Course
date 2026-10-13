@@ -18,6 +18,21 @@ class PDFError(ValueError):
     """PDF 无法作为首版文本资料处理。"""
 
 
+def unusable_glyphs(text: str) -> int:
+    """Encoding damage, not a subject-specific guess at a missing operator."""
+    return sum((ord(c) < 32 and c not in '\r\n\t') or c in '\ufffd\ufffe\uffff' for c in text)
+
+
+def pdfium_text(document, index):
+    page=document[index]; textpage=None
+    try:
+        textpage=page.get_textpage()
+        return '\n'.join(' '.join(line.split()) for line in textpage.get_text_range().splitlines() if line.strip())
+    finally:
+        if textpage is not None:textpage.close()
+        page.close()
+
+
 def extract_page_text(page) -> str:
     """Use positions to retain spaces across font changes and example lines.
 
@@ -55,7 +70,7 @@ def read_pdf(data: bytes, filename: str, ocr_engine=None, *,
              cache_dir: Path | None = None) -> SourceDocument:
     """无可用文字的页面逐页 OCR。"""
     validate_pdf(data)
-    fingerprint = 'pdf-pages-v2:' + hashlib.sha256(data).hexdigest()
+    fingerprint = 'pdf-pages-v3-glyph-recovery:' + hashlib.sha256(data).hexdigest()
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
     rendered = None
@@ -84,7 +99,15 @@ def read_pdf(data: bytes, filename: str, ocr_engine=None, *,
                 progress(index - 1, total, f'第 {index} 页提取文字')
             text = extract_page_text(page)
             used_ocr = False
-            if len("".join(text.split())) < 80:
+            method='pypdf'
+            if unusable_glyphs(text):
+                if rendered is None:
+                    import pypdfium2
+                    rendered = pypdfium2.PdfDocument(data)
+                alternative=pdfium_text(rendered,index-1)
+                if alternative.strip() and unusable_glyphs(alternative) < unusable_glyphs(text):
+                    text=alternative;method='pdfium'
+            if len("".join(text.split())) < 80 or unusable_glyphs(text):
                 if progress:
                     progress(index - 1, total, f'第 {index} 页本地 OCR')
                 if rendered is None:
@@ -93,18 +116,22 @@ def read_pdf(data: bytes, filename: str, ocr_engine=None, *,
                 if ocr_engine is None:
                     from rapidocr import RapidOCR
                     ocr_engine = RapidOCR()
-                image = rendered[index - 1].render(scale=2.5).to_pil()
+                rendered_page=rendered[index-1];bitmap=rendered_page.render(scale=2.5)
+                try:image=bitmap.to_pil().copy()
+                finally:bitmap.close();rendered_page.close()
                 buffer = BytesIO()
                 image.save(buffer, format="PNG")
                 result = ocr_engine(buffer.getvalue())
                 recognized = "\n".join(item.strip() for item in (result.txts or ()) if item.strip())
-                if len("".join(recognized.split())) > len("".join(text.split())):
+                if recognized and (unusable_glyphs(recognized) < unusable_glyphs(text) or
+                    unusable_glyphs(recognized) <= unusable_glyphs(text) and
+                    len("".join(recognized.split())) > len("".join(text.split()))):
                     text = recognized
-                    used_ocr = True
+                    used_ocr = True;method='ocr'
             if cache_path:
                 temporary = cache_path.with_suffix('.tmp')
                 temporary.write_text(json.dumps({'fingerprint': fingerprint, 'page': index,
-                    'text': text, 'ocr': used_ocr}, ensure_ascii=False), encoding='utf-8')
+                    'text': text, 'ocr': used_ocr, 'method':method}, ensure_ascii=False), encoding='utf-8')
                 os.replace(temporary, cache_path)
             if text:
                 pages.append(PageText(page=index, text=text, ocr=used_ocr))

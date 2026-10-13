@@ -88,9 +88,7 @@ class GeneralTeachingScene(Scene):
         question = Text('\n'.join(plan.question[start:start+columns] for start in range(0,len(plan.question),columns)),
             font='Microsoft YaHei',font_size=19).move_to([0,3.17,0]).set_z_index(20)
         if question.width>12: question.scale_to_fit_width(12)
-        footer = Text(f'PDF 第 {plan.evidence.page} 页 · '+('教学示例 / 示意模型' if plan.teaching_example else '来源讲解'),
-                      font='Microsoft YaHei',font_size=17,color='#A7C0CC').move_to([0,-3.65,0]).set_z_index(20)
-        self.add(title,question,footer)
+        self.add(title,question)
         # Keep a stable container identity while allowing a collapsed dot to
         # become an Arrow/Line with the correct geometry methods again.
         objects = {obj.id: VGroup(make(obj)).set_z_index(object_layers[obj.id]) for obj in plan.objects}
@@ -137,7 +135,7 @@ class GeneralTeachingScene(Scene):
                 # fractions/absolute bars colliding with the source footer.
                 group=VGroup(Text(c['label']+' ≈',font='Microsoft YaHei',font_size=22),number).arrange(RIGHT,buff=.12)
                 formula_row.add(group); dynamic_numbers.append((number,c['expression']))
-            for key in list(plan.parameters if plan.mathematical_model else beat.parameters)[:4]:
+            for key in list({} if plan.mathematical_model else beat.parameters)[:4]:
                 number=DecimalNumber(before[key],num_decimal_places=3,font_size=24,color='#FFA458')
                 formula_row.add(VGroup(Text(key+'=',font_size=22),number).arrange(RIGHT,buff=.05))
                 dynamic_numbers.append((number,key))
