@@ -136,6 +136,8 @@ Windows 网页默认勾选“在本机记住密钥”：模型与语音密钥由
 
 素材绑定时，超出当前讲稿范围的句子编号不再使 PPT/视频导出崩溃；程序跳过该句子的配图回退，不把它绑定到另一个句子。新画面缓存使用更新的版本，已生成文件保持可访问。
 
+原页修订会核对所有知识点编号。批量响应缺页、重复编号或字段无效时，保留完整响应中有效的页面，仅对其余页面单独生成讲稿和图示；单页修订失败会记录原因，保留该页原稿，继续使用其他成功修订的页。不会把只修订一页的响应当成整批完成；画面引用的句子编号须属于本页口播。
+
 ```powershell
 .\.venv\Scripts\python scripts/benchmark_textbooks.py prepare
 .\.venv\Scripts\python scripts/benchmark_textbooks.py run

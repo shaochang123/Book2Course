@@ -168,3 +168,39 @@ def test_wide_source_picture_has_full_page_instead_of_half_width(tmp_path):
     pages=[p for p in manifest['pages'] if p.get('segment_id')==1 and p['kind']=='content']
     assert any(p.get('representation')=='source_figure' and p['layout']=='wide' for p in pages)
     assert any(p.get('representation')=='comparison' and not p.get('source_figure') for p in pages)
+
+
+def test_single_page_recovery_keeps_vision_crop_bytes_and_repair_record(tmp_path):
+    import json
+    from pydantic import create_model
+    from zhijiang.agents import ModelContractError
+    from zhijiang.draft_generation import DraftPage
+    from zhijiang.draft_source_repair import revise_batch
+    pdf=picture_pdf(tmp_path,scan=True)
+    raw={'title':'真实来源里的对象','objective':'解释来源里的对象与其实际连接。','pages':[{
+        'source_id':1,'narration':'原图展示三条边的实际连接，我们观察这个对象。',
+        'bullets':['观察实际连接'],'visual':{'representation':'key_idea',
+        'items':[{'label':'实际连接','caption':'三条边构成三角形','sentence_id':1}]}}]}
+    draft=create_model('Draft',title=(str,...),objective=(str,...),pages=(list[DraftPage],...)).model_validate(raw)
+    class Client:
+        def __init__(self):self.revision_calls=0
+        def generate(self,schema,instruction,material,**kwargs):
+            if schema.__name__=='SourcePictureReading':return schema(observations=['原图的三条边连接成三角形。'])
+            payload=json.loads(material)
+            page={**raw['pages'][0],'title':raw['title'],'render_kind':'story','graphic_group':'',
+                'context_is_condition':False,'figure_page':1,'figure_box':[.1,.1,.9,.9]}
+            if schema.__name__=='TeachingDraftRevision':
+                self.revision_calls+=1
+                assert kwargs['images']
+                if self.revision_calls==1:
+                    broken={**page,'visual':{'representation':'key_idea','items':[{
+                        'label':'实际连接','caption':'','sentence_id':1}]}}
+                    raise ModelContractError('blank caption',content=json.dumps({**raw,'pages':[broken]}))
+                assert 'visual' not in payload['draft']['pages'][0]
+                return schema.model_validate({**raw,'pages':[page]})
+            return schema.model_validate({'reading':payload['picture_reading'],'pages':[
+                {**page,'figure_id':payload['figure']['id']}]})
+    revised,records=revise_batch(Client(),draft,{'points':[{'source_id':1}],'source_pages':[{'page':1}]},
+        folder=tmp_path,pdf_path=pdf)
+    assert revised.pages[0].figure_id.startswith('crop-p1-')
+    assert any('单独重新生成' in record['issue'] for record in records)

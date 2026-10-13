@@ -136,6 +136,8 @@ The benchmark defaults to a local model and system speech and excludes DeepSeek.
 
 Illustration sentence IDs outside the current narration no longer crash PPT/video exports. The renderer skips the unsupported fallback binding instead of attaching the asset to a different sentence. New page caches use an updated version; existing generated files remain accessible.
 
+Source revision checks coverage of every knowledge-point ID. Missing pages, duplicate IDs or invalid fields trigger individual script and visual generation for the affected pages while preserving typed valid pages from complete responses. If one page cannot be revised, its original draft and an explicit warning remain, and other successful revisions are retained. A one-page response cannot count as a completed batch; visual sentence references must belong to that page's narration.
+
 ```powershell
 .\.venv\Scripts\python scripts/benchmark_textbooks.py prepare
 .\.venv\Scripts\python scripts/benchmark_textbooks.py run

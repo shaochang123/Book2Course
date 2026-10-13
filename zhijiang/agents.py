@@ -566,7 +566,7 @@ class OllamaClient:
                         'truncated':len(content)>32768})
                 # The director owns bounded repair with the complete rejected
                 # layout and per-page candidates. Avoid nested blind retries.
-                if schema.__name__ in {'DeckDirectorDraft','DeckDirectorRepair','DeckIllustrationPlacement','CourseOutline','CourseOutlineRepair','ScriptCaptionSelection'} or attempt >= (2 if json_fallback or schema.__name__.startswith('Math') else 1):
+                if schema.__name__ in {'DeckDirectorDraft','DeckDirectorRepair','DeckIllustrationPlacement','CourseOutline','CourseOutlineRepair','ScriptCaptionSelection','TeachingDraftRevision'} or attempt >= (2 if json_fallback or schema.__name__.startswith('Math') else 1):
                     raise ModelContractError("本机 Ollama 返回不符合数据契约的 JSON："+detail,content=content,schema=schema) from exc
                 if isinstance(exc, json.JSONDecodeError):
                     json_fallback = True

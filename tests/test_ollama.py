@@ -15,6 +15,26 @@ from zhijiang.agents import source_candidates
 from zhijiang.pdf import read_pdf
 
 
+def test_source_revision_returns_invalid_complete_response_to_page_repair_once():
+    from zhijiang.draft_source_repair import _revision_schema,RevisedPage
+    from zhijiang.agents import ModelContractError
+    schema=_revision_schema(RevisedPage,(1,2))
+    page={'source_id':1,'title':'完整来源条件','narration':'我们解释实际来源对象和成立条件，不能忽略这些条件。',
+        'bullets':['保留成立条件'],'visual':{'representation':'key_idea',
+        'items':[{'label':'来源条件','caption':'明确适用范围','sentence_id':1}]},
+        'render_kind':'story','graphic_group':'','context_is_condition':False,'figure_page':0,'figure_box':[]}
+    content=json.dumps({'title':'理解来源关系','objective':'保留来源对象与实际成立条件。','pages':[page]})
+    requests=[]
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        requests.append(request)
+        return httpx.Response(200,json={'message':{'content':content}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','local',http_client,semantic_thinking=False)
+        with pytest.raises(ModelContractError) as error:client.generate(schema,'revise every point','source')
+        assert error.value.content==content and len(requests)==1
+
+
 @pytest.mark.parametrize('stage',['DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection'])
 def test_small_deck_repairs_use_native_schema_even_with_json_preference(stage):
     from pydantic import create_model
