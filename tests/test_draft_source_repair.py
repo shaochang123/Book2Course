@@ -187,3 +187,68 @@ def test_source_revision_binding_cannot_reference_a_different_pages_sentence(bin
         RevisedPage(source_id=1,title='来源对象与成立条件',narration='我们保留来源对象和成立条件，以便正确理解。',
             bullets=['来源条件'],visual=visual,render_kind='story',graphic_group='',
             context_is_condition=True,figure_page=0,figure_box=[])
+
+
+@pytest.mark.parametrize('root_flag',[False,None])
+def test_redundant_or_misplaced_context_flag_does_not_discard_valid_content(root_flag):
+    from zhijiang.draft_source_repair import RevisedPage
+    page={'source_id':1,'title':'完整对象与适用条件','narration':'我们保留实际对象和适用条件，以便准确理解这段资料。',
+        'bullets':['保留适用条件'],'visual':{'representation':'key_idea','context_is_condition':False,
+        'items':[{'label':'适用条件','caption':'实际条件完整保留','sentence_id':1}]},
+        'render_kind':'story','graphic_group':'','figure_page':0,'figure_box':[]}
+    if root_flag is not None:page['context_is_condition']=root_flag
+    repaired=RevisedPage.model_validate(page)
+    assert not repaired.context_is_condition and repaired.visual.items[0].caption=='实际条件完整保留'
+    assert 'context_is_condition' not in repaired.visual.model_dump()
+    page['context_is_condition']=True
+    with pytest.raises(ValueError,match='冲突'):RevisedPage.model_validate(page)
+
+
+def test_category_association_is_not_a_causal_arrow_across_domains():
+    from zhijiang.draft_generation import normalise_visual
+    from zhijiang.slide_story import SlideVisualDraft
+    for first,second,parent in [('狮子','老虎','哺乳动物'),('存款','贷款','银行业务')]:
+        visual=SlideVisualDraft(representation='relationship',items=[
+            {'label':first,'caption':'第一个对象','sentence_id':1},
+            {'label':second,'caption':'第二个对象','sentence_id':1}],
+            links=[{'source':1,'target':2,'label':'都属于'+parent,'sentence_id':1}])
+        warnings=[];result=normalise_visual(visual,warnings.append)
+        assert result.links[0].kind=='undirected' and warnings
+    visual.links[0].label='产生'
+    assert normalise_visual(visual,lambda _:None).links[0].kind=='directed'
+
+
+def test_bindings_repair_uses_numbered_existing_speech_and_preserves_content():
+    from zhijiang.draft_source_repair import RevisedPage,_revision_schema,_repair_sentence_bindings
+    narration='物质顺浓度梯度移动，不消耗细胞提供的能量。这里用一个具体对象解释这个条件。'
+    page={'source_id':1,'title':'对象与适用条件','narration':narration,'bullets':['保留适用条件'],
+        'visual':{'representation':'comparison','items':[
+            {'label':'实际对象','caption':'沿浓度梯度移动','sentence_id':5},
+            {'label':'能量条件','caption':'不消耗细胞能量','sentence_id':6}], 'links':[]},
+        'render_kind':'story','graphic_group':'','context_is_condition':False,'figure_page':0,'figure_box':[]}
+    response={'title':'对象与适用条件','objective':'保留来源中的实际对象和完整条件。','pages':[page]}
+    class Binding:
+        def generate(self,schema,instruction,material):
+            data=json.loads(material)
+            assert [s['id'] for s in data['sentences']]==[1,2]
+            assert data['sentences'][0]['text']=='物质顺浓度梯度移动，不消耗细胞提供的能量'
+            return schema(item_1=1,item_2=1,context_sentence_id=None)
+    result=_repair_sentence_bindings(Binding(),json.dumps(response),_revision_schema(RevisedPage,(1,)))
+    assert result.pages[0].narration==narration
+    assert [i.sentence_id for i in result.pages[0].visual.items]==[1,1]
+    assert [i.caption for i in result.pages[0].visual.items]==[i['caption'] for i in page['visual']['items']]
+
+
+def test_binding_repair_cannot_hide_an_invalid_source_identity():
+    from zhijiang.draft_source_repair import RevisedPage,_revision_schema,_repair_sentence_bindings
+    class Never:
+        def generate(self,*args,**kwargs):raise AssertionError('Invalid source must not reach model')
+    response={'title':'对象与适用条件','objective':'保留来源中的实际对象和完整条件。','pages':[{
+        'source_id':4,'title':'不属于本次请求的编号','narration':'实际来源对象的讲解必须属于本次请求的知识点。',
+        'bullets':['来源编号不改写'],'visual':{'representation':'key_idea',
+        'items':[{'label':'实际对象','caption':'完整适用条件','sentence_id':5}]},
+        'render_kind':'story','graphic_group':'','context_is_condition':False,'figure_page':0,'figure_box':[]}]}
+    from pydantic import create_model,Field
+    from typing import Literal
+    bound=create_model('Bound',__base__=RevisedPage,source_id=(Literal[1],Field()))
+    with pytest.raises(ValueError):_repair_sentence_bindings(Never(),json.dumps(response),_revision_schema(bound,(1,)))

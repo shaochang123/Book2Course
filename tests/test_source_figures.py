@@ -80,7 +80,7 @@ def test_revision_resolves_only_current_candidate_id_without_model_coordinates(t
         def generate(self,schema,instruction,payload,**kwargs):
             if schema.__name__=='SourcePictureReading':
                 assert 'pages' not in payload and kwargs['images']
-                return schema(observations=['原图为三条边连接构成的三角形。'])
+                return schema(image_role='teaching_diagram',observations=['原图为三条边连接构成的三角形。'])
             payload=json.loads(payload)
             if schema.__name__=='SourceFigureAlignment':
                 assert 'pages' not in payload  # Do not feed a bad draft back as the answer.
@@ -137,7 +137,7 @@ def test_scan_selected_crop_uses_picture_alignment_even_without_embedded_candida
                     'render_kind':'story','graphic_group':'','context_is_condition':False,
                     'figure_page':1,'figure_box':[.1,.1,.9,.9]}]})
             if schema.__name__=='SourcePictureReading':
-                return schema(observations=['实际原图显示三角形。'])
+                return schema(image_role='teaching_diagram',observations=['实际原图显示三角形。'])
             payload=json.loads(material)
             return schema.model_validate({'reading':payload['picture_reading'],'pages':[{**raw['pages'][0],
                 'title':raw['title'],'render_kind':'story','graphic_group':'','context_is_condition':False,
@@ -185,7 +185,7 @@ def test_single_page_recovery_keeps_vision_crop_bytes_and_repair_record(tmp_path
     class Client:
         def __init__(self):self.revision_calls=0
         def generate(self,schema,instruction,material,**kwargs):
-            if schema.__name__=='SourcePictureReading':return schema(observations=['原图的三条边连接成三角形。'])
+            if schema.__name__=='SourcePictureReading':return schema(image_role='teaching_diagram',observations=['原图的三条边连接成三角形。'])
             payload=json.loads(material)
             page={**raw['pages'][0],'title':raw['title'],'render_kind':'story','graphic_group':'',
                 'context_is_condition':False,'figure_page':1,'figure_box':[.1,.1,.9,.9]}
@@ -204,3 +204,50 @@ def test_single_page_recovery_keeps_vision_crop_bytes_and_repair_record(tmp_path
         folder=tmp_path,pdf_path=pdf)
     assert revised.pages[0].figure_id.startswith('crop-p1-')
     assert any('单独重新生成' in record['issue'] for record in records)
+
+
+@pytest.mark.parametrize('role',['video_thumbnail','decoration','uncertain'])
+def test_non_teaching_picture_is_excluded_before_slide_rewrite(tmp_path,role):
+    from zhijiang.draft_source_repair import RevisedPage
+    from zhijiang.source_figures import figure_candidates
+    from zhijiang.source_figure_alignment import align_picture_pages
+    pdf=picture_pdf(tmp_path);figure=figure_candidates(pdf.read_bytes(),[1])[0]
+    page=RevisedPage(source_id=2,title='来源里的教学对象',narration='我们解释来源里的实际对象及其关系，不把封面当成过程。',
+        bullets=['观察实际对象'],visual={'representation':'key_idea',
+        'items':[{'label':'实际对象','caption':'解释实际关系','sentence_id':1}]},
+        render_kind='story',graphic_group='',context_is_condition=False,
+        figure_id=figure['id'],figure_page=1,figure_box=figure['box'])
+    class Reader:
+        def generate(self,schema,*args,**kwargs):
+            assert schema.__name__=='SourcePictureReading'
+            return schema(image_role=role,visible_text=['视频标题或装饰'],observations=['没有能解释机制的清晰对象。'])
+    result,records=align_picture_pages(Reader(),[page],{},[figure],folder=tmp_path,pdf_path=pdf)
+    assert result[0].narration==page.narration and not result[0].figure_id
+    assert role in records[0]['issue'] and list(tmp_path.rglob('excluded-picture.json'))
+
+
+def test_picture_rewrite_is_scoped_to_selected_topics_not_all_source_points(tmp_path):
+    import json
+    from pydantic import ValidationError
+    from zhijiang.draft_source_repair import RevisedPage
+    from zhijiang.source_figures import figure_candidates
+    from zhijiang.source_figure_alignment import align_picture_pages
+    pdf=picture_pdf(tmp_path);figure=figure_candidates(pdf.read_bytes(),[1])[0]
+    page=RevisedPage(source_id=2,title='来源里的实际对象',narration='我们解释来源里三条边的连接关系，不把图示扩展为别的主题。',
+        bullets=['实际边线关系'],visual={'representation':'key_idea',
+        'items':[{'label':'实际连接','caption':'三条边连接','sentence_id':1}]},
+        render_kind='story',graphic_group='',context_is_condition=False,
+        figure_id=figure['id'],figure_page=1,figure_box=figure['box'])
+    class Reader:
+        def generate(self,schema,instruction,material,**kwargs):
+            if schema.__name__=='SourcePictureReading':
+                return schema(image_role='teaching_diagram',observations=['三条边连接成三角形。'])
+            data=json.loads(material)
+            assert [p['source_id'] for p in data['source']['points']]==[2]
+            response={'reading':data['picture_reading'],'pages':[page.model_dump()]}
+            with pytest.raises(ValidationError):
+                schema.model_validate({**response,'pages':[{**page.model_dump(),'source_id':1}]})
+            return schema.model_validate(response)
+    result,_=align_picture_pages(Reader(),[page],{'points':[{'source_id':1},{'source_id':2}]},
+        [figure],folder=tmp_path,pdf_path=pdf)
+    assert result[0].source_id==2 and result[0].figure_id==figure['id']

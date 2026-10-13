@@ -32,6 +32,19 @@ class RevisedPage(DraftPage):
     figure_box: list[float] = Field(max_length=4)
     figure_id: str = ''
 
+    @model_validator(mode='before')
+    @classmethod
+    def context_flag_placement(cls,value):
+        if not isinstance(value,dict) or not isinstance(value.get('visual'),dict):return value
+        visual=value['visual']
+        if 'context_is_condition' not in visual:return value
+        flag=visual['context_is_condition']
+        if type(flag) is not bool:return value
+        if 'context_is_condition' in value and value['context_is_condition']!=flag:
+            raise ValueError('上下文条件标记在页面与visual中冲突，需要重新明确该条件。')
+        cleaned={key:item for key,item in visual.items() if key!='context_is_condition'}
+        return {**value,'context_is_condition':flag,'visual':cleaned}
+
     @model_validator(mode='after')
     def local_narration_bindings(self):
         from zhijiang.caption_grounding import speech_sentences
@@ -74,6 +87,46 @@ def _valid_partial_pages(content, page_type):
             except (ValueError,TypeError):continue
         return result
     except (ValueError,TypeError):return {}
+
+
+def _repair_sentence_bindings(client, content, schema):
+    """Repair references using program-numbered speech; never rewrite the speech."""
+    from copy import deepcopy
+    from zhijiang.caption_grounding import speech_sentences
+    raw=json.loads(content)
+    if not isinstance(raw,dict) or not isinstance(raw.get('pages'),list) or len(raw['pages'])!=1:
+        raise ValueError('句子绑定修复需要完整的单页响应。')
+    page=raw['pages'][0];safe=deepcopy(raw)
+    for item in safe['pages'][0]['visual']['items']:item['sentence_id']=1
+    for link in safe['pages'][0]['visual'].get('links',[]):link['sentence_id']=1
+    safe['pages'][0]['visual']['context_sentence_id']=None
+    validated=schema.model_validate(safe)
+    target=validated.pages[0];sentences=speech_sentences(target.narration)
+    ids=tuple([0,*range(1,len(sentences)+1)])
+    fields={f'item_{i}':(Literal[ids],Field()) for i in range(1,len(target.visual.items)+1)}
+    fields.update({f'link_{i}':(Literal[ids],Field()) for i in range(1,len(target.visual.links)+1)})
+    fields['context_sentence_id']=(Literal[tuple([None,*range(1,len(sentences)+1)])],Field())
+    binding_schema=create_model('SourceVisualSentenceBindings',**fields)
+    mapping=client.generate(binding_schema,
+        '只修复本页画面与口播的句子对应。sentences编号由程序给定，不能自行重数或跨页编号。'
+        '每个item_i、link_i选择实际支持其完整含义的句子；同一句可以支持多个对象。'
+        '没有支持的对象或关系选0，程序省去该图示项，不改口播或知识内容。'
+        'context_sentence_id选择对应完整句或null；不输出新的讲稿、caption或结论。',
+        json.dumps({'sentences':[{'id':i,'text':s} for i,s in enumerate(sentences,1)],
+            'visual':page['visual']},ensure_ascii=False)).model_dump()
+    remap={};items=[];links=[]
+    for i,item in enumerate(target.visual.items,1):
+        if mapping[f'item_{i}']:
+            remap[i]=len(items)+1;items.append(item.model_copy(update={'sentence_id':mapping[f'item_{i}']}))
+    if not items:raise GenerationError('画面项均不能绑定到本页口播，保留原稿。')
+    for i,link in enumerate(target.visual.links,1):
+        if mapping[f'link_{i}'] and link.source in remap and link.target in remap:
+            links.append(link.model_copy(update={'source':remap[link.source],'target':remap[link.target],
+                'sentence_id':mapping[f'link_{i}']}))
+    target.visual=target.visual.model_copy(update={'items':items,'links':links,
+        'context_sentence_id':mapping['context_sentence_id']})
+    target.issues.append('按程序提供的本页口播句子编号修复画面对应；口播和保留图示文字未改写。')
+    return schema.model_validate(validated.model_dump())
 
 
 def revise_batch(client, draft, material, *, folder: Path, pdf_path=None):
@@ -182,12 +235,15 @@ def revise_batch(client, draft, material, *, folder: Path, pdf_path=None):
                 except (OSError,ValueError,KeyError):pass
                 if repaired is None:
                     try:
-                        repaired=generate_revision(one_schema,per_page_payload,
-                            f'\n这次只重新生成来源编号{source_id}的这一页。画面根据原文重新设计，'
-                            '不要复制旧图示的空白说明。每项caption写实际对象、例子或条件；'
-                            'sentence_id从这一页口播的第一句开始，不沿用跨页编号。')
+                        try:
+                            repaired=generate_revision(one_schema,per_page_payload,
+                                f'\n这次只重新生成来源编号{source_id}的这一页。画面根据原文重新设计，'
+                                '不要复制旧图示的空白说明。每项caption写实际对象、例子或条件；'
+                                'sentence_id从这一页口播的第一句开始，不沿用跨页编号。')
+                        except ModelContractError as binding_error:
+                            repaired=_repair_sentence_bindings(client,binding_error.content,one_schema)
                         repaired=one_schema.model_validate(repaired.model_dump())
-                    except (GenerationError,ValueError) as repair_error:
+                    except (GenerationError,ValueError,KeyError,TypeError) as repair_error:
                         records.append({'source_id':source_id,'issue':
                             '此页单独修订未完成，保留原讲稿；其他已修订页继续使用：'+str(repair_error)})
                         continue

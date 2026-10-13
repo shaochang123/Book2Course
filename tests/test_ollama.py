@@ -35,6 +35,19 @@ def test_source_revision_returns_invalid_complete_response_to_page_repair_once()
         assert error.value.content==content and len(requests)==1
 
 
+def test_knowledge_json_decoder_still_rejects_foreign_source_ids():
+    from pydantic import create_model
+    from zhijiang.agents import ModelContractError
+    schema=create_model('KnowledgeSelection',source_id=(Literal[2],...))
+    def handler(request):
+        if request.url.path=='/api/show':return httpx.Response(200,json={})
+        assert json.loads(request.content)['format']=='json'
+        return httpx.Response(200,json={'message':{'content':'{"source_id":99}'}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        client=OllamaClient('http://localhost:11434','local',http_client)
+        with pytest.raises(ModelContractError):client.generate(schema,'select supplied source','source 2')
+
+
 @pytest.mark.parametrize('stage',['DeckDirectorRepair','DeckIllustrationPlacement','CourseOutlineRepair','ScriptCaptionSelection'])
 def test_small_deck_repairs_use_native_schema_even_with_json_preference(stage):
     from pydantic import create_model

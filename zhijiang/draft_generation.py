@@ -46,6 +46,10 @@ def normalise_visual(visual, warning):
     count = len(visual.items)
     links = [v for v in visual.links if v.source<=count and v.target<=count and v.source!=v.target]
     if len(links)!=len(visual.links):warning('删除了不能连接到现有对象的连线。')
+    for n,link in enumerate(links):
+        if link.kind=='directed' and link.label.strip().startswith(('都属于','均属于','同属','共同属于','同为','都是')):
+            links[n]=link.model_copy(update={'kind':'undirected'})
+            warning('共同归类关系使用无向连线，不绘成先后或因果箭头。')
     if visual.representation not in {'process','relationship'}:links=[]
     view = visual.representation
     if view in {'process','relationship'} and not links:

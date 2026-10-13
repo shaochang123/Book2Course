@@ -138,6 +138,8 @@ Illustration sentence IDs outside the current narration no longer crash PPT/vide
 
 Source revision checks coverage of every knowledge-point ID. Missing pages, duplicate IDs or invalid fields trigger individual script and visual generation for the affected pages while preserving typed valid pages from complete responses. If one page cannot be revised, its original draft and an explicit warning remain, and other successful revisions are retained. A one-page response cannot count as a completed batch; visual sentence references must belong to that page's narration.
 
+Identical redundant condition flags are structurally normalized; conflicting flags still require clarification. Invalid sentence references are repaired against program-numbered full narration without rewriting the speech. Pictures are first classified independently: video covers, decorations and uncertain images are excluded from mechanism diagrams. Shared-category links are undirected. Ollama knowledge extraction uses JSON output with full type validation rather than complex native decoding constraints at that stage.
+
 ```powershell
 .\.venv\Scripts\python scripts/benchmark_textbooks.py prepare
 .\.venv\Scripts\python scripts/benchmark_textbooks.py run
