@@ -174,7 +174,10 @@ def test_optional_object_generation_failure_preserves_entire_course(tmp_path,mon
     from test_deck_planning import example_lesson
     import zhijiang.visual_planning as planning
     import zhijiang.automatic_construction as automatic
+    import zhijiang.construction_intent as routing
+    from types import SimpleNamespace
     monkeypatch.setattr(planning,'visual_capabilities',lambda:{'geometry_ready':True})
+    monkeypatch.setattr(routing,'read_construction_intent',lambda *a,**k:SimpleNamespace(relation_kind='quantitative'))
     def fail(*args,**kwargs):raise GenerationError('模型服务不可用')
     monkeypatch.setattr(automatic,'build_scene',fail)
     pdf=tmp_path/'source.pdf';pdf.write_bytes(b'test input read only')

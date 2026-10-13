@@ -405,7 +405,7 @@ class OllamaClient:
         # stalls were observed, but decoder cost was not isolated causally.
         # The full schema remains in the prompt and is validated in the program.
         json_fallback = self.prefer_json or observed_endpoint is not None or schema.__name__ in {
-            'KnowledgeSelection',
+            'KnowledgeSelection','ConstructionIntent',
             'VisualLayoutDraft','VisualSequenceDraft','MotionParameterBindings','GeometryConstraintsDraft',
             'SourcePictureReading','SourceFigureAlignment','TeachingDraftRevision'}
         if schema.__name__ in {'MathProgramDraft','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}:
@@ -436,6 +436,7 @@ class OllamaClient:
                     # max_tokens. Omit the setting; do not add an application cap.
                     payload['options'].pop('num_predict')
                 semantic_stage=schema.__name__ in {'SourceVisualSentenceBindings','TeachingDraftBatch','TeachingDraftRevision','SourcePictureReading','SourceFigureAlignment','TeachingDesignDraft','TeachingSourceReview','SourceFactsDraft','SourceFactClauseSelection','SourcePropositionsDraft','TopicSourceScope','TopicScopeReview','MathSourceReview','MathProgramReview','MathSourceScope','MathScopeMeaningReview','MathCoverageReview','MathConstructionReadiness','MathOperationsRepair','MathClaimsRepair','MathRolesRepair','MathConstructionIntent','MathProgramDraft','MathAutomaticProgram','MathConstructionDraft','MathConstructionPatch','MathBehaviorDraft'}
+                if schema.__name__=='ConstructionIntent':semantic_stage=True
                 thinking = self._thinking_option(semantic_stage)
                 # Preserve server/model sampling for semantic deliberation;
                 # forcing greedy decoding can turn reasoning into repetition.

@@ -54,6 +54,43 @@ def test_optional_revision_service_failure_keeps_the_full_course(tmp_path):
     assert any(w['stage']=='source_revision' for w in result.animation_report['warnings'])
 
 
+@pytest.mark.parametrize('heading',['omitted','course_title'])
+def test_complete_revision_keeps_topic_headings_without_extra_calls(tmp_path,heading):
+    class MetadataClient(DraftClient):
+        def __init__(self):super().__init__();self.revisions=0
+        def generate(self,schema,instruction,material,**kwargs):
+            if schema.__name__!='TeachingDraftRevision':return super().generate(schema,instruction,material)
+            self.revisions+=1;payload=json.loads(material);pages=[]
+            for original in payload['draft']['pages']:
+                page={**original,'render_kind':'story','graphic_group':'',
+                    'context_is_condition':False,'figure_page':0,'figure_box':[]}
+                if heading=='course_title':page['title']=payload['draft']['title']
+                pages.append(page)
+            return schema.model_validate({**payload['draft'],'pages':pages})
+    document,bundle=inputs(4);client=MetadataClient()
+    lesson=build_draft_lesson(client,bundle,document,'',VoiceMode.SYSTEM,
+        template_id='paper',use_illustrations=False,folder=tmp_path,progress=lambda *a:None,repair_sources=True)
+    assert client.revisions==1
+    assert [s.title for s in lesson.segments]==[p.title for p in bundle.points]
+    assert not lesson.animation_report['warnings']
+    assert all('性能随经验提高' in s.narration for s in lesson.segments)
+
+
+def test_missing_heading_cannot_hide_invalid_source_or_sentence_binding():
+    from pydantic import ValidationError,create_model
+    from typing import Literal
+    from zhijiang.draft_source_repair import RevisedPage
+    page={'source_id':1,'narration':'我们保留来源中的对象和必要条件，以便理解这一关系。',
+        'bullets':['保留对象与条件'],'visual':{'representation':'key_idea','items':[
+            {'label':'条件','caption':'当前关系的适用前提','sentence_id':1}]},
+        'render_kind':'story','graphic_group':'','context_is_condition':False,'figure_page':0,'figure_box':[]}
+    schema=create_model('ScopedPage',__base__=RevisedPage,source_id=(Literal[1],...))
+    assert schema.model_validate(page).title is None
+    with pytest.raises(ValidationError):schema.model_validate({**page,'source_id':2})
+    page['visual']['items'][0]['sentence_id']=8
+    with pytest.raises(ValidationError):schema.model_validate(page)
+
+
 def test_blank_table_is_not_rendered_as_empty_value_cells():
     from zhijiang.draft_generation import normalise_visual
     from zhijiang.slide_story import SlideVisualDraft

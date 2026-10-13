@@ -164,7 +164,10 @@ def build_draft_lesson(client, bundle, document, prompt, voice_mode, *, template
             visual=normalise_visual(value.visual,warn)
             for note in value.source_notes:
                 warn(note)
-            segment=LessonSegment(title=getattr(value,'title',None) or p.title,kind=p.kind,narration=value.narration,
+            page_title=getattr(value,'title',None)
+            if not page_title or ''.join(page_title.split())==''.join(draft.title.split()):
+                page_title=p.title
+            segment=LessonSegment(title=page_title,kind=p.kind,narration=value.narration,
                 bullets=value.bullets,evidence=p.evidence.model_copy(deep=True))
             segments.append(segment)
             if getattr(value,'render_kind','story')=='construction' and animation_mode in {'auto','visual'}:

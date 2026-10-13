@@ -217,6 +217,14 @@ def enrich_constructions(lesson,document,client,requests,*,folder,pdf_path,progr
         pages={p for item in members for p in (item['page']-1,item['page'],item['page']+1)}
         selected=SourceDocument(filename=document.filename,pages=[p for p in document.pages if p.page in pages])
         try:
+            from zhijiang.construction_intent import read_construction_intent
+            intent=read_construction_intent(planning_client or client,selected,members,Path(folder)/f'group-{n:03d}')
+            if intent.relation_kind in {'symbolic_sequence','concept_comparison'}:
+                lesson.animation_report.setdefault('construction_routing',[]).append({
+                    'segment_ids':[item['segment_id'] for item in members],
+                    'relation_kind':intent.relation_kind,'observation':intent.observation,
+                    'renderer':'teaching_diagram'})
+                continue
             scene=build_scene(client,selected,members,folder=Path(folder)/f'group-{n:03d}',
                               source_image_loader=lambda p:page_preview(data,p),
                               planning_client=planning_client,review_client=review_client)

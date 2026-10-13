@@ -22,7 +22,8 @@ class SourceRevisedVisual(SlideVisualDraft):
 
 
 class RevisedPage(DraftPage):
-    title: str = Field(min_length=2,max_length=80)
+    # The original knowledge-point heading can restore omitted metadata.
+    title: str | None = Field(default=None,min_length=2,max_length=80)
     visual: SourceRevisedVisual
     render_kind: Literal['story','construction']
     graphic_group: str = Field(max_length=60)
